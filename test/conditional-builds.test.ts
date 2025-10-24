@@ -1,14 +1,14 @@
-import { test, expect } from "bun:test";
+import {test, expect} from "bun:test";
 import * as fs from "fs/promises";
 import * as path from "path";
-import { build } from "../src/libuild.ts";
-import { createTempDir, removeTempDir, copyFixture, readJson, fileExists } from "./test-utils.ts";
+import {build} from "../src/libuild.ts";
+import {createTempDir, removeTempDir, copyFixture, readJSON, fileExists} from "./test-utils.ts";
 
 test("ESM-only build when no main field", async () => {
   const testDir = await createTempDir("esm-only");
   
   // Create fixture without main field
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src/index.ts"), 'export const hello = "world";');
   await fs.writeFile(path.join(testDir, "package.json"), JSON.stringify({
     name: "esm-only-test",
@@ -28,7 +28,7 @@ test("ESM-only build when no main field", async () => {
   expect(await fileExists(path.join(distSrcDir, "index.cjs"))).toBe(false);
   
   // Check package.json structure
-  const distPkg = await readJson(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(path.join(distDir, "package.json"));
   expect(distPkg.main).toBeUndefined(); // No main field
   expect(distPkg.module).toBe("src/index.js");
   expect(distPkg.types).toBe("src/index.d.ts");
@@ -48,7 +48,7 @@ test("Dual build when main field exists", async () => {
   const testDir = await createTempDir("dual-build");
   
   // Create fixture with main field
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src/index.ts"), 'export const hello = "world";');
   await fs.writeFile(path.join(testDir, "package.json"), JSON.stringify({
     name: "dual-build-test",
@@ -68,7 +68,7 @@ test("Dual build when main field exists", async () => {
   expect(await fileExists(path.join(distSrcDir, "index.cjs"))).toBe(true);
   
   // Check package.json structure
-  const distPkg = await readJson(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(path.join(distDir, "package.json"));
   expect(distPkg.main).toBe("src/index.cjs");
   expect(distPkg.module).toBe("src/index.js");
   expect(distPkg.types).toBe("src/index.d.ts");
@@ -88,9 +88,10 @@ test("Export merging preserves user-defined exports", async () => {
   const testDir = await createTempDir("export-merging");
   
   // Create fixture with existing exports
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src/index.ts"), 'export const hello = "world";');
   await fs.writeFile(path.join(testDir, "src/utils.ts"), 'export const utils = true;');
+  await fs.writeFile(path.join(testDir, "src/jsx-runtime.ts"), 'export const jsx = true;');
   await fs.writeFile(path.join(testDir, "package.json"), JSON.stringify({
     name: "export-merging-test",
     version: "1.0.0",
@@ -106,7 +107,7 @@ test("Export merging preserves user-defined exports", async () => {
   await build(testDir);
   
   const distDir = path.join(testDir, "dist");
-  const distPkg = await readJson(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(path.join(distDir, "package.json"));
   
   // Check that user exports are preserved and expanded
   expect(distPkg.exports["./jsx-runtime"]).toEqual({
@@ -142,9 +143,10 @@ test("ESM-only export merging (no main field)", async () => {
   const testDir = await createTempDir("esm-export-merging");
   
   // Create fixture with existing exports but no main
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src/index.ts"), 'export const hello = "world";');
   await fs.writeFile(path.join(testDir, "src/utils.ts"), 'export const utils = true;');
+  await fs.writeFile(path.join(testDir, "src/jsx-runtime.ts"), 'export const jsx = true;');
   await fs.writeFile(path.join(testDir, "package.json"), JSON.stringify({
     name: "esm-export-merging-test",
     version: "1.0.0",
@@ -168,7 +170,7 @@ test("ESM-only export merging (no main field)", async () => {
   expect(await fileExists(path.join(distSrcDir, "utils.js"))).toBe(true);
   expect(await fileExists(path.join(distSrcDir, "utils.cjs"))).toBe(false);
   
-  const distPkg = await readJson(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(path.join(distDir, "package.json"));
   
   // Check that user exports are preserved but NOT expanded to dual format
   expect(distPkg.exports["./jsx-runtime"]).toEqual({
@@ -202,7 +204,7 @@ test("Custom main entry via exports field", async () => {
   const testDir = await createTempDir("custom-main-export");
   
   // Create fixture with custom main via exports
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src/index.ts"), 'export const index = true;');
   await fs.writeFile(path.join(testDir, "src/custom.ts"), 'export const main = "custom";');
   await fs.writeFile(path.join(testDir, "package.json"), JSON.stringify({
@@ -227,7 +229,7 @@ test("Custom main entry via exports field", async () => {
   expect(await fileExists(path.join(distSrcDir, "custom.js"))).toBe(true);
   expect(await fileExists(path.join(distSrcDir, "custom.cjs"))).toBe(true);
   
-  const distPkg = await readJson(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(path.join(distDir, "package.json"));
   
   // Main should point to custom entry, not index
   expect(distPkg.main).toBe("src/custom.cjs");
@@ -256,7 +258,7 @@ test("UMD build works with ESM-only mode", async () => {
   const testDir = await createTempDir("umd-esm-only");
   
   // Create fixture with UMD entry
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src/index.ts"), 'export const hello = "world";');
   await fs.writeFile(path.join(testDir, "src/umd.ts"), 'export const umd = "global";');
   await fs.writeFile(path.join(testDir, "package.json"), JSON.stringify({
@@ -274,7 +276,7 @@ test("UMD build works with ESM-only mode", async () => {
   // Check UMD file exists
   expect(await fileExists(path.join(distSrcDir, "umd.js"))).toBe(true);
   
-  const distPkg = await readJson(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(path.join(distDir, "package.json"));
   
   // UMD export should exist
   expect(distPkg.exports["./umd"]).toEqual({
@@ -296,7 +298,7 @@ test("UMD build works with dual mode", async () => {
   const testDir = await createTempDir("umd-dual");
   
   // Create fixture with UMD entry
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src/index.ts"), 'export const hello = "world";');
   await fs.writeFile(path.join(testDir, "src/umd.ts"), 'export const umd = "global";');
   await fs.writeFile(path.join(testDir, "package.json"), JSON.stringify({
@@ -309,7 +311,7 @@ test("UMD build works with dual mode", async () => {
   await build(testDir);
   
   const distDir = path.join(testDir, "dist");
-  const distPkg = await readJson(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(path.join(distDir, "package.json"));
   
   // UMD export should exist
   expect(distPkg.exports["./umd"]).toEqual({
@@ -331,7 +333,7 @@ test("validates that exports only reference valid entrypoints", async () => {
   const testDir = await createTempDir("invalid-exports");
   
   // Create fixture with valid and invalid files
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src/index.ts"), 'export const hello = "world";');
   await fs.writeFile(path.join(testDir, "src/utils.ts"), 'export const utils = true;');
   await fs.writeFile(path.join(testDir, "src/_internal.ts"), 'export const internal = true;');
@@ -393,7 +395,7 @@ test("validates that exports only reference valid entrypoints", async () => {
   await build(testDir);
   
   const distDir = path.join(testDir, "dist");
-  const distPkg = await readJson(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(path.join(distDir, "package.json"));
   
   // Should expand properly
   expect(distPkg.exports["./helper"]).toEqual({
@@ -418,7 +420,7 @@ test("custom main entry detection", async () => {
   const distDir = path.join(testDir, "dist");
   
   // Check dist package.json
-  const distPkg = await readJson(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(path.join(distDir, "package.json"));
   
   // Should detect api as main entry (not index)
   expect(distPkg.main).toBe("src/api.cjs");

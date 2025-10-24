@@ -1,8 +1,8 @@
-import { test, expect } from "bun:test";
+import {test, expect} from "bun:test";
 import * as fs from "fs/promises";
 import * as path from "path";
-import { build } from "../src/libuild.ts";
-import { createTempDir, removeTempDir, copyFixture, readJson, fileExists } from "./test-utils.ts";
+import {build} from "../src/libuild.ts";
+import {createTempDir, removeTempDir, copyFixture, readJSON, fileExists} from "./test-utils.ts";
 
 test("warns when package.json is not private", async () => {
   const testDir = await createTempDir("warn-private");
@@ -10,7 +10,7 @@ test("warns when package.json is not private", async () => {
   // Copy fixture and make it non-private
   await copyFixture("simple-lib", testDir);
   
-  const pkg = await readJson(path.join(testDir, "package.json"));
+  const pkg = await readJSON(path.join(testDir, "package.json"));
   pkg.private = false;
   await fs.writeFile(path.join(testDir, "package.json"), JSON.stringify(pkg, null, 2));
   

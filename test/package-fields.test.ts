@@ -1,8 +1,8 @@
-import { test, expect } from "bun:test";
+import {test, expect} from "bun:test";
 import * as fs from "fs/promises";
 import * as path from "path";
-import { build } from "../src/libuild.ts";
-import { createTempDir, removeTempDir, copyFixture, readJson, fileExists } from "./test-utils.ts";
+import {build} from "../src/libuild.ts";
+import {createTempDir, removeTempDir, copyFixture, readJSON, fileExists} from "./test-utils.ts";
 
 test("handles comprehensive package.json fields", async () => {
   const testDir = await createTempDir("comprehensive-fields");
@@ -11,7 +11,7 @@ test("handles comprehensive package.json fields", async () => {
   await copyFixture("simple-lib", testDir);
   
   // Create docs directory and files for the files field pattern
-  await fs.mkdir(path.join(testDir, "docs"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "docs"), {recursive: true});
   await fs.writeFile(path.join(testDir, "docs", "api.md"), "# API Documentation");
   await fs.writeFile(path.join(testDir, "docs", "guide.md"), "# User Guide");
   
@@ -66,7 +66,7 @@ test("handles comprehensive package.json fields", async () => {
   await build(testDir);
   
   const distDir = path.join(testDir, "dist");
-  const distPkg = await readJson(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(path.join(distDir, "package.json"));
   
   // Check that all fields are preserved
   expect(distPkg.description).toBe("A comprehensive test package");
@@ -130,12 +130,12 @@ test("npm lifecycle scripts are preserved", async () => {
   }));
   
   // Create src directory
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src", "index.ts"), 'export const index = "main";');
   
   await build(testDir, false);
   
-  const distPkg = await readJson(path.join(testDir, "dist", "package.json"));
+  const distPkg = await readJSON(path.join(testDir, "dist", "package.json"));
   
   // Should only have lifecycle scripts
   expect(distPkg.scripts).toEqual({
@@ -161,7 +161,7 @@ test("file copy error: pattern with non-existent base directory", async () => {
   }));
   
   // Create src directory
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src", "index.ts"), 'export const index = "main";');
   
   await expect(build(testDir, false)).rejects.toThrow('Pattern base directory not found for "nonexistent/*.md"');
@@ -184,7 +184,7 @@ test("file copy error: missing file in files field", async () => {
   }));
   
   // Create src directory
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src", "index.ts"), 'export const index = "main";');
   
   await expect(build(testDir, false)).rejects.toThrow('File specified in files field not found');
@@ -207,7 +207,7 @@ test("files field with invalid entry type", async () => {
   }));
   
   // Create src directory
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src", "index.ts"), 'export const index = "main";');
   
   await expect(build(testDir, false)).rejects.toThrow("Invalid files field entry: 123. Files field entries must be strings.");

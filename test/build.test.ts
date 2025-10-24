@@ -1,8 +1,8 @@
-import { test, expect } from "bun:test";
+import {test, expect} from "bun:test";
 import * as fs from "fs/promises";
 import * as path from "path";
-import { build } from "../src/libuild.ts";
-import { createTempDir, removeTempDir, copyFixture, readJson, fileExists } from "./test-utils.ts";
+import {build} from "../src/libuild.ts";
+import {createTempDir, removeTempDir, copyFixture, readJSON, fileExists} from "./test-utils.ts";
 
 test("simple library build", async () => {
   const testDir = await createTempDir("simple-lib");
@@ -29,7 +29,7 @@ test("simple library build", async () => {
   }
   
   // Check package.json structure (structure-preserving)
-  const distPkg = await readJson(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(path.join(distDir, "package.json"));
   expect(distPkg.name).toBe("simple-lib");
   expect(distPkg.main).toBe("src/index.cjs");
   expect(distPkg.module).toBe("src/index.js");
@@ -68,7 +68,7 @@ test("multi-entry library build", async () => {
   }
   
   // Check exports for all entries (structure-preserving)
-  const distPkg = await readJson(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(path.join(distDir, "package.json"));
   expect(distPkg.exports["./utils"]).toEqual({
     types: "./src/utils.d.ts",
     import: "./src/utils.js",
@@ -106,7 +106,7 @@ test("UMD build", async () => {
   expect(umdContent).toContain("root.Umdlib = factory()"); // Should use capitalized package name without hyphens
   
   // Check package.json has UMD export (structure-preserving)
-  const distPkg = await readJson(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(path.join(distDir, "package.json"));
   expect(distPkg.exports["./umd"]).toEqual({
     require: "./src/umd.js"
   });
@@ -125,7 +125,7 @@ test("root package.json is updated correctly", async () => {
   await build(testDir, true);
   
   // Check root package.json was updated (structure-preserving with --save)
-  const rootPkg = await readJson(path.join(testDir, "package.json"));
+  const rootPkg = await readJSON(path.join(testDir, "package.json"));
   expect(rootPkg.main).toBe("./dist/src/index.cjs");
   expect(rootPkg.module).toBe("./dist/src/index.js");
   expect(rootPkg.types).toBe("./dist/src/index.d.ts");
@@ -168,7 +168,7 @@ test("build error: no entry points found", async () => {
     type: "module"
   }));
   
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   
   await expect(build(testDir)).rejects.toThrow("No entry points found in src/");
   
@@ -189,14 +189,14 @@ test("main entry detection: package.json main field", async () => {
   }));
   
   // Create src directory with multiple entries including the main one
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src", "api.ts"), 'export const api = "main";');
   await fs.writeFile(path.join(testDir, "src", "utils.ts"), 'export const utils = "helper";');
   await fs.writeFile(path.join(testDir, "src", "other.ts"), 'export const other = "helper";');
   
   await build(testDir, false);
   
-  const distPkg = await readJson(path.join(testDir, "dist", "package.json"));
+  const distPkg = await readJSON(path.join(testDir, "dist", "package.json"));
   expect(distPkg.main).toBe("src/api.cjs");
   expect(distPkg.module).toBe("src/api.js");
   expect(distPkg.types).toBe("src/api.d.ts");
@@ -218,12 +218,12 @@ test("main entry detection: single entry becomes main", async () => {
   }));
   
   // Create src directory with single entry (not index)
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src", "single.ts"), 'export const single = "only";');
   
   await build(testDir, false);
   
-  const distPkg = await readJson(path.join(testDir, "dist", "package.json"));
+  const distPkg = await readJSON(path.join(testDir, "dist", "package.json"));
   expect(distPkg.main).toBe("src/single.cjs");
   expect(distPkg.module).toBe("src/single.js");
   
@@ -244,13 +244,13 @@ test("main entry detection: use package name as entry", async () => {
   }));
   
   // Create src directory with entry matching package name
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src", "mylib.ts"), 'export const mylib = "main";');
   await fs.writeFile(path.join(testDir, "src", "utils.ts"), 'export const utils = "helper";');
   
   await build(testDir, false);
   
-  const distPkg = await readJson(path.join(testDir, "dist", "package.json"));
+  const distPkg = await readJSON(path.join(testDir, "dist", "package.json"));
   expect(distPkg.main).toBe("src/mylib.cjs");
   expect(distPkg.module).toBe("src/mylib.js");
   
@@ -271,13 +271,13 @@ test("main entry detection: scoped package name", async () => {
   }));
   
   // Create src directory with entry matching package name part
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src", "mylib.ts"), 'export const mylib = "main";');
   await fs.writeFile(path.join(testDir, "src", "utils.ts"), 'export const utils = "helper";');
   
   await build(testDir, false);
   
-  const distPkg = await readJson(path.join(testDir, "dist", "package.json"));
+  const distPkg = await readJSON(path.join(testDir, "dist", "package.json"));
   expect(distPkg.main).toBe("src/mylib.cjs");
   
   // Cleanup
@@ -297,7 +297,7 @@ test("main entry detection: invalid package name error", async () => {
   }));
   
   // Create src directory with entries (no index, no matching name)
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src", "utils.ts"), 'export const utils = "helper";');
   await fs.writeFile(path.join(testDir, "src", "other.ts"), 'export const other = "helper";');
   
@@ -320,7 +320,7 @@ test("main entry detection: default to first entry alphabetically", async () => 
   }));
   
   // Create multiple entries (no index) - should default to first alphabetically
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src", "zebra.ts"), 'export const zebra = "last";');
   await fs.writeFile(path.join(testDir, "src", "api.ts"), 'export const api = "first";');
   await fs.writeFile(path.join(testDir, "src", "utils.ts"), 'export const utils = "middle";');
@@ -328,7 +328,7 @@ test("main entry detection: default to first entry alphabetically", async () => 
   await build(testDir, false);
   
   // Should use "api" as main (first alphabetically)
-  const distPkg = await readJson(path.join(testDir, "dist", "package.json"));
+  const distPkg = await readJSON(path.join(testDir, "dist", "package.json"));
   expect(distPkg.main).toBe("src/api.cjs");
   expect(distPkg.module).toBe("src/api.js");
   

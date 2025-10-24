@@ -1,8 +1,8 @@
-import { test, expect } from "bun:test";
+import {test, expect} from "bun:test";
 import * as fs from "fs/promises";
 import * as path from "path";
-import { build } from "../src/libuild.ts";
-import { createTempDir, removeTempDir, copyFixture, readJson, fileExists } from "./test-utils.ts";
+import {build} from "../src/libuild.ts";
+import {createTempDir, removeTempDir, copyFixture, readJSON, fileExists} from "./test-utils.ts";
 
 test("complex bin field transformations", async () => {
   const testDir = await createTempDir("complex-bin");
@@ -22,7 +22,7 @@ test("complex bin field transformations", async () => {
   expect(await fileExists(path.join(distSrcDir, "cli.cjs"))).toBe(false);
   
   // Check dist package.json bin transformations
-  const distPkg = await readJson(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(path.join(distDir, "package.json"));
   expect(distPkg.bin).toEqual({
     mytool: "./src/cli.js",               // src/cli.js → ./src/cli.js
     helper: "./src/bin/helper.ts",        // ./src/bin/helper.ts → ./src/bin/helper.ts
@@ -30,7 +30,7 @@ test("complex bin field transformations", async () => {
   });
   
   // Check root package.json bin transformations
-  const rootPkg = await readJson(path.join(testDir, "package.json"));
+  const rootPkg = await readJSON(path.join(testDir, "package.json"));
   expect(rootPkg.bin).toEqual({
     mytool: "./dist/src/cli.js",
     helper: "./dist/src/bin/helper.ts", 
@@ -53,7 +53,7 @@ test("files field src transformations", async () => {
   const distDir = path.join(testDir, "dist");
   
   // Check dist package.json files transformations (structure-preserving)
-  const distPkg = await readJson(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(path.join(distDir, "package.json"));
   expect(distPkg.files).toEqual([
     "./src/**/*",    // src/**/* → ./src/**/*
     "docs/*.md"      // docs/*.md stays the same
@@ -63,7 +63,7 @@ test("files field src transformations", async () => {
   expect(await fileExists(path.join(distDir, "docs", "test.md"))).toBe(true);
   
   // Check root package.json files field stays the same (no --save)
-  const rootPkg = await readJson(path.join(testDir, "package.json"));
+  const rootPkg = await readJSON(path.join(testDir, "package.json"));
   expect(rootPkg.files).toEqual([
     "src/**/*",      // Original value preserved without --save
     "docs/*.md"
@@ -85,11 +85,11 @@ test("dev scripts should be filtered out in dist (only npm lifecycle scripts pre
   const distDir = path.join(testDir, "dist");
   
   // Check that dev scripts are NOT included in dist package.json (only npm lifecycle scripts)
-  const distPkg = await readJson(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(path.join(distDir, "package.json"));
   expect(distPkg.scripts).toBeUndefined(); // No npm lifecycle scripts in this fixture
   
   // Check that scripts in root are NOT transformed (no --save)
-  const rootPkg = await readJson(path.join(testDir, "package.json"));
+  const rootPkg = await readJSON(path.join(testDir, "package.json"));
   expect(rootPkg.scripts.build).toBe("src/build.js");    // No transformation without --save
   expect(rootPkg.scripts.test).toBe("node src/test.js"); // No transformation without --save
   expect(rootPkg.scripts.dev).toBe("bun src/dev.ts");    // No transformation without --save
@@ -110,7 +110,7 @@ test("repository field src transformations", async () => {
   const distDir = path.join(testDir, "dist");
   
   // Check repository transformations
-  const distPkg = await readJson(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(path.join(distDir, "package.json"));
   expect(distPkg.repository).toEqual({
     type: "git",
     url: "https://github.com/test/src-project.git",  // No change to URL
@@ -167,7 +167,7 @@ test("bin field with string value (not object)", async () => {
   const testDir = await createTempDir("string-bin");
   
   // Create fixture with string bin field
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src/index.ts"), 'export const hello = "world";');
   await fs.writeFile(path.join(testDir, "src/cli.ts"), '#!/usr/bin/env node\nconsole.log("CLI");');
   await fs.writeFile(path.join(testDir, "package.json"), JSON.stringify({
@@ -182,11 +182,11 @@ test("bin field with string value (not object)", async () => {
   const distDir = path.join(testDir, "dist");
   
   // Check dist package.json bin transformation (structure-preserving)
-  const distPkg = await readJson(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(path.join(distDir, "package.json"));
   expect(distPkg.bin).toBe("./src/cli.js");  // src/cli.js → ./src/cli.js
   
   // Check root package.json bin transformation (no --save)
-  const rootPkg = await readJson(path.join(testDir, "package.json"));
+  const rootPkg = await readJSON(path.join(testDir, "package.json"));
   expect(rootPkg.bin).toBe("src/cli.js");  // No transformation without --save
   
   // Cleanup

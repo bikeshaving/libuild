@@ -1,8 +1,8 @@
-import { test, expect, beforeEach, afterEach } from "bun:test";
+import {test, expect, beforeEach, afterEach} from "bun:test";
 import * as fs from "fs/promises";
 import * as path from "path";
-import { build } from "../src/libuild.ts";
-import { createTempDir, removeTempDir, copyFixture, readJson, fileExists } from "./test-utils.ts";
+import {build} from "../src/libuild.ts";
+import {createTempDir, removeTempDir, copyFixture, readJSON, fileExists} from "./test-utils.ts";
 
 const fixturesDir = path.join(__dirname, "fixtures");
 const backups = new Map<string, string>();
@@ -21,7 +21,7 @@ async function restorePackageJson(fixtureDir: string) {
   }
   // Clean up dist directory too
   const distPath = path.join(fixtureDir, "dist");
-  await fs.rm(distPath, { recursive: true, force: true });
+  await fs.rm(distPath, {recursive: true, force: true});
 }
 
 test("build without --save does not modify root package.json", async () => {
@@ -29,14 +29,14 @@ test("build without --save does not modify root package.json", async () => {
   
   // Backup original package.json
   await backupPackageJson(testDir);
-  const originalPackage = await readJson(path.join(testDir, "package.json"));
+  const originalPackage = await readJSON(path.join(testDir, "package.json"));
   
   try {
     // Build without save
     await build(testDir, false);
     
     // Root package.json should be unchanged
-    const rootPkg = await readJson(path.join(testDir, "package.json"));
+    const rootPkg = await readJSON(path.join(testDir, "package.json"));
     expect(rootPkg).toEqual(originalPackage);
   } finally {
     // Restore original state
@@ -55,7 +55,7 @@ test("build with --save updates all package.json fields correctly", async () => 
     await build(testDir, true);
     
     // Check root package.json transformations
-    const rootPkg = await readJson(path.join(testDir, "package.json"));
+    const rootPkg = await readJSON(path.join(testDir, "package.json"));
     expect(rootPkg.main).toBe("./dist/src/index.cjs");
     expect(rootPkg.module).toBe("./dist/src/index.js");
     expect(rootPkg.types).toBe("./dist/src/index.d.ts");
@@ -86,7 +86,7 @@ test("adding new entry point updates exports in subsequent --save builds", async
     // First build with save
     await build(testDir, true);
     
-    let rootPkg = await readJson(path.join(testDir, "package.json"));
+    let rootPkg = await readJSON(path.join(testDir, "package.json"));
     expect(Object.keys(rootPkg.exports)).toEqual([".", "./index", "./index.js", "./package.json"]);
     
     // Add new entry point
@@ -99,7 +99,7 @@ test("adding new entry point updates exports in subsequent --save builds", async
     await build(testDir, true);
     
     // Check that new entry point is in exports
-    rootPkg = await readJson(path.join(testDir, "package.json"));
+    rootPkg = await readJSON(path.join(testDir, "package.json"));
     expect(rootPkg.exports["./utils"]).toEqual({
       types: "./dist/src/utils.d.ts",
       import: "./dist/src/utils.js", 
@@ -108,7 +108,7 @@ test("adding new entry point updates exports in subsequent --save builds", async
     expect(rootPkg.exports["./utils.js"]).toBeDefined();
   } finally {
     // Clean up added file and restore
-    await fs.rm(path.join(testDir, "src", "utils.ts"), { force: true });
+    await fs.rm(path.join(testDir, "src", "utils.ts"), {force: true});
     await restorePackageJson(testDir);
   }
 });
@@ -118,7 +118,7 @@ test("removing entry point removes it from exports in subsequent --save builds",
   
   // Copy fixture to avoid modifying the original
   const sourceDir = path.join(fixturesDir, "multi-entry");
-  await fs.cp(sourceDir, testDir, { recursive: true });
+  await fs.cp(sourceDir, testDir, {recursive: true});
   
   // Verify utils.ts was copied
   const utilsPath = path.join(testDir, "src", "utils.ts");
@@ -130,7 +130,7 @@ test("removing entry point removes it from exports in subsequent --save builds",
     // First build with save
     await build(testDir, true);
     
-    let rootPkg = await readJson(path.join(testDir, "package.json"));
+    let rootPkg = await readJSON(path.join(testDir, "package.json"));
     expect(rootPkg.exports["./utils"]).toBeDefined();
     expect(rootPkg.exports["./api"]).toBeDefined();
     
@@ -149,12 +149,12 @@ test("removing entry point removes it from exports in subsequent --save builds",
     const cliPath = path.join(testDir, "src", "cli.ts");
     const cliContent = await fs.readFile(cliPath, "utf-8");
     const cliBackup = cliContent;
-    const newCliContent = cliContent.replace("import { add } from './utils.js';\n", "").replace("console.log('CLI tool result:', add(2, 3));", "console.log('CLI tool result:', 5);");
+    const newCliContent = cliContent.replace("import {add} from './utils.js';\n", "").replace("console.log('CLI tool result:', add(2, 3));", "console.log('CLI tool result:', 5);");
     await fs.writeFile(cliPath, newCliContent);
     
     // Also remove the utils export from package.json to simulate user removing it
     const pkgPath = path.join(testDir, "package.json");
-    const pkgContent = await readJson(pkgPath);
+    const pkgContent = await readJSON(pkgPath);
     const pkgBackup = JSON.stringify(pkgContent);
     if (pkgContent.exports && pkgContent.exports["./utils"]) {
       delete pkgContent.exports["./utils"];
@@ -166,7 +166,7 @@ test("removing entry point removes it from exports in subsequent --save builds",
     await build(testDir, true);
     
     // Check that utils is removed from exports
-    rootPkg = await readJson(path.join(testDir, "package.json"));
+    rootPkg = await readJSON(path.join(testDir, "package.json"));
     expect(rootPkg.exports["./utils"]).toBeUndefined();
     expect(rootPkg.exports["./utils.js"]).toBeUndefined();
     expect(rootPkg.exports["./api"]).toBeDefined(); // api should still be there

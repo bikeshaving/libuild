@@ -1,8 +1,8 @@
-import { test, expect } from "bun:test";
+import {test, expect} from "bun:test";
 import * as fs from "fs/promises";
 import * as path from "path";
-import { build } from "../src/libuild.ts";
-import { createTempDir, removeTempDir, copyFixture, readJson, fileExists } from "./test-utils.ts";
+import {build} from "../src/libuild.ts";
+import {createTempDir, removeTempDir, copyFixture, readJSON, fileExists} from "./test-utils.ts";
 
 test("exports field generation for multi-entry library", async () => {
   const testDir = await createTempDir("exports-test");
@@ -16,7 +16,7 @@ test("exports field generation for multi-entry library", async () => {
   const distDir = path.join(testDir, "dist");
   
   // Check dist package.json exports
-  const distPkg = await readJson(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(path.join(distDir, "package.json"));
   
   // Should have main export
   expect(distPkg.exports["."]).toEqual({
@@ -61,7 +61,7 @@ test("exports field generation with --save mode", async () => {
   const distDir = path.join(testDir, "dist");
   
   // Check root package.json exports (should point to dist)
-  const rootPkg = await readJson(path.join(testDir, "package.json"));
+  const rootPkg = await readJSON(path.join(testDir, "package.json"));
   
   expect(rootPkg.exports["."]).toEqual({
     types: "./dist/src/index.d.ts",
@@ -76,7 +76,7 @@ test("exports field generation with --save mode", async () => {
   });
   
   // Check dist package.json exports (should be relative)
-  const distPkg = await readJson(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(path.join(distDir, "package.json"));
   
   expect(distPkg.exports["."]).toEqual({
     types: "./src/index.d.ts",
@@ -97,7 +97,7 @@ test("files field behavior with --save", async () => {
   // Create README.md file that's referenced in files field
   await fs.writeFile(path.join(testDir, "README.md"), "# Test Library\nA test library");
   
-  const pkg = await readJson(path.join(testDir, "package.json"));
+  const pkg = await readJSON(path.join(testDir, "package.json"));
   pkg.files = ["README.md", "src/**/*"];
   await fs.writeFile(path.join(testDir, "package.json"), JSON.stringify(pkg, null, 2));
   
@@ -105,7 +105,7 @@ test("files field behavior with --save", async () => {
   await build(testDir, true);
   
   // Check root package.json
-  const rootPkg = await readJson(path.join(testDir, "package.json"));
+  const rootPkg = await readJSON(path.join(testDir, "package.json"));
   
   // Should contain original files plus dist/
   expect(rootPkg.files).toContain("README.md");
@@ -125,7 +125,7 @@ test("private field behavior with --save", async () => {
   // Copy fixture and make it non-private
   await copyFixture("simple-lib", testDir);
   
-  const pkg = await readJson(path.join(testDir, "package.json"));
+  const pkg = await readJSON(path.join(testDir, "package.json"));
   pkg.private = false;
   await fs.writeFile(path.join(testDir, "package.json"), JSON.stringify(pkg, null, 2));
   
@@ -133,7 +133,7 @@ test("private field behavior with --save", async () => {
   await build(testDir, true);
   
   // Check that private is set to true
-  const rootPkg = await readJson(path.join(testDir, "package.json"));
+  const rootPkg = await readJSON(path.join(testDir, "package.json"));
   expect(rootPkg.private).toBe(true);
   
   // Cleanup
@@ -153,13 +153,13 @@ test("jsx-runtime export handling", async () => {
   }));
   
   // Create src directory with jsx-runtime entry
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src", "index.ts"), 'export const index = "main";');
   await fs.writeFile(path.join(testDir, "src", "jsx-runtime.ts"), 'export function jsx() {}');
   
   await build(testDir, false);
   
-  const distPkg = await readJson(path.join(testDir, "dist", "package.json"));
+  const distPkg = await readJSON(path.join(testDir, "dist", "package.json"));
   
   // Should have jsx-runtime exports with dev runtime aliases
   expect(distPkg.exports["./jsx-runtime"]).toBeDefined();
@@ -187,7 +187,7 @@ test("export expansion: invalid string export path", async () => {
   }));
   
   // Create src directory
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src", "index.ts"), 'export const index = "main";');
   await fs.writeFile(path.join(testDir, "src", "custom.ts"), 'export const custom = "test";');
   
@@ -215,7 +215,7 @@ test("export expansion: object with invalid import path", async () => {
   }));
   
   // Create src directory
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src", "index.ts"), 'export const index = "main";');
   await fs.writeFile(path.join(testDir, "src", "custom.ts"), 'export const custom = "test";');
   

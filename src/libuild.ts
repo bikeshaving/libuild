@@ -6,7 +6,7 @@ import * as ESBuild from "esbuild";
 import * as TS from "typescript";
 import {umdPlugin} from "./umd-plugin.js";
 
-interface PackageJson {
+interface PackageJSON {
   name: string;
   version: string;
   private?: boolean;
@@ -20,6 +20,14 @@ interface PackageJson {
   peerDependencies?: Record<string, string>;
   engines?: Record<string, string>;
   [key: string]: any;
+}
+
+interface BuildOptions {
+  formats: {
+    esm: boolean;
+    cjs: boolean;
+    umd: boolean;
+  };
 }
 
 function isValidEntrypoint(filename: string): boolean {
@@ -38,7 +46,7 @@ async function findEntryPoints(srcDir: string): Promise<string[]> {
     .sort();
 }
 
-async function detectMainEntry(pkg: PackageJson, entries: string[]): Promise<string> {
+async function detectMainEntry(pkg: PackageJSON, entries: string[]): Promise<string> {
   // If exports["."] is specified, try to extract the main entry from it
   if (pkg.exports && pkg.exports["."]) {
     const dotExport = pkg.exports["."];
@@ -91,15 +99,81 @@ async function detectMainEntry(pkg: PackageJson, entries: string[]): Promise<str
   return entries[0];
 }
 
-function generateExports(entries: string[], mainEntry: string, hasUMD: boolean, hasCJS: boolean, existingExports: any = {}): any {
+function checkIfExportIsStale(exportKey: string, exportValue: any, entries: string[]): boolean {
+  // System exports like package.json are never stale
+  if (exportKey === "./package.json" || typeof exportValue === "string" && (exportValue === "./package.json" || exportValue.endsWith("/package.json"))) {
+    return false;
+  }
+
+  // Extract entry name from export value first (most reliable), then key
+  let entryName: string | undefined;
+  let hasInvalidPath = false;
+
+  // Try to extract from value first (most reliable)
+  if (typeof exportValue === "string") {
+    // Check for nested paths first (these are always invalid)
+    if (exportValue.match(/\.\/src\/.*\/.*\.(ts|js)$/)) {
+      hasInvalidPath = true;
+    } else {
+      const match = exportValue.match(/\.\/src\/([^/]+)\.(ts|js)$/);
+      if (match) {
+        const filename = match[1] + "." + match[2];
+        // Check if this would be an invalid entrypoint (invalid entrypoints should throw errors, not be treated as stale)
+        if (!isValidEntrypoint(filename)) {
+          hasInvalidPath = true;
+        } else {
+          entryName = match[1];
+        }
+      }
+    }
+  } else if (typeof exportValue === "object" && exportValue !== null) {
+    // Try import field first, then require
+    const importPath = exportValue.import || exportValue.require;
+    if (typeof importPath === "string") {
+      // Check for nested paths first (these are always invalid)
+      if (importPath.match(/\.\/src\/.*\/.*\.(ts|js|cjs)$/)) {
+        hasInvalidPath = true;
+      } else {
+        const match = importPath.match(/\.\/src\/([^/]+)\.(ts|js|cjs)$/);
+        if (match) {
+          const filename = match[1] + "." + match[2].replace('cjs', 'js'); // normalize cjs to js for validation
+          if (!isValidEntrypoint(filename)) {
+            hasInvalidPath = true;
+          } else {
+            entryName = match[1];
+          }
+        }
+      }
+    }
+  }
+
+  // If no entry name from value, try to extract from key (e.g., "./utils" -> "utils", "./utils.js" -> "utils")
+  if (!entryName && !hasInvalidPath && exportKey.startsWith("./") && exportKey !== ".") {
+    const keyName = exportKey.slice(2).replace(/\.js$/, "");
+    if (keyName && !keyName.includes("/")) {
+      entryName = keyName;
+    }
+  }
+
+  // If we found an invalid path, don't treat as stale - let the validation logic handle it
+  if (hasInvalidPath) {
+    return false;
+  }
+
+  // Check if the entry still exists
+  return entryName ? !entries.includes(entryName) : false;
+}
+
+function generateExports(entries: string[], mainEntry: string, options: BuildOptions, existingExports: any = {}): {exports: any, staleExports: string[]} {
   const exports: any = {};
+  const staleExports: string[] = [];
 
   function createExportEntry(entry: string) {
     const exportEntry: any = {
       types: `./src/${entry}.d.ts`,
       import: `./src/${entry}.js`,
     };
-    if (hasCJS) {
+    if (options.formats.cjs) {
       exportEntry.require = `./src/${entry}.cjs`;
     }
     return exportEntry;
@@ -122,7 +196,7 @@ function generateExports(entries: string[], mainEntry: string, hasUMD: boolean, 
         const entry = Path.basename(filename, Path.extname(filename));
 
         // Convert string export to conditional export
-        return hasCJS ? {
+        return options.formats.cjs ? {
           types: `./src/${entry}.d.ts`,
           import: existing,
           require: `./src/${entry}.cjs`,
@@ -134,7 +208,7 @@ function generateExports(entries: string[], mainEntry: string, hasUMD: boolean, 
 
       // If we have entryFromPath, use it (this is for auto-discovered entries)
       if (entryFromPath) {
-        return hasCJS ? {
+        return options.formats.cjs ? {
           types: `./src/${entryFromPath}.d.ts`,
           import: existing,
           require: `./src/${entryFromPath}.cjs`,
@@ -147,7 +221,7 @@ function generateExports(entries: string[], mainEntry: string, hasUMD: boolean, 
       throw new Error(`Export path '${existing}' must point to a valid entrypoint in src/ (e.g., './src/utils.js'). Nested directories and internal files (starting with '_' or '.') are not allowed.`);
     } else if (typeof existing === "object" && existing !== null) {
       // Existing object - expand if needed
-      if (hasCJS && !existing.require && existing.import) {
+      if (options.formats.cjs && !existing.require && existing.import) {
         // Validate the import path
         const match = existing.import?.match(/\.\/src\/([^/]+\.(?:ts|js))$/);
         if (match) {
@@ -183,10 +257,16 @@ function generateExports(entries: string[], mainEntry: string, hasUMD: boolean, 
     return existing;
   }
 
-  // First, expand all existing exports
+  // First, expand all existing exports and detect stale ones
   // The expandExistingExport function will handle validation
   for (const [key, value] of Object.entries(existingExports)) {
-    exports[key] = expandExistingExport(value);
+    // Check if this export points to a valid entry
+    const isStale = checkIfExportIsStale(key, value, entries);
+    if (isStale) {
+      staleExports.push(key);
+    } else {
+      exports[key] = expandExistingExport(value);
+    }
   }
 
   // Handle main export - respect existing "." export or create new one
@@ -226,7 +306,7 @@ function generateExports(entries: string[], mainEntry: string, hasUMD: boolean, 
   }
 
   // UMD export (CommonJS only)
-  if (hasUMD && !exports["./umd"]) {
+  if (options.formats.umd && !exports["./umd"]) {
     exports["./umd"] = {
       require: "./src/umd.js",
     };
@@ -240,7 +320,7 @@ function generateExports(entries: string[], mainEntry: string, hasUMD: boolean, 
     exports["./package.json"] = "./package.json";
   }
 
-  return exports;
+  return {exports, staleExports};
 }
 
 export function transformSrcToDist(value: any): any {
@@ -262,8 +342,8 @@ export function transformSrcToDist(value: any): any {
   return value;
 }
 
-function cleanPackageJson(pkg: PackageJson, mainEntry: string, hasUMD: boolean, hasCJS: boolean): PackageJson {
-  const cleaned: PackageJson = {
+function cleanPackageJSON(pkg: PackageJSON, mainEntry: string, options: BuildOptions): PackageJSON {
+  const cleaned: PackageJSON = {
     name: pkg.name,
     version: pkg.version,
   };
@@ -324,7 +404,7 @@ function cleanPackageJson(pkg: PackageJson, mainEntry: string, hasUMD: boolean, 
     cleaned.type = "module";
   }
 
-  if (hasCJS) {
+  if (options.formats.cjs) {
     cleaned.main = `src/${mainEntry}.cjs`;
   }
   cleaned.module = `src/${mainEntry}.js`;
@@ -343,7 +423,7 @@ async function fileExists(filePath: string): Promise<boolean> {
 }
 
 
-export async function build(cwd: string, save: boolean = false) {
+export async function build(cwd: string, save: boolean = false): Promise<{distPkg: PackageJSON, rootPkg: PackageJSON}> {
   console.log("Building with libuild...");
 
   const srcDir = Path.join(cwd, "src");
@@ -357,7 +437,7 @@ export async function build(cwd: string, save: boolean = false) {
 
   // Load package.json
   const pkgPath = Path.join(cwd, "package.json");
-  const pkg = JSON.parse(await FS.readFile(pkgPath, "utf-8")) as PackageJson;
+  const pkg = JSON.parse(await FS.readFile(pkgPath, "utf-8")) as PackageJSON;
 
   // Check for unsafe publishing conditions
   if (!pkg.private) {
@@ -386,16 +466,22 @@ export async function build(cwd: string, save: boolean = false) {
     throw new Error("No entry points found in src/");
   }
 
-  const hasUMD = entries.includes("umd");
-  const hasCJS = !!pkg.main; // Generate CJS only if main field exists
+  const options: BuildOptions = {
+    formats: {
+      esm: true, // Always build ESM
+      cjs: !!pkg.main, // Generate CJS only if main field exists
+      umd: entries.includes("umd")
+    }
+  };
+  
   const mainEntry = await detectMainEntry(pkg, entries);
 
   console.log("  Found entries:", entries.join(", "));
   console.log("  Main entry:", mainEntry);
-  if (hasCJS) {
-    console.log("  Formats: ESM, CJS" + (hasUMD ? ", UMD" : ""));
+  if (options.formats.cjs) {
+    console.log("  Formats: ESM, CJS" + (options.formats.umd ? ", UMD" : ""));
   } else {
-    console.log("  Formats: ESM" + (hasUMD ? ", UMD" : "") + " (no main field - CJS disabled)");
+    console.log("  Formats: ESM" + (options.formats.umd ? ", UMD" : "") + " (no main field - CJS disabled)");
   }
 
   // Clean dist directory
@@ -433,7 +519,7 @@ export async function build(cwd: string, save: boolean = false) {
       outdir: distSrcDir,
       format: "esm",
       entryNames: "[name]",
-      outExtension: { ".js": ".js" },
+      outExtension: {".js": ".js"},
       bundle: true,
       splitting: true, // Enable shared chunk extraction
       minify: false,
@@ -444,14 +530,14 @@ export async function build(cwd: string, save: boolean = false) {
     });
 
     // CJS build (only if main field exists)
-    if (hasCJS) {
+    if (options.formats.cjs) {
       console.log(`  Building ${entryPoints.length} entries (CJS)...`);
       await ESBuild.build({
         entryPoints,
         outdir: distSrcDir,
         format: "cjs",
         entryNames: "[name]",
-        outExtension: { ".js": ".cjs" },
+        outExtension: {".js": ".cjs"},
         bundle: true,
         minify: false,
         sourcemap: true,
@@ -537,8 +623,22 @@ export async function build(cwd: string, save: boolean = false) {
 
   // Generate package.json
   console.log("  Generating package.json...");
-  const cleanedPkg = cleanPackageJson(pkg, mainEntry, hasUMD, hasCJS);
-  cleanedPkg.exports = generateExports(entries, mainEntry, hasUMD, hasCJS, pkg.exports);
+  const cleanedPkg = cleanPackageJSON(pkg, mainEntry, options);
+  const exportsResult = generateExports(entries, mainEntry, options, pkg.exports);
+  cleanedPkg.exports = exportsResult.exports;
+
+  // Handle stale exports
+  if (exportsResult.staleExports.length > 0) {
+    console.warn(`⚠️  WARNING: Found ${exportsResult.staleExports.length} stale export(s) pointing to missing src/ files:`);
+    for (const staleExport of exportsResult.staleExports) {
+      console.warn(`   - ${staleExport}`);
+    }
+    if (save) {
+      console.log("   Removing stale exports from root package.json (--save mode)");
+    } else {
+      console.warn("   Use --save to remove these from root package.json");
+    }
+  }
 
   // Add auto-discovered files to dist package.json files field
   if (cleanedPkg.files && Array.isArray(cleanedPkg.files)) {
@@ -626,12 +726,12 @@ export async function build(cwd: string, save: boolean = false) {
 
   if (save) {
     console.log("  Updating root package.json...");
-    const rootPkg = { ...pkg };
+    const rootPkg = {...pkg};
 
     rootPkg.private = true;
 
     // Update main/module/types to point to dist
-    if (hasCJS) {
+    if (options.formats.cjs) {
       rootPkg.main = `./dist/src/${mainEntry}.cjs`;
     }
     rootPkg.module = `./dist/src/${mainEntry}.js`;
@@ -703,11 +803,20 @@ export async function build(cwd: string, save: boolean = false) {
   // Show summary
   console.log(`\n  Output: ${distDir}`);
   console.log(`\n  Entries: ${entries.length}`);
-  if (hasCJS) {
-    console.log(`\n  Formats: ESM, CJS${hasUMD ? ", UMD" : ""}`);
+  if (options.formats.cjs) {
+    console.log(`\n  Formats: ESM, CJS${options.formats.umd ? ", UMD" : ""}`);
   } else {
-    console.log(`\n  Formats: ESM${hasUMD ? ", UMD" : ""}`);
+    console.log(`\n  Formats: ESM${options.formats.umd ? ", UMD" : ""}`);
   }
+
+  // Create rootPkg based on whether --save was used
+  let rootPkg = pkg;
+  if (save) {
+    // rootPkg was already created and saved above
+    rootPkg = JSON.parse(await FS.readFile(pkgPath, "utf-8")) as PackageJSON;
+  }
+
+  return {distPkg: cleanedPkg, rootPkg};
 }
 
 export async function publish(cwd: string, save: boolean = true) {
@@ -733,7 +842,7 @@ export async function publish(cwd: string, save: boolean = true) {
   });
 
   if (exitCode === 0) {
-    const distPkg = JSON.parse(await FS.readFile(distPkgPath, "utf-8")) as PackageJson;
+    const distPkg = JSON.parse(await FS.readFile(distPkgPath, "utf-8")) as PackageJSON;
     console.log(`\nPublished ${distPkg.name}@${distPkg.version}!`);
   } else {
     throw new Error("npm publish failed");

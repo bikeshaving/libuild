@@ -18,7 +18,7 @@ export async function createTempDir(testName: string): Promise<string> {
  */
 export async function removeTempDir(tempDir: string): Promise<void> {
   try {
-    await fs.rm(tempDir, { recursive: true, force: true });
+    await fs.rm(tempDir, {recursive: true, force: true});
   } catch (error) {
     // Ignore cleanup errors - temp dirs will be cleaned up by OS eventually
     console.warn(`Warning: Could not clean up temp directory ${tempDir}:`, error);
@@ -27,10 +27,10 @@ export async function removeTempDir(tempDir: string): Promise<void> {
 
 export async function copyFixture(fixtureName: string, targetDir: string) {
   const fixtureDir = path.join(__dirname, "fixtures", fixtureName);
-  await fs.cp(fixtureDir, targetDir, { recursive: true });
+  await fs.cp(fixtureDir, targetDir, {recursive: true});
 }
 
-export async function readJson(filePath: string) {
+export async function readJSON(filePath: string) {
   const content = await fs.readFile(filePath, "utf-8");
   return JSON.parse(content);
 }

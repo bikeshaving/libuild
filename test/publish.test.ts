@@ -1,8 +1,8 @@
-import { test, expect } from "bun:test";
+import {test, expect} from "bun:test";
 import * as fs from "fs/promises";
 import * as path from "path";
-import { build } from "../src/libuild.ts";
-import { createTempDir, removeTempDir, copyFixture, readJson, fileExists } from "./test-utils.ts";
+import {build} from "../src/libuild.ts";
+import {createTempDir, removeTempDir, copyFixture, readJSON, fileExists} from "./test-utils.ts";
 
 // Test the parts of publish() we can test without mocking npm
 test("publish() prerequisite: build creates dist/package.json", async () => {
@@ -19,7 +19,7 @@ test("publish() prerequisite: build creates dist/package.json", async () => {
   expect(await fileExists(distPkgPath)).toBe(true);
   
   // Verify the dist package.json has the expected structure for publishing
-  const distPkg = await readJson(distPkgPath);
+  const distPkg = await readJSON(distPkgPath);
   expect(distPkg.name).toBeDefined();
   expect(distPkg.version).toBeDefined();
   expect(distPkg.main).toBeDefined();
@@ -51,7 +51,7 @@ test("publish() error case: no package.json", async () => {
   const testDir = await createTempDir("publish-no-pkg");
   
   // Create src but no package.json
-  await fs.mkdir(path.join(testDir, "src"), { recursive: true });
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
   await fs.writeFile(path.join(testDir, "src", "index.ts"), 'export const hello = "world";');
   
   // Build (which publish calls first) should fail
