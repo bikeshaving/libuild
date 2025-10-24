@@ -1,0 +1,7 @@
+{
+  "name": "umd-lib",
+  "version": "1.0.0",
+  "description": "A library that generates UMD builds",
+  "type": "module",
+  "private": true
+}

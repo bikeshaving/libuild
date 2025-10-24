@@ -1,0 +1,88 @@
+{
+  "name": "@b9g/libuild",
+  "version": "0.1.0",
+  "description": "Zero-config library builds",
+  "main": "./dist/src/libuild.cjs",
+  "private": true,
+  "bin": {
+    "libuild": "./dist/src/cli.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "bun run src/cli.ts",
+    "dev": "bun run src/cli.ts",
+    "publish": "bun run src/cli.ts publish",
+    "test": "bun test",
+    "test-src": "node test.js"
+  },
+  "dependencies": {
+    "esbuild": "^0.19.0",
+    "magic-string": "^0.30.0",
+    "typescript": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "keywords": [
+    "build",
+    "library",
+    "bundler",
+    "bun",
+    "zero-config",
+    "typescript"
+  ],
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bikeshaving/libuild.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bikeshaving/libuild/issues"
+  },
+  "license": "MIT",
+  "module": "./dist/src/libuild.js",
+  "types": "./dist/src/libuild.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/libuild.d.ts",
+      "import": "./dist/src/libuild.js",
+      "require": "./dist/src/libuild.cjs"
+    },
+    "./cli": {
+      "types": "./dist/src/cli.d.ts",
+      "import": "./dist/src/cli.js",
+      "require": "./dist/src/cli.cjs"
+    },
+    "./cli.js": {
+      "types": "./dist/src/cli.d.ts",
+      "import": "./dist/src/cli.js",
+      "require": "./dist/src/cli.cjs"
+    },
+    "./libuild": {
+      "types": "./dist/src/libuild.d.ts",
+      "import": "./dist/src/libuild.js",
+      "require": "./dist/src/libuild.cjs"
+    },
+    "./libuild.js": {
+      "types": "./dist/src/libuild.d.ts",
+      "import": "./dist/src/libuild.js",
+      "require": "./dist/src/libuild.cjs"
+    },
+    "./umd-plugin": {
+      "types": "./dist/src/umd-plugin.d.ts",
+      "import": "./dist/src/umd-plugin.js",
+      "require": "./dist/src/umd-plugin.cjs"
+    },
+    "./umd-plugin.js": {
+      "types": "./dist/src/umd-plugin.d.ts",
+      "import": "./dist/src/umd-plugin.js",
+      "require": "./dist/src/umd-plugin.cjs"
+    },
+    "./package.json": "./dist/package.json"
+  },
+  "files": [
+    "dist/"
+  ]
+}

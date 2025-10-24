@@ -1,0 +1,8 @@
+{
+  "name": "custom-main-lib",
+  "version": "1.0.0", 
+  "description": "A library with custom main entry",
+  "main": "src/api.js",
+  "type": "module",
+  "private": true
+}

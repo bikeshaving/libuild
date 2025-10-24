@@ -1,0 +1,11 @@
+{
+  "name": "simple-lib",
+  "version": "1.0.0",
+  "description": "A simple library for testing",
+  "main": "src/index.js",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "lodash": "^4.17.21"
+  }
+}

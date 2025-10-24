@@ -1,0 +1,15 @@
+{
+  "name": "multi-entry-lib",
+  "version": "2.0.0",
+  "description": "A library with multiple entry points",
+  "main": "dist/index.cjs",
+  "bin": {
+    "mytool": "src/cli.js"
+  },
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "echo 'should not appear in dist'",
+    "test": "echo 'dev script'"
+  }
+}

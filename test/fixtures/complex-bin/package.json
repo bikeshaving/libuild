@@ -1,0 +1,25 @@
+{
+  "name": "complex-bin-test",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "mytool": "src/cli.js",
+    "helper": "./src/bin/helper.ts",
+    "processor": "src/tools/processor.js"
+  },
+  "files": [
+    "src/**/*",
+    "docs/*.md"
+  ],
+  "scripts": {
+    "build": "src/build.js",
+    "test": "node src/test.js",
+    "dev": "bun src/dev.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/test/src-project.git",
+    "directory": "packages/src"
+  }
+}
