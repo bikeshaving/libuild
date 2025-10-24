@@ -137,7 +137,7 @@ dist/
   src/
     index.js       # ESM only
     index.d.ts
-    utils.js       # ESM only  
+    utils.js       # ESM only
     utils.d.ts
   package.json     # ESM-only exports
 ```
@@ -171,7 +171,7 @@ dist/
 ```json
 {
   "main": "src/index.cjs",
-  "module": "src/index.js", 
+  "module": "src/index.js",
   "types": "src/index.d.ts",
   "exports": {
     ".": {
