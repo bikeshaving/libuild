@@ -5,16 +5,13 @@ Zero-config library builds with ESBuild.
 ## Installation
 
 ```bash
-npm install -D libuild
-bun add -d libuild
+npm install -D @b9g/libuild
+bun add -d @b9g/libuild
 ```
 
 ## Usage
 
 ```bash
-# Initialize libuild in an existing project
-libuild init
-
 # Build your library (development mode - no package.json changes)
 libuild build
 
@@ -50,6 +47,17 @@ libuild publish
 - **CommonJS**: `.cjs` files for Node.js compatibility
 - **TypeScript**: `.d.ts` declaration files (when TypeScript is available)
 - **Clean package.json**: Optimized for consumers (no dev scripts)
+
+### Format Control
+- **ESM-only**: Remove the `main` field from package.json to skip CommonJS builds
+- **CommonJS detection**: Presence of `main` field enables `.cjs` builds
+- **UMD builds**: Add `src/umd.ts` for browser-compatible builds
+
+### Export Aliases
+- **Legacy support**: `./index.js` automatically aliases to `./index`
+- **JSX runtime**: `src/jsx-runtime.ts` auto-creates `./jsx-dev-runtime` alias
+- **Package.json**: Always exported as `./package.json`
+- **Custom exports**: Existing exports in package.json are preserved and enhanced
 
 ### Package.json Transformations
 - **Development mode** (default): Root package.json unchanged, no git noise
@@ -109,6 +117,31 @@ dist/
   package.json     # bin: { "mytool": "./src/cli.js" }
 ```
 
+### ESM-Only Library
+
+To build only ESM (no CommonJS), remove the `main` field:
+
+```json
+// package.json
+{
+  "name": "my-lib",
+  "module": "dist/src/index.js",  // ESM entry
+  "types": "dist/src/index.d.ts"
+  // no "main" field = no CJS
+}
+```
+
+Produces:
+```
+dist/
+  src/
+    index.js       # ESM only
+    index.d.ts
+    utils.js       # ESM only  
+    utils.d.ts
+  package.json     # ESM-only exports
+```
+
 ### Multi-Format with UMD
 
 ```
@@ -134,7 +167,7 @@ dist/
 
 ### Generated Package.json Exports
 
-**Dist package.json** (for consumers):
+**Dual format** (ESM + CommonJS):
 ```json
 {
   "main": "src/index.cjs",
@@ -161,6 +194,30 @@ dist/
 }
 ```
 
+**ESM-only** (no `main` field in source):
+```json
+{
+  "module": "src/index.js",
+  "types": "src/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    },
+    "./utils": {
+      "types": "./src/utils.d.ts",
+      "import": "./src/utils.js"
+    },
+    "./utils.js": {
+      "types": "./src/utils.d.ts",
+      "import": "./src/utils.js"
+    },
+    "./package.json": "./package.json"
+  }
+}
+```
+
 **Root package.json** (with --save):
 ```json
 {
@@ -178,13 +235,6 @@ dist/
 ```
 
 ## Commands
-
-### `libuild init`
-Migrates an existing project to use libuild:
-- Makes package private (development mode)
-- Adds build scripts
-- Updates .gitignore
-- Detects and suggests removing old build tools
 
 ### `libuild build` (default)
 Builds your library in development mode:
