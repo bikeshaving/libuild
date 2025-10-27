@@ -342,6 +342,43 @@ export function transformSrcToDist(value: any): any {
   return value;
 }
 
+function fixExportsForDist(obj: any): any {
+  if (typeof obj === "string") {
+    // Fix paths that incorrectly have ./dist/dist/dist/... -> ./src/
+    if (obj.includes("/dist/") && obj.includes("/src/")) {
+      // Extract everything after the last /src/
+      const match = obj.match(/.*\/src\/(.*)$/);
+      if (match) {
+        return `./src/${match[1]}`;
+      }
+    }
+    // Fix paths that incorrectly start with ./dist/src/ -> ./src/
+    if (obj.startsWith("./dist/src/")) {
+      return obj.replace("./dist/src/", "./src/");
+    }
+    // Fix package.json path
+    if (obj.includes("/dist/") && obj.endsWith("/package.json")) {
+      return "./package.json";
+    }
+    return obj;
+  } else if (Array.isArray(obj)) {
+    return obj.map(fixExportsForDist);
+  } else if (typeof obj === "object" && obj !== null) {
+    const fixed: any = {};
+    for (const [key, val] of Object.entries(obj)) {
+      // Handle special cases for package.json fields
+      if (key === "files" && Array.isArray(val)) {
+        // For files field in dist package.json, remove "dist/" entries since we're already in dist
+        fixed[key] = val.filter((file: string) => file !== "dist/" && file !== "dist").concat(val.includes("dist/") || val.includes("dist") ? ["src/"] : []);
+      } else {
+        fixed[key] = fixExportsForDist(val);
+      }
+    }
+    return fixed;
+  }
+  return obj;
+}
+
 function cleanPackageJSON(pkg: PackageJSON, mainEntry: string, options: BuildOptions): PackageJSON {
   const cleaned: PackageJSON = {
     name: pkg.name,
@@ -375,7 +412,7 @@ function cleanPackageJSON(pkg: PackageJSON, mainEntry: string, options: BuildOpt
     "browserslist",
   ];
 
-  const pathFields = ["bin", "files", "types", "scripts"];
+  const pathFields = ["files", "types", "scripts"];
 
   for (const field of fieldsToKeep) {
     if (pkg[field] !== undefined) {
@@ -392,6 +429,9 @@ function cleanPackageJSON(pkg: PackageJSON, mainEntry: string, options: BuildOpt
           // Apply path transformation to the filtered scripts
           cleaned[field] = transformSrcToDist(filteredScripts);
         }
+      } else if (field === "bin") {
+        // Apply path transformation to bin field
+        cleaned[field] = transformSrcToDist(pkg[field]);
       } else if (pathFields.includes(field)) {
         cleaned[field] = transformSrcToDist(pkg[field]);
       } else {
@@ -605,7 +645,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
 
   }
 
-  // Add triple-slash references for Deno
+  // Add triple-slash references for Deno (preserve shebang if present)
   for (const entry of entries) {
     if (entry === "umd") continue;
 
@@ -614,7 +654,16 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
 
     if (await fileExists(jsPath) && await fileExists(dtsPath)) {
       const content = await FS.readFile(jsPath, "utf-8");
-      await FS.writeFile(jsPath, `/// <reference types="./${entry}.d.ts" />\n${content}`);
+      
+      // Check if file starts with shebang
+      if (content.startsWith("#!")) {
+        const lines = content.split("\n");
+        const shebang = lines[0];
+        const rest = lines.slice(1).join("\n");
+        await FS.writeFile(jsPath, `${shebang}\n/// <reference types="./${entry}.d.ts" />\n${rest}`);
+      } else {
+        await FS.writeFile(jsPath, `/// <reference types="./${entry}.d.ts" />\n${content}`);
+      }
     }
   }
 
@@ -625,7 +674,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   console.log("  Generating package.json...");
   const cleanedPkg = cleanPackageJSON(pkg, mainEntry, options);
   const exportsResult = generateExports(entries, mainEntry, options, pkg.exports);
-  cleanedPkg.exports = exportsResult.exports;
+  cleanedPkg.exports = fixExportsForDist(exportsResult.exports);
 
   // Handle stale exports
   if (exportsResult.staleExports.length > 0) {
@@ -649,9 +698,12 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     }
   }
 
+  // Apply path fixes to the dist package.json
+  const fixedDistPkg = fixExportsForDist(cleanedPkg);
+  
   await FS.writeFile(
     Path.join(distDir, "package.json"),
-    JSON.stringify(cleanedPkg, null, 2) + "\n"
+    JSON.stringify(fixedDistPkg, null, 2) + "\n"
   );
 
   // Copy additional files
@@ -745,12 +797,14 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     const rootExports: any = {};
     for (const [key, value] of Object.entries(cleanedPkg.exports)) {
       if (typeof value === "string") {
-        rootExports[key] = `./dist${value.startsWith('.') ? value.slice(1) : value}`;
+        // Only add ./dist prefix if not already present
+        rootExports[key] = value.startsWith("./dist/") ? value : `./dist${value.startsWith('.') ? value.slice(1) : value}`;
       } else if (typeof value === "object" && value !== null) {
         rootExports[key] = {};
         for (const [subKey, subValue] of Object.entries(value)) {
           if (typeof subValue === "string") {
-            rootExports[key][subKey] = `./dist${subValue.startsWith('.') ? subValue.slice(1) : subValue}`;
+            // Only add ./dist prefix if not already present
+            rootExports[key][subKey] = subValue.startsWith("./dist/") ? subValue : `./dist${subValue.startsWith('.') ? subValue.slice(1) : subValue}`;
           }
         }
       }
@@ -816,7 +870,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     rootPkg = JSON.parse(await FS.readFile(pkgPath, "utf-8")) as PackageJSON;
   }
 
-  return {distPkg: cleanedPkg, rootPkg};
+  return {distPkg: fixedDistPkg, rootPkg};
 }
 
 export async function publish(cwd: string, save: boolean = true) {
@@ -831,8 +885,16 @@ export async function publish(cwd: string, save: boolean = true) {
     throw new Error("No dist/package.json found. Run 'libuild build' first.");
   }
 
+  // Read the package.json to check if it's a scoped package
+  const distPkg = JSON.parse(await FS.readFile(distPkgPath, "utf-8")) as PackageJSON;
+  
   // Run npm publish in dist directory
-  const proc = spawn("npm", ["publish"], {
+  const publishArgs = ["publish"];
+  if (distPkg.name.startsWith("@")) {
+    publishArgs.push("--access", "public");
+  }
+  
+  const proc = spawn("npm", publishArgs, {
     cwd: distDir,
     stdio: "inherit",
   });
