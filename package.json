@@ -70,16 +70,6 @@
       "import": "./dist/src/libuild.js",
       "require": "./dist/src/libuild.cjs"
     },
-    "./umd-plugin": {
-      "types": "./dist/src/umd-plugin.d.ts",
-      "import": "./dist/src/umd-plugin.js",
-      "require": "./dist/src/umd-plugin.cjs"
-    },
-    "./umd-plugin.js": {
-      "types": "./dist/src/umd-plugin.d.ts",
-      "import": "./dist/src/umd-plugin.js",
-      "require": "./dist/src/umd-plugin.cjs"
-    },
     "./package.json": "./dist/package.json"
   },
   "files": [

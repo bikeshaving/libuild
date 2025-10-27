@@ -3,8 +3,9 @@ import * as Path from "path";
 import {spawn} from "child_process";
 
 import * as ESBuild from "esbuild";
-import * as TS from "typescript";
-import {umdPlugin} from "./umd-plugin.js";
+import {umdPlugin} from "./plugins/umd.js";
+import {externalEntrypointsPlugin} from "./plugins/external.js";
+import {typescriptPlugin} from "./plugins/dts.js";
 
 interface PackageJSON {
   name: string;
@@ -46,7 +47,7 @@ async function findEntryPoints(srcDir: string): Promise<string[]> {
     .sort();
 }
 
-async function detectMainEntry(pkg: PackageJSON, entries: string[]): Promise<string> {
+function detectMainEntry(pkg: PackageJSON, entries: string[]): string {
   // If exports["."] is specified, try to extract the main entry from it
   if (pkg.exports && pkg.exports["."]) {
     const dotExport = pkg.exports["."];
@@ -464,7 +465,7 @@ async function fileExists(filePath: string): Promise<boolean> {
 
 
 export async function build(cwd: string, save: boolean = false): Promise<{distPkg: PackageJSON, rootPkg: PackageJSON}> {
-  console.log("Building with libuild...");
+  console.info("Building with libuild...");
 
   const srcDir = Path.join(cwd, "src");
   const distDir = Path.join(cwd, "dist");
@@ -513,15 +514,15 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       umd: entries.includes("umd")
     }
   };
-  
-  const mainEntry = await detectMainEntry(pkg, entries);
 
-  console.log("  Found entries:", entries.join(", "));
-  console.log("  Main entry:", mainEntry);
+  const mainEntry = detectMainEntry(pkg, entries);
+
+  console.info("  Found entries:", entries.join(", "));
+  console.info("  Main entry:", mainEntry);
   if (options.formats.cjs) {
-    console.log("  Formats: ESM, CJS" + (options.formats.umd ? ", UMD" : ""));
+    console.info("  Formats: ESM, CJS" + (options.formats.umd ? ", UMD" : ""));
   } else {
-    console.log("  Formats: ESM" + (options.formats.umd ? ", UMD" : "") + " (no main field - CJS disabled)");
+    console.info("  Formats: ESM" + (options.formats.umd ? ", UMD" : "") + " (no main field - CJS disabled)");
   }
 
   // Clean dist directory
@@ -550,49 +551,86 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     }
   }
 
-  // Build all regular entries together for shared chunk deduplication
+  // Build all regular entries with smart dependency resolution
   if (entryPoints.length > 0) {
-    // ESM build with splitting for shared chunks
-    console.log(`  Building ${entryPoints.length} entries (ESM)...`);
-    await ESBuild.build({
-      entryPoints,
-      outdir: distSrcDir,
-      format: "esm",
-      entryNames: "[name]",
-      outExtension: {".js": ".js"},
-      bundle: true,
-      splitting: true, // Enable shared chunk extraction
-      minify: false,
-      sourcemap: true,
-      external: Object.keys(pkg.dependencies || {}),
-      platform: "node",
-      target: "node16",
+    // Get entry point names for external resolution (both .ts and .js versions)
+    const entryNames = entryPoints.map(path => {
+      const name = Path.basename(path, Path.extname(path));
+      return name;
     });
 
-    // CJS build (only if main field exists)
-    if (options.formats.cjs) {
-      console.log(`  Building ${entryPoints.length} entries (CJS)...`);
+    // ESM build - each entry can import from other entries
+    console.info(`  Building ${entryPoints.length} entries (ESM)...`);
+    for (const entryPoint of entryPoints) {
+      const entryName = Path.basename(entryPoint, Path.extname(entryPoint));
+
+      // External includes npm deps only (relative imports handled by plugin)
+      const externalDeps = Object.keys(pkg.dependencies || {});
+      const otherEntries = entryNames.filter(name => name !== entryName);
+
       await ESBuild.build({
-        entryPoints,
+        entryPoints: [entryPoint],
         outdir: distSrcDir,
-        format: "cjs",
-        entryNames: "[name]",
-        outExtension: {".js": ".cjs"},
+        format: "esm",
+        outExtension: {".js": ".js"},
         bundle: true,
         minify: false,
         sourcemap: true,
-        external: Object.keys(pkg.dependencies || {}),
+        external: externalDeps,
         platform: "node",
         target: "node16",
-        // Note: CJS doesn't support splitting, but building together still helps with consistency
+        plugins: [
+          externalEntrypointsPlugin({
+            entryNames,
+            currentEntry: entryName,
+            outputExtension: ".js"
+          }),
+          typescriptPlugin({
+            outDir: distSrcDir,
+            rootDir: srcDir,
+            entryPoints: [entryPoint]
+          })
+        ],
       });
+    }
+
+    // CJS build (only if main field exists)
+    if (options.formats.cjs) {
+      console.info(`  Building ${entryPoints.length} entries (CJS)...`);
+      for (const entryPoint of entryPoints) {
+        const entryName = Path.basename(entryPoint, Path.extname(entryPoint));
+
+        // External includes npm deps only (relative imports handled by plugin)
+        const externalDeps = Object.keys(pkg.dependencies || {});
+        const otherEntries = entryNames.filter(name => name !== entryName);
+
+        await ESBuild.build({
+          entryPoints: [entryPoint],
+          outdir: distSrcDir,
+          format: "cjs",
+          outExtension: {".js": ".cjs"},
+          bundle: true,
+          minify: false,
+          sourcemap: true,
+          external: externalDeps,
+          platform: "node",
+          target: "node16",
+          plugins: [
+            externalEntrypointsPlugin({
+              entryNames,
+              currentEntry: entryName,
+              outputExtension: ".cjs"
+            })
+          ],
+        });
+      }
     }
   }
 
   // Build UMD entries separately (they need special plugin handling)
   for (const umdPath of umdEntries) {
     const entry = Path.basename(umdPath, Path.extname(umdPath));
-    console.log(`  Building ${entry} (UMD)...`);
+    console.info(`  Building ${entry} (UMD)...`);
     const globalName = pkg.name.includes("/")
       ? pkg.name.split("/").pop()!.replace(/-/g, "").charAt(0).toUpperCase() + pkg.name.split("/").pop()!.replace(/-/g, "").slice(1)
       : pkg.name.replace(/-/g, "").charAt(0).toUpperCase() + pkg.name.replace(/-/g, "").slice(1);
@@ -601,7 +639,6 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       entryPoints: [umdPath],
       outdir: distSrcDir,
       format: "cjs",
-      entryNames: "[name]",
       bundle: true,
       minify: false,
       sourcemap: true,
@@ -612,38 +649,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     });
   }
 
-  // Generate TypeScript declarations using TypeScript compiler API
-  console.log("  Generating TypeScript declarations...");
-
-  // Find all TypeScript source files (including UMD entries)
-  const allTsFiles = [...entryPoints, ...umdEntries].filter(file => file.endsWith('.ts'));
-
-  if (allTsFiles.length > 0) {
-    const compilerOptions: TS.CompilerOptions = {
-      declaration: true,
-      emitDeclarationOnly: true,
-      outDir: distSrcDir,
-      rootDir: srcDir,
-      skipLibCheck: true,
-      esModuleInterop: true,
-      target: TS.ScriptTarget.ES2020,
-      module: TS.ModuleKind.ESNext,
-    };
-
-    // Create program with explicit config to avoid tsconfig.json interference
-    const program = TS.createProgram(allTsFiles, compilerOptions);
-    const emitResult = program.emit();
-
-    if (emitResult.diagnostics.length > 0) {
-      const diagnostics = TS.formatDiagnosticsWithColorAndContext(emitResult.diagnostics, {
-        getCanonicalFileName: path => path,
-        getCurrentDirectory: () => cwd,
-        getNewLine: () => '\n'
-      });
-      throw new Error(`TypeScript declaration generation failed:\n${diagnostics}`);
-    }
-
-  }
+  // TypeScript declarations are now generated by the TypeScript plugin during ESM build
 
   // Add triple-slash references for Deno (preserve shebang if present)
   for (const entry of entries) {
@@ -654,7 +660,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
 
     if (await fileExists(jsPath) && await fileExists(dtsPath)) {
       const content = await FS.readFile(jsPath, "utf-8");
-      
+
       // Check if file starts with shebang
       if (content.startsWith("#!")) {
         const lines = content.split("\n");
@@ -671,7 +677,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   const autoDiscoveredFiles: string[] = [];
 
   // Generate package.json
-  console.log("  Generating package.json...");
+  console.info("  Generating package.json...");
   const cleanedPkg = cleanPackageJSON(pkg, mainEntry, options);
   const exportsResult = generateExports(entries, mainEntry, options, pkg.exports);
   cleanedPkg.exports = fixExportsForDist(exportsResult.exports);
@@ -683,7 +689,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       console.warn(`   - ${staleExport}`);
     }
     if (save) {
-      console.log("   Removing stale exports from root package.json (--save mode)");
+      console.info("   Removing stale exports from root package.json (--save mode)");
     } else {
       console.warn("   Use --save to remove these from root package.json");
     }
@@ -700,7 +706,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
 
   // Apply path fixes to the dist package.json
   const fixedDistPkg = fixExportsForDist(cleanedPkg);
-  
+
   await FS.writeFile(
     Path.join(distDir, "package.json"),
     JSON.stringify(fixedDistPkg, null, 2) + "\n"
@@ -713,7 +719,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   for (const file of defaultFilesToCopy) {
     const srcPath = Path.join(cwd, file);
     if (await fileExists(srcPath)) {
-      console.log(`  Copying ${file}...`);
+      console.info(`  Copying ${file}...`);
       await FS.copyFile(srcPath, Path.join(distDir, file));
     }
   }
@@ -724,7 +730,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     for (const commonFile of commonFiles) {
       const commonPath = Path.join(cwd, commonFile);
       if (await fileExists(commonPath) && !pkg.files.includes(commonFile)) {
-        console.log(`  Auto-discovered ${commonFile}, adding to files field...`);
+        console.info(`  Auto-discovered ${commonFile}, adding to files field...`);
         pkg.files.push(commonFile);
         autoDiscoveredFiles.push(commonFile);
       }
@@ -733,7 +739,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
 
   // Copy files specified in package.json files field
   if (pkg.files && Array.isArray(pkg.files)) {
-    console.log("  Copying files from package.json files field...");
+    console.info("  Copying files from package.json files field...");
 
     for (const pattern of pkg.files) {
       if (typeof pattern === "string" && (pattern.includes("src") || pattern.includes("dist"))) {
@@ -748,18 +754,18 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
         if (await fileExists(srcPath)) {
           const stat = await FS.stat(srcPath);
           if (stat.isDirectory()) {
-            console.log(`  Copying directory ${pattern}/...`);
+            console.info(`  Copying directory ${pattern}/...`);
             await FS.mkdir(Path.dirname(destPath), {recursive: true});
             await FS.cp(srcPath, destPath, {recursive: true});
           } else {
-            console.log(`  Copying ${pattern}...`);
+            console.info(`  Copying ${pattern}...`);
             await FS.mkdir(Path.dirname(destPath), {recursive: true});
             await FS.copyFile(srcPath, destPath);
           }
         } else if (pattern.includes("*")) {
           const baseDir = pattern.split("*")[0].replace(/\/$/, "");
           if (baseDir && await fileExists(Path.join(cwd, baseDir))) {
-            console.log(`  Copying pattern ${pattern}...`);
+            console.info(`  Copying pattern ${pattern}...`);
             const baseSrcPath = Path.join(cwd, baseDir);
             const baseDestPath = Path.join(distDir, baseDir);
             await FS.mkdir(Path.dirname(baseDestPath), {recursive: true});
@@ -777,7 +783,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   }
 
   if (save) {
-    console.log("  Updating root package.json...");
+    console.info("  Updating root package.json...");
     const rootPkg = {...pkg};
 
     rootPkg.private = true;
@@ -849,18 +855,18 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
 
     await FS.writeFile(pkgPath, JSON.stringify(rootPkg, null, 2) + "\n");
   } else {
-    console.log("  Skipping root package.json update (use --save to enable)");
+    console.info("  Skipping root package.json update (use --save to enable)");
   }
 
-  console.log("\nBuild complete!");
+  console.info("\nBuild complete!");
 
   // Show summary
-  console.log(`\n  Output: ${distDir}`);
-  console.log(`\n  Entries: ${entries.length}`);
+  console.info(`\n  Output: ${distDir}`);
+  console.info(`\n  Entries: ${entries.length}`);
   if (options.formats.cjs) {
-    console.log(`\n  Formats: ESM, CJS${options.formats.umd ? ", UMD" : ""}`);
+    console.info(`\n  Formats: ESM, CJS${options.formats.umd ? ", UMD" : ""}`);
   } else {
-    console.log(`\n  Formats: ESM${options.formats.umd ? ", UMD" : ""}`);
+    console.info(`\n  Formats: ESM${options.formats.umd ? ", UMD" : ""}`);
   }
 
   // Create rootPkg based on whether --save was used
@@ -876,7 +882,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
 export async function publish(cwd: string, save: boolean = true) {
   await build(cwd, save);
 
-  console.log("\nPublishing to npm...");
+  console.info("\nPublishing to npm...");
 
   const distDir = Path.join(cwd, "dist");
   const distPkgPath = Path.join(distDir, "package.json");
@@ -887,13 +893,13 @@ export async function publish(cwd: string, save: boolean = true) {
 
   // Read the package.json to check if it's a scoped package
   const distPkg = JSON.parse(await FS.readFile(distPkgPath, "utf-8")) as PackageJSON;
-  
+
   // Run npm publish in dist directory
   const publishArgs = ["publish"];
   if (distPkg.name.startsWith("@")) {
     publishArgs.push("--access", "public");
   }
-  
+
   const proc = spawn("npm", publishArgs, {
     cwd: distDir,
     stdio: "inherit",
@@ -905,7 +911,7 @@ export async function publish(cwd: string, save: boolean = true) {
 
   if (exitCode === 0) {
     const distPkg = JSON.parse(await FS.readFile(distPkgPath, "utf-8")) as PackageJSON;
-    console.log(`\nPublished ${distPkg.name}@${distPkg.version}!`);
+    console.info(`\nPublished ${distPkg.name}@${distPkg.version}!`);
   } else {
     throw new Error("npm publish failed");
   }

@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import {parseArgs} from "util";
-import * as Path from "path";
 import {build, publish} from "./libuild.ts";
 
 const {values, positionals} = parseArgs({
