@@ -569,8 +569,12 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     for (const entryPoint of entryPoints) {
       const entryName = Path.basename(entryPoint, Path.extname(entryPoint));
 
-      // External includes npm deps only (relative imports handled by plugin)
-      const externalDeps = Object.keys(pkg.dependencies || {});
+      // External includes all npm deps (relative imports handled by plugin)
+      const externalDeps = [
+        ...Object.keys(pkg.dependencies || {}),
+        ...Object.keys(pkg.peerDependencies || {}),
+        ...Object.keys(pkg.optionalDependencies || {})
+      ];
 
       await ESBuild.build({
         entryPoints: [entryPoint],
@@ -604,8 +608,12 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       for (const entryPoint of entryPoints) {
         const entryName = Path.basename(entryPoint, Path.extname(entryPoint));
 
-        // External includes npm deps only (relative imports handled by plugin)
-        const externalDeps = Object.keys(pkg.dependencies || {});
+        // External includes all npm deps (relative imports handled by plugin)
+        const externalDeps = [
+          ...Object.keys(pkg.dependencies || {}),
+          ...Object.keys(pkg.peerDependencies || {}),
+          ...Object.keys(pkg.optionalDependencies || {})
+        ];
         await ESBuild.build({
           entryPoints: [entryPoint],
           outdir: distSrcDir,
