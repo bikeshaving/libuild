@@ -895,7 +895,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   return {distPkg: fixedDistPkg, rootPkg};
 }
 
-export async function publish(cwd: string, save: boolean = true) {
+export async function publish(cwd: string, save: boolean = true, extraArgs: string[] = []) {
   await build(cwd, save);
 
   console.info("\nPublishing to npm...");
@@ -915,6 +915,9 @@ export async function publish(cwd: string, save: boolean = true) {
   if (distPkg.name.startsWith("@")) {
     publishArgs.push("--access", "public");
   }
+  
+  // Add any extra arguments passed from CLI
+  publishArgs.push(...extraArgs);
 
   const proc = spawn("npm", publishArgs, {
     cwd: distDir,
