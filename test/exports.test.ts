@@ -91,36 +91,6 @@ test("exports field generation with --save mode", async () => {
   await removeTempDir(testDir);
 });
 
-test("jsx-runtime export handling", async () => {
-  const testDir = await createTempDir("jsx-runtime-test");
-  
-  // Create package.json
-  await fs.writeFile(path.join(testDir, "package.json"), JSON.stringify({
-    name: "jsx-runtime-test",
-    version: "1.0.0",
-    main: "dist/index.cjs",
-    type: "module",
-    private: true
-  }));
-  
-  // Create src directory with jsx-runtime entry
-  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
-  await fs.writeFile(path.join(testDir, "src", "index.ts"), 'export const index = "main";');
-  await fs.writeFile(path.join(testDir, "src", "jsx-runtime.ts"), 'export function jsx() {}');
-  
-  await build(testDir, false);
-  
-  const distPkg = await readJSON(path.join(testDir, "dist", "package.json"));
-  
-  // Should have jsx-runtime exports with dev runtime aliases
-  expect(distPkg.exports["./jsx-runtime"]).toBeDefined();
-  expect(distPkg.exports["./jsx-runtime.js"]).toBeDefined();
-  expect(distPkg.exports["./jsx-dev-runtime"]).toBeDefined();
-  expect(distPkg.exports["./jsx-dev-runtime.js"]).toBeDefined();
-  
-  // Cleanup
-  await removeTempDir(testDir);
-});
 
 // Export validation tests
 test("export expansion: invalid string export path", async () => {

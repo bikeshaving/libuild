@@ -23,26 +23,26 @@ test("smart dependency resolution - entry points don't inline other entry points
   expect(await fileExists(path.join(distSrcDir, "utils.cjs"))).toBe(true);
   
   // Read the CLI files to check they import rather than bundle
-  const cliEsm = await fs.readFile(path.join(distSrcDir, "cli.js"), "utf-8");
-  const cliCjs = await fs.readFile(path.join(distSrcDir, "cli.cjs"), "utf-8");
+  const cliESM = await fs.readFile(path.join(distSrcDir, "cli.js"), "utf-8");
+  const cliCJS = await fs.readFile(path.join(distSrcDir, "cli.cjs"), "utf-8");
   
   // CLI should import from utils, not bundle it
-  expect(cliEsm).toContain('import'); // Should have import statement
-  expect(cliEsm).toContain('./utils.js'); // Should import from utils.js
-  expect(cliEsm).not.toContain('function add'); // Should NOT contain inlined utils code
+  expect(cliESM).toContain('import'); // Should have import statement
+  expect(cliESM).toContain('./utils.js'); // Should import from utils.js
+  expect(cliESM).not.toContain('function add'); // Should NOT contain inlined utils code
   
   // CJS should require from utils
-  expect(cliCjs).toContain('require'); // Should have require statement
-  expect(cliCjs).toContain('./utils.cjs'); // Should require from utils.cjs
-  expect(cliCjs).not.toContain('function add'); // Should NOT contain inlined utils code
+  expect(cliCJS).toContain('require'); // Should have require statement
+  expect(cliCJS).toContain('./utils.cjs'); // Should require from utils.cjs
+  expect(cliCJS).not.toContain('function add'); // Should NOT contain inlined utils code
   
   // Utils files should contain the actual implementation
-  const utilsEsm = await fs.readFile(path.join(distSrcDir, "utils.js"), "utf-8");
-  const utilsCjs = await fs.readFile(path.join(distSrcDir, "utils.cjs"), "utf-8");
+  const utilsESM = await fs.readFile(path.join(distSrcDir, "utils.js"), "utf-8");
+  const utilsCJS = await fs.readFile(path.join(distSrcDir, "utils.cjs"), "utf-8");
   
-  expect(utilsEsm).toContain('function add'); // Utils should have the functions
-  expect(utilsEsm).toContain('export'); // Should export functions
-  expect(utilsCjs).toContain('function add'); // CJS should have the functions
+  expect(utilsESM).toContain('function add'); // Utils should have the functions
+  expect(utilsESM).toContain('export'); // Should export functions
+  expect(utilsCJS).toContain('function add'); // CJS should have the functions
   
   // Check file sizes - CLI should be much smaller than utils since it's not bundling
   const cliStats = await fs.stat(path.join(distSrcDir, "cli.js"));
@@ -63,20 +63,20 @@ test("build performance - no duplicate code between entry points", async () => {
   const distSrcDir = path.join(testDir, "dist", "src");
   
   // Read all built files
-  const cliJs = await fs.readFile(path.join(distSrcDir, "cli.js"), "utf-8");
-  const utilsJs = await fs.readFile(path.join(distSrcDir, "utils.js"), "utf-8");
-  const apiJs = await fs.readFile(path.join(distSrcDir, "api.js"), "utf-8");
+  const cliJS = await fs.readFile(path.join(distSrcDir, "cli.js"), "utf-8");
+  const utilsJS = await fs.readFile(path.join(distSrcDir, "utils.js"), "utf-8");
+  const apiJS = await fs.readFile(path.join(distSrcDir, "api.js"), "utf-8");
   
   // The add function should only be in utils.js, not duplicated
-  const addFunctionMatches = [cliJs, utilsJs, apiJs].filter(content => 
+  const addFunctionMatches = [cliJS, utilsJS, apiJS].filter(content => 
     content.includes('function add(') || content.includes('function add ')
   );
   
   // Only utils.js should contain the add function implementation
   expect(addFunctionMatches.length).toBe(1);
-  expect(utilsJs).toContain('function add');
-  expect(cliJs).not.toContain('function add(');
-  expect(apiJs).not.toContain('function add(');
+  expect(utilsJS).toContain('function add');
+  expect(cliJS).not.toContain('function add(');
+  expect(apiJS).not.toContain('function add(');
   
   await removeTempDir(testDir);
 });
@@ -125,18 +125,18 @@ test("external entry points plugin handles different extensions correctly", asyn
   const distSrcDir = path.join(testDir, "dist", "src");
   
   // Read the built files to check import transformations
-  const cliEsm = await fs.readFile(path.join(distSrcDir, "cli.js"), "utf-8");
-  const cliCjs = await fs.readFile(path.join(distSrcDir, "cli.cjs"), "utf-8");
+  const cliESM = await fs.readFile(path.join(distSrcDir, "cli.js"), "utf-8");
+  const cliCJS = await fs.readFile(path.join(distSrcDir, "cli.cjs"), "utf-8");
   
   // ESM should import .js files
-  expect(cliEsm).toContain('"./utils.js"');
-  expect(cliEsm).not.toContain('"./utils.ts"');
-  expect(cliEsm).not.toContain('"./utils.cjs"');
+  expect(cliESM).toContain('"./utils.js"');
+  expect(cliESM).not.toContain('"./utils.ts"');
+  expect(cliESM).not.toContain('"./utils.cjs"');
   
   // CJS should require .cjs files  
-  expect(cliCjs).toContain('./utils.cjs');
-  expect(cliCjs).not.toContain('./utils.js');
-  expect(cliCjs).not.toContain('./utils.ts');
+  expect(cliCJS).toContain('./utils.cjs');
+  expect(cliCJS).not.toContain('./utils.js');
+  expect(cliCJS).not.toContain('./utils.ts');
   
   await removeTempDir(testDir);
 });
@@ -159,8 +159,8 @@ test("runtime behavior - imports work correctly", async () => {
   expect(cliContent).not.toMatch(/require\s*\(\s*['"]\.\/utils/);
   
   // CJS version should have proper require
-  const cliCjsContent = await fs.readFile(path.join(distSrcDir, "cli.cjs"), "utf-8");
-  expect(cliCjsContent).toMatch(/require\s*\(\s*['"]\.\/utils\.cjs['"]\s*\)/);
+  const cliCJSContent = await fs.readFile(path.join(distSrcDir, "cli.cjs"), "utf-8");
+  expect(cliCJSContent).toMatch(/require\s*\(\s*['"]\.\/utils\.cjs['"]\s*\)/);
   
   await removeTempDir(testDir);
 });
@@ -308,9 +308,9 @@ test("all major features work together", async () => {
   const distSrcDir = path.join(distDir, "src");
   
   // 1. Smart dependency resolution
-  const cliJs = await fs.readFile(path.join(distSrcDir, "cli.js"), "utf-8");
-  expect(cliJs).toContain('from "./utils.js"'); // Imports, doesn't bundle
-  expect(cliJs).not.toContain("export function add"); // No inlined code
+  const cliJS = await fs.readFile(path.join(distSrcDir, "cli.js"), "utf-8");
+  expect(cliJS).toContain('from "./utils.js"'); // Imports, doesn't bundle
+  expect(cliJS).not.toContain("export function add"); // No inlined code
   
   // 2. Plugin extraction (no plugin artifacts in output)
   expect(await fileExists(path.join(distSrcDir, "plugins"))).toBe(false);
@@ -326,15 +326,15 @@ test("all major features work together", async () => {
   }
   
   // 4. Shebang preservation
-  expect(cliJs.startsWith("#!/usr/bin/env node")).toBe(true);
+  expect(cliJS.startsWith("#!/usr/bin/env node")).toBe(true);
   
   // 5. Clean output structure (no chunks)
   const chunkFiles = files.filter(f => f.includes('chunk'));
   expect(chunkFiles).toEqual([]);
   
   // 6. External entry points work for both ESM and CJS
-  const cliCjs = await fs.readFile(path.join(distSrcDir, "cli.cjs"), "utf-8");
-  expect(cliCjs).toContain('"./utils.cjs"'); // CJS requires .cjs
+  const cliCJS = await fs.readFile(path.join(distSrcDir, "cli.cjs"), "utf-8");
+  expect(cliCJS).toContain('"./utils.cjs"'); // CJS requires .cjs
   
   await removeTempDir(testDir);
 });
@@ -388,12 +388,12 @@ test("plugin integration doesn't break existing functionality", async () => {
   expect(await fileExists(path.join(distDir, "package.json"))).toBe(true);
   
   // File contents should be properly built
-  const indexJs = await fs.readFile(path.join(distSrcDir, "index.js"), "utf-8");
-  expect(indexJs.length).toBeGreaterThan(0);
+  const indexJS = await fs.readFile(path.join(distSrcDir, "index.js"), "utf-8");
+  expect(indexJS.length).toBeGreaterThan(0);
   
   // Triple-slash reference only if TypeScript declarations exist
   if (dtsExists) {
-    expect(indexJs).toContain("/// <reference types="); // Triple-slash reference
+    expect(indexJS).toContain("/// <reference types="); // Triple-slash reference
   }
   
   await removeTempDir(testDir);

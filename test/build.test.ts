@@ -765,6 +765,34 @@ test("main entry detection: default to first entry alphabetically", async () => 
   await removeTempDir(testDir);
 });
 
+test("main entry detection: module field", async () => {
+  const testDir = await createTempDir("module-field-test");
+  
+  // Create package.json with module field (but no main field)
+  await fs.writeFile(path.join(testDir, "package.json"), JSON.stringify({
+    name: "module-field-test",
+    version: "1.0.0",
+    module: "dist/custom.js", // Should detect "custom" as main entry
+    type: "module",
+    private: true
+  }));
+  
+  // Create src directory with multiple entries including the one referenced by module
+  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
+  await fs.writeFile(path.join(testDir, "src", "index.ts"), 'export const index = "index";');
+  await fs.writeFile(path.join(testDir, "src", "custom.ts"), 'export const custom = "custom main";');
+  
+  await build(testDir, false);
+  
+  // Should detect custom as main entry (from module field)
+  const distPkg = await readJSON(path.join(testDir, "dist", "package.json"));
+  expect(distPkg.module).toBe("src/custom.js");
+  expect(distPkg.types).toBe("src/custom.d.ts");
+  
+  // Cleanup
+  await removeTempDir(testDir);
+});
+
 // =============================================================================
 // ERROR HANDLING TESTS
 // =============================================================================
