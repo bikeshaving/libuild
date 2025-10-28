@@ -1,0 +1,8 @@
+{
+  "name": "shared-modules-test",
+  "version": "1.0.0",
+  "description": "Test fixture for shared module deduplication",
+  "main": "dist/index.cjs",
+  "type": "module",
+  "private": true
+}

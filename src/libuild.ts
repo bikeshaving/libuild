@@ -564,23 +564,49 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       return name;
     });
 
-    // ESM build - each entry can import from other entries
+    // ESM build - batch all entries to enable code sharing
     console.info(`  Building ${entryPoints.length} entries (ESM)...`);
-    for (const entryPoint of entryPoints) {
-      const entryName = Path.basename(entryPoint, Path.extname(entryPoint));
 
-      // External includes all npm deps (relative imports handled by plugin)
-      const externalDeps = [
-        ...Object.keys(pkg.dependencies || {}),
-        ...Object.keys(pkg.peerDependencies || {}),
-        ...Object.keys(pkg.optionalDependencies || {})
-      ];
+    // External includes all npm deps (relative imports handled by plugin)
+    const externalDeps = [
+      ...Object.keys(pkg.dependencies || {}),
+      ...Object.keys(pkg.peerDependencies || {}),
+      ...Object.keys(pkg.optionalDependencies || {})
+    ];
+
+    await ESBuild.build({
+      entryPoints,
+      outdir: distSrcDir,
+      format: "esm",
+      outExtension: {".js": ".js"},
+      bundle: true,
+      minify: false,
+      sourcemap: false,
+      external: externalDeps,
+      platform: "node",
+      target: "node16",
+      plugins: [
+        externalEntrypointsPlugin({
+          entryNames,
+          outputExtension: ".js"
+        }),
+        dtsPlugin({
+          outDir: distSrcDir,
+          rootDir: srcDir,
+          entryPoints
+        })
+      ],
+    });
+
+    // CJS build (only if main field exists)
+    if (options.formats.cjs) {
+      console.info(`  Building ${entryPoints.length} entries (CJS)...`);
 
       await ESBuild.build({
-        entryPoints: [entryPoint],
+        entryPoints,
         outdir: distSrcDir,
-        format: "esm",
-        outExtension: {".js": ".js"},
+        format: "cjs",
+        outExtension: {".js": ".cjs"},
         bundle: true,
         minify: false,
         sourcemap: false,
@@ -590,50 +616,10 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
         plugins: [
           externalEntrypointsPlugin({
             entryNames,
-            currentEntry: entryName,
-            outputExtension: ".js"
-          }),
-          dtsPlugin({
-            outDir: distSrcDir,
-            rootDir: srcDir,
-            entryPoints: [entryPoint]
+            outputExtension: ".cjs"
           })
         ],
       });
-    }
-
-    // CJS build (only if main field exists)
-    if (options.formats.cjs) {
-      console.info(`  Building ${entryPoints.length} entries (CJS)...`);
-      for (const entryPoint of entryPoints) {
-        const entryName = Path.basename(entryPoint, Path.extname(entryPoint));
-
-        // External includes all npm deps (relative imports handled by plugin)
-        const externalDeps = [
-          ...Object.keys(pkg.dependencies || {}),
-          ...Object.keys(pkg.peerDependencies || {}),
-          ...Object.keys(pkg.optionalDependencies || {})
-        ];
-        await ESBuild.build({
-          entryPoints: [entryPoint],
-          outdir: distSrcDir,
-          format: "cjs",
-          outExtension: {".js": ".cjs"},
-          bundle: true,
-          minify: false,
-          sourcemap: false,
-          external: externalDeps,
-          platform: "node",
-          target: "node16",
-            plugins: [
-            externalEntrypointsPlugin({
-              entryNames,
-              currentEntry: entryName,
-              outputExtension: ".cjs"
-            })
-          ],
-        });
-      }
     }
   }
 
