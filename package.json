@@ -1,6 +1,6 @@
 {
   "name": "@b9g/libuild",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Zero-config library builds",
   "main": "./dist/src/libuild.cjs",
   "private": true,
@@ -16,12 +16,19 @@
     "test-src": "node test.js"
   },
   "dependencies": {
-    "esbuild": "^0.19.0",
-    "magic-string": "^0.30.0",
+    "esbuild": "^0.19.0"
+  },
+  "peerDependencies": {
     "typescript": "^5.0.0"
   },
+  "peerDependenciesMeta": {
+    "typescript": {
+      "optional": true
+    }
+  },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "typescript": "^5.0.0"
   },
   "keywords": [
     "build",

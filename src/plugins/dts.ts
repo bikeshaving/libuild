@@ -1,7 +1,7 @@
 import * as FS from "fs/promises";
 import * as Path from "path";
 import * as ESBuild from "esbuild";
-import TS from "typescript";
+import type TS from "typescript";
 
 export interface TypeScriptPluginOptions {
   tsConfigPath?: string;
@@ -10,7 +10,7 @@ export interface TypeScriptPluginOptions {
   entryPoints: string[];
 }
 
-export function typescriptPlugin(options: TypeScriptPluginOptions): ESBuild.Plugin {
+export function dtsPlugin(options: TypeScriptPluginOptions): ESBuild.Plugin {
   return {
     name: "dts",
     setup(build) {
@@ -28,6 +28,15 @@ export function typescriptPlugin(options: TypeScriptPluginOptions): ESBuild.Plug
       build.onEnd(async (result) => {
         if (result.errors.length > 0) {
           return; // Don't generate declarations if there are errors
+        }
+
+        // Try to import TypeScript
+        let TS: typeof import("typescript");
+        try {
+          TS = await import("typescript");
+        } catch {
+          // TypeScript not available - skip .d.ts generation
+          return;
         }
 
         // Only generate declarations for actual entry points, not internal modules
@@ -89,7 +98,49 @@ export function typescriptPlugin(options: TypeScriptPluginOptions): ESBuild.Plug
             detail: undefined
           });
         }
+
+        // Add triple-slash references to JS files for Deno compatibility
+        await addTripleSlashReferences(tsFiles, options.outDir);
       });
     }
   };
 }
+
+async function addTripleSlashReferences(tsFiles: string[], outDir: string) {
+  for (const tsFile of tsFiles) {
+    const baseName = Path.basename(tsFile, Path.extname(tsFile));
+    const jsPath = Path.join(outDir, `${baseName}.js`);
+    const dtsPath = Path.join(outDir, `${baseName}.d.ts`);
+
+    // Only add reference if both files exist
+    const [jsExists, dtsExists] = await Promise.all([
+      FS.access(jsPath).then(() => true).catch(() => false),
+      FS.access(dtsPath).then(() => true).catch(() => false)
+    ]);
+
+    if (!jsExists || !dtsExists) continue;
+
+    const content = await FS.readFile(jsPath, "utf-8");
+    const referenceComment = `/// <reference types="./${baseName}.d.ts" />`;
+
+    let modifiedContent: string;
+    // Check if file starts with shebang
+    if (content.startsWith("#!")) {
+      const firstNewline = content.indexOf("\n");
+      if (firstNewline !== -1) {
+        modifiedContent = content.slice(0, firstNewline + 1) +
+                         `${referenceComment}\n` +
+                         content.slice(firstNewline + 1);
+      } else {
+        modifiedContent = content + `\n${referenceComment}`;
+      }
+    } else {
+      modifiedContent = `${referenceComment}\n${content}`;
+    }
+
+    // Write the modified content
+    await FS.writeFile(jsPath, modifiedContent);
+  }
+}
+
+

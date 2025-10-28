@@ -57,7 +57,6 @@ async function main() {
         await build(cwd, shouldSave);
         break;
       case "publish":
-      case "ship": // backwards compatibility
         await publish(cwd, shouldSave);
         break;
       default:

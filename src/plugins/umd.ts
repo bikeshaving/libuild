@@ -1,14 +1,13 @@
 import * as FS from "fs/promises";
 import * as Path from "path";
-import MagicString from "magic-string";
 
-interface UmdPluginOptions {
+interface UMDPluginOptions {
   globalName: string;
 }
 
-export function umdPlugin(options: UmdPluginOptions) {
+export function umdPlugin(options: UMDPluginOptions) {
   return {
-    name: "umd-wrapper",
+    name: "umd",
     setup(build: any) {
       build.onEnd(async (result: any) => {
         if (result.errors.length > 0) return;
@@ -20,7 +19,7 @@ export function umdPlugin(options: UmdPluginOptions) {
           const files = await FS.readdir(outputDir);
           for (const file of files) {
             if (file.endsWith(".js") && !file.endsWith(".js.map")) {
-              await wrapWithUmd(Path.join(outputDir, file), options.globalName);
+              await wrapWithUMD(Path.join(outputDir, file), options.globalName);
             }
           }
         }
@@ -29,23 +28,11 @@ export function umdPlugin(options: UmdPluginOptions) {
   };
 }
 
-async function wrapWithUmd(filePath: string, globalName: string) {
+async function wrapWithUMD(filePath: string, globalName: string) {
   const code = await FS.readFile(filePath, "utf-8");
-  const ms = new MagicString(code);
-
-  // Remove sourcemap comment
-  const sourcemapComment = code.match(/\/\/# sourceMappingURL=.+$/m);
-  if (sourcemapComment) {
-    const index = code.lastIndexOf(sourcemapComment[0]);
-    ms.remove(index, index + sourcemapComment[0].length);
-  }
 
   // Replace module.exports with return
-  const exportsMatch = code.match(/\nmodule\.exports\s*=\s*([^;]+);?\s*$/);
-  if (exportsMatch) {
-    const index = code.lastIndexOf(exportsMatch[0]);
-    ms.overwrite(index, index + exportsMatch[0].length, `\nreturn ${exportsMatch[1]};`);
-  }
+  let modifiedCode = code.replace(/\nmodule\.exports\s*=\s*([^;]+);?\s*$/, '\nreturn $1;');
 
   // UMD wrapper
   const umdHeader = `(function (root, factory) {
@@ -66,18 +53,7 @@ async function wrapWithUmd(filePath: string, globalName: string) {
 }));`;
 
   // Wrap with UMD
-  ms.prepend(umdHeader);
-  ms.append(umdFooter);
-
-  // Generate sourcemap and write files
-  const result = ms.toString();
-  const map = ms.generateMap({
-    file: Path.basename(filePath),
-    source: Path.basename(filePath).replace(".js", ".ts"),
-    includeContent: true,
-  });
+  const result = umdHeader + modifiedCode + umdFooter;
 
   await FS.writeFile(filePath, result);
-  await FS.writeFile(filePath + ".map", map.toString());
-  await FS.writeFile(filePath, result + `\n//# sourceMappingURL=${Path.basename(filePath)}.map`);
 }

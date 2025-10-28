@@ -24,20 +24,15 @@ libuild publish
 
 ## Features
 
-- **Zero configuration** - Works out of the box
-- **Structure-preserving builds** - Maintains src/ directory structure in dist/
-- **Multiple formats** - ESM, CommonJS, and TypeScript declarations
-- **Universal compatibility** - No runtime requirements (Node.js, Bun, Deno)
-- **Smart entry detection** - Automatically finds all library entry points
-- **Development-friendly** - Optional --save flag prevents git noise during development
-- **Perfect npm link** - Works from both project root and dist directory
-- **UMD builds** - Optional browser-compatible builds
-- **Clean output** - Optimized package.json for consumers
+- **No configuration** - All configuration is based on package.json and source files
+- **Multiple formats** - Supports ESM, CJS, UMD and generates d.ts files
+- **Clean output** - Only necessary files and package.json fields go into the package
+- **Development-friendly** - NPM link just works and changes can be saved to package.json
 
 ## Conventions
 
 ### Entry Points
-- **Library modules**: All top-level `.ts`/`.js` files in `src/` (excluding `_` prefixed files)
+- **Library modules**: All top-level `.js`/`.ts` files in `src/` (excluding `_` prefixed files)
 - **CLI binaries**: Any file referenced in `package.json` `bin` field gets compiled to standalone executable
 - **UMD builds**: If `src/umd.ts` exists, creates browser-compatible UMD build
 
@@ -54,8 +49,7 @@ libuild publish
 - **UMD builds**: Add `src/umd.ts` for browser-compatible builds
 
 ### Export Aliases
-- **Legacy support**: `./index.js` automatically aliases to `./index`
-- **JSX runtime**: `src/jsx-runtime.ts` auto-creates `./jsx-dev-runtime` alias
+- **Legacy support**: `./entry.js` automatically aliases to `./entry`
 - **Package.json**: Always exported as `./package.json`
 - **Custom exports**: Existing exports in package.json are preserved and enhanced
 
