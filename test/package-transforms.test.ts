@@ -1,6 +1,6 @@
 import {test, expect} from "bun:test";
-import * as fs from "fs/promises";
-import * as path from "path";
+import * as FS from "fs/promises";
+import * as Path from "path";
 import {build} from "../src/libuild.ts";
 import {createTempDir, removeTempDir, copyFixture, readJSON, fileExists} from "./test-utils.ts";
 
@@ -15,9 +15,9 @@ test("handles comprehensive package.json fields", async () => {
   await copyFixture("simple-lib", testDir);
   
   // Create docs directory and files for the files field pattern
-  await fs.mkdir(path.join(testDir, "docs"), {recursive: true});
-  await fs.writeFile(path.join(testDir, "docs", "api.md"), "# API Documentation");
-  await fs.writeFile(path.join(testDir, "docs", "guide.md"), "# User Guide");
+  await FS.mkdir(Path.join(testDir, "docs"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "docs", "api.md"), "# API Documentation");
+  await FS.writeFile(Path.join(testDir, "docs", "guide.md"), "# User Guide");
   
   // Create comprehensive package.json
   const comprehensivePkg = {
@@ -64,13 +64,13 @@ test("handles comprehensive package.json fields", async () => {
     files: ["src/**/*", "docs/*.md"]
   };
   
-  await fs.writeFile(path.join(testDir, "package.json"), JSON.stringify(comprehensivePkg, null, 2));
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify(comprehensivePkg, null, 2));
   
   // Build
   await build(testDir);
   
-  const distDir = path.join(testDir, "dist");
-  const distPkg = await readJSON(path.join(distDir, "package.json"));
+  const distDir = Path.join(testDir, "dist");
+  const distPkg = await readJSON(Path.join(distDir, "package.json"));
   
   // Check that all fields are preserved
   expect(distPkg.description).toBe("A comprehensive test package");
@@ -117,7 +117,7 @@ test("npm lifecycle scripts are preserved", async () => {
   const testDir = await createTempDir("lifecycle-scripts-test");
   
   // Create package.json with mix of scripts
-  await fs.writeFile(path.join(testDir, "package.json"), JSON.stringify({
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
     name: "lifecycle-scripts-test",
     version: "1.0.0",
     main: "dist/index.cjs",
@@ -132,12 +132,12 @@ test("npm lifecycle scripts are preserved", async () => {
   }));
   
   // Create src directory
-  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
-  await fs.writeFile(path.join(testDir, "src", "index.ts"), 'export const index = "main";');
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), 'export const index = "main";');
   
   await build(testDir, false);
   
-  const distPkg = await readJSON(path.join(testDir, "dist", "package.json"));
+  const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
   
   // Should only have lifecycle scripts
   expect(distPkg.scripts).toEqual({
@@ -157,7 +157,7 @@ test("file copy error: pattern with non-existent base directory", async () => {
   const testDir = await createTempDir("copy-error-test");
   
   // Create package.json with files pattern that has non-existent base
-  await fs.writeFile(path.join(testDir, "package.json"), JSON.stringify({
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
     name: "copy-error-test",
     version: "1.0.0",
     main: "dist/index.cjs",
@@ -167,8 +167,8 @@ test("file copy error: pattern with non-existent base directory", async () => {
   }));
   
   // Create src directory
-  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
-  await fs.writeFile(path.join(testDir, "src", "index.ts"), 'export const index = "main";');
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), 'export const index = "main";');
   
   await expect(build(testDir, false)).rejects.toThrow('Pattern base directory not found for "nonexistent/*.md"');
   
@@ -180,7 +180,7 @@ test("file copy error: missing file in files field", async () => {
   const testDir = await createTempDir("missing-file-test");
   
   // Create package.json with files field containing non-existent file
-  await fs.writeFile(path.join(testDir, "package.json"), JSON.stringify({
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
     name: "missing-file-test",
     version: "1.0.0",
     main: "dist/index.cjs",
@@ -190,8 +190,8 @@ test("file copy error: missing file in files field", async () => {
   }));
   
   // Create src directory
-  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
-  await fs.writeFile(path.join(testDir, "src", "index.ts"), 'export const index = "main";');
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), 'export const index = "main";');
   
   await expect(build(testDir, false)).rejects.toThrow('File specified in files field not found');
   
@@ -203,7 +203,7 @@ test("files field with invalid entry type", async () => {
   const testDir = await createTempDir("invalid-files-test");
   
   // Create package.json with invalid files field entry
-  await fs.writeFile(path.join(testDir, "package.json"), JSON.stringify({
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
     name: "invalid-files-test",
     version: "1.0.0",
     main: "dist/index.cjs",
@@ -213,8 +213,8 @@ test("files field with invalid entry type", async () => {
   }));
   
   // Create src directory
-  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
-  await fs.writeFile(path.join(testDir, "src", "index.ts"), 'export const index = "main";');
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), 'export const index = "main";');
   
   await expect(build(testDir, false)).rejects.toThrow("Invalid files field entry: 123. Files field entries must be strings.");
   
@@ -231,13 +231,13 @@ test("build without --save does not modify root package.json", async () => {
   
   // Copy fixture to temporary directory to avoid modifying original
   await copyFixture("simple-lib", testDir);
-  const originalPackage = await readJSON(path.join(testDir, "package.json"));
+  const originalPackage = await readJSON(Path.join(testDir, "package.json"));
   
   // Build without save
   await build(testDir, false);
   
   // Root package.json should be unchanged
-  const rootPkg = await readJSON(path.join(testDir, "package.json"));
+  const rootPkg = await readJSON(Path.join(testDir, "package.json"));
   expect(rootPkg).toEqual(originalPackage);
   
   // Cleanup
@@ -254,7 +254,7 @@ test("build with --save updates all package.json fields correctly", async () => 
   await build(testDir, true);
   
   // Check root package.json transformations
-  const rootPkg = await readJSON(path.join(testDir, "package.json"));
+  const rootPkg = await readJSON(Path.join(testDir, "package.json"));
   expect(rootPkg.main).toBe("./dist/src/index.cjs");
   expect(rootPkg.module).toBe("./dist/src/index.js");
   expect(rootPkg.types).toBe("./dist/src/index.d.ts");
@@ -283,12 +283,12 @@ test("adding new entry point updates exports in subsequent --save builds", async
   // First build with save
   await build(testDir, true);
   
-  let rootPkg = await readJSON(path.join(testDir, "package.json"));
+  let rootPkg = await readJSON(Path.join(testDir, "package.json"));
   expect(Object.keys(rootPkg.exports)).toEqual([".", "./index", "./index.js", "./package.json"]);
   
   // Add new entry point
-  await fs.writeFile(
-    path.join(testDir, "src", "utils.ts"),
+  await FS.writeFile(
+    Path.join(testDir, "src", "utils.ts"),
     'export const utils = "helper";'
   );
   
@@ -296,7 +296,7 @@ test("adding new entry point updates exports in subsequent --save builds", async
   await build(testDir, true);
   
   // Check that new entry point is in exports
-  rootPkg = await readJSON(path.join(testDir, "package.json"));
+  rootPkg = await readJSON(Path.join(testDir, "package.json"));
   expect(rootPkg.exports["./utils"]).toEqual({
     types: "./dist/src/utils.d.ts",
     import: "./dist/src/utils.js", 
@@ -315,7 +315,7 @@ test("removing entry point removes it from exports in subsequent --save builds",
   await copyFixture("multi-entry", testDir);
   
   // Verify utils.ts was copied
-  const utilsPath = path.join(testDir, "src", "utils.ts");
+  const utilsPath = Path.join(testDir, "src", "utils.ts");
   if (!await fileExists(utilsPath)) {
     throw new Error(`utils.ts not found after copy: ${utilsPath}`);
   }
@@ -323,42 +323,42 @@ test("removing entry point removes it from exports in subsequent --save builds",
   // First build with save
   await build(testDir, true);
   
-  let rootPkg = await readJSON(path.join(testDir, "package.json"));
+  let rootPkg = await readJSON(Path.join(testDir, "package.json"));
   expect(rootPkg.exports["./utils"]).toBeDefined();
   expect(rootPkg.exports["./api"]).toBeDefined();
   
   // Remove utils entry point (backup first)
-  const utilsBackup = await fs.readFile(utilsPath, "utf-8");
-  await fs.unlink(utilsPath);
+  const utilsBackup = await FS.readFile(utilsPath, "utf-8");
+  await FS.unlink(utilsPath);
   
   // Also remove the import from index.ts and cli.ts to prevent build errors
-  const indexPath = path.join(testDir, "src", "index.ts");
-  const indexContent = await fs.readFile(indexPath, "utf-8");
+  const indexPath = Path.join(testDir, "src", "index.ts");
+  const indexContent = await FS.readFile(indexPath, "utf-8");
   const indexBackup = indexContent;
   const newIndexContent = indexContent.replace("export * from './utils.js';\n", "");
-  await fs.writeFile(indexPath, newIndexContent);
+  await FS.writeFile(indexPath, newIndexContent);
   
-  const cliPath = path.join(testDir, "src", "cli.ts");
-  const cliContent = await fs.readFile(cliPath, "utf-8");
+  const cliPath = Path.join(testDir, "src", "cli.ts");
+  const cliContent = await FS.readFile(cliPath, "utf-8");
   const cliBackup = cliContent;
   const newCliContent = cliContent.replace("import {add} from './utils.js';\n", "").replace("console.log('CLI tool result:', add(2, 3));", "console.log('CLI tool result:', 5);");
-  await fs.writeFile(cliPath, newCliContent);
+  await FS.writeFile(cliPath, newCliContent);
   
   // Also remove the utils export from package.json to simulate user removing it
-  const pkgPath = path.join(testDir, "package.json");
+  const pkgPath = Path.join(testDir, "package.json");
   const pkgContent = await readJSON(pkgPath);
   const pkgBackup = JSON.stringify(pkgContent);
   if (pkgContent.exports && pkgContent.exports["./utils"]) {
     delete pkgContent.exports["./utils"];
     delete pkgContent.exports["./utils.js"];
-    await fs.writeFile(pkgPath, JSON.stringify(pkgContent, null, 2));
+    await FS.writeFile(pkgPath, JSON.stringify(pkgContent, null, 2));
   }
   
   // Build again with save
   await build(testDir, true);
   
   // Check that utils is removed from exports
-  rootPkg = await readJSON(path.join(testDir, "package.json"));
+  rootPkg = await readJSON(Path.join(testDir, "package.json"));
   expect(rootPkg.exports["./utils"]).toBeUndefined();
   expect(rootPkg.exports["./utils.js"]).toBeUndefined();
   expect(rootPkg.exports["./api"]).toBeDefined(); // api should still be there
@@ -380,16 +380,16 @@ test("complex bin field transformations", async () => {
   // Build with --save to test root package.json mutations
   await build(testDir, true);
   
-  const distDir = path.join(testDir, "dist");
+  const distDir = Path.join(testDir, "dist");
   
   // Check that all bin entries are built (structure-preserving)
   // Since there's no main field, only ESM should be generated
-  const distSrcDir = path.join(distDir, "src");
-  expect(await fileExists(path.join(distSrcDir, "cli.js"))).toBe(true);
-  expect(await fileExists(path.join(distSrcDir, "cli.cjs"))).toBe(false);
+  const distSrcDir = Path.join(distDir, "src");
+  expect(await fileExists(Path.join(distSrcDir, "cli.js"))).toBe(true);
+  expect(await fileExists(Path.join(distSrcDir, "cli.cjs"))).toBe(false);
   
   // Check dist package.json bin transformations
-  const distPkg = await readJSON(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(Path.join(distDir, "package.json"));
   expect(distPkg.bin).toEqual({
     mytool: "src/cli.js",               // src/cli.js → src/cli.js (npm convention)
     helper: "src/bin/helper.ts",        // ./src/bin/helper.ts → src/bin/helper.ts (npm convention)
@@ -397,7 +397,7 @@ test("complex bin field transformations", async () => {
   });
   
   // Check root package.json bin transformations
-  const rootPkg = await readJSON(path.join(testDir, "package.json"));
+  const rootPkg = await readJSON(Path.join(testDir, "package.json"));
   expect(rootPkg.bin).toEqual({
     mytool: "./dist/src/cli.js",
     helper: "./dist/src/bin/helper.ts", 
@@ -417,20 +417,20 @@ test("files field src transformations", async () => {
   // Build
   await build(testDir);
   
-  const distDir = path.join(testDir, "dist");
+  const distDir = Path.join(testDir, "dist");
   
   // Check dist package.json files transformations (structure-preserving)
-  const distPkg = await readJSON(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(Path.join(distDir, "package.json"));
   expect(distPkg.files).toEqual([
     "./src/**/*",    // src/**/* → ./src/**/*
     "docs/*.md"      // docs/*.md stays the same
   ]);
   
   // Check that docs files were actually copied
-  expect(await fileExists(path.join(distDir, "docs", "test.md"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "docs", "test.md"))).toBe(true);
   
   // Check root package.json files field stays the same (no --save)
-  const rootPkg = await readJSON(path.join(testDir, "package.json"));
+  const rootPkg = await readJSON(Path.join(testDir, "package.json"));
   expect(rootPkg.files).toEqual([
     "src/**/*",      // Original value preserved without --save
     "docs/*.md"
@@ -449,14 +449,14 @@ test("dev scripts should be filtered out in dist (only npm lifecycle scripts pre
   // Build
   await build(testDir);
   
-  const distDir = path.join(testDir, "dist");
+  const distDir = Path.join(testDir, "dist");
   
   // Check that dev scripts are NOT included in dist package.json (only npm lifecycle scripts)
-  const distPkg = await readJSON(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(Path.join(distDir, "package.json"));
   expect(distPkg.scripts).toBeUndefined(); // No npm lifecycle scripts in this fixture
   
   // Check that scripts in root are NOT transformed (no --save)
-  const rootPkg = await readJSON(path.join(testDir, "package.json"));
+  const rootPkg = await readJSON(Path.join(testDir, "package.json"));
   expect(rootPkg.scripts.build).toBe("src/build.js");    // No transformation without --save
   expect(rootPkg.scripts.test).toBe("node src/test.js"); // No transformation without --save
   expect(rootPkg.scripts.dev).toBe("bun src/dev.ts");    // No transformation without --save
@@ -474,10 +474,10 @@ test("repository field src transformations", async () => {
   // Build
   await build(testDir);
   
-  const distDir = path.join(testDir, "dist");
+  const distDir = Path.join(testDir, "dist");
   
   // Check repository transformations
-  const distPkg = await readJSON(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(Path.join(distDir, "package.json"));
   expect(distPkg.repository).toEqual({
     type: "git",
     url: "https://github.com/test/src-project.git",  // No change to URL
@@ -534,10 +534,10 @@ test("bin field with string value (not object)", async () => {
   const testDir = await createTempDir("string-bin");
   
   // Create fixture with string bin field
-  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
-  await fs.writeFile(path.join(testDir, "src/index.ts"), 'export const hello = "world";');
-  await fs.writeFile(path.join(testDir, "src/cli.ts"), '#!/usr/bin/env node\nconsole.log("CLI");');
-  await fs.writeFile(path.join(testDir, "package.json"), JSON.stringify({
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src/index.ts"), 'export const hello = "world";');
+  await FS.writeFile(Path.join(testDir, "src/cli.ts"), '#!/usr/bin/env node\nconsole.log("CLI");');
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
     name: "string-bin-test",
     version: "1.0.0",
     bin: "src/cli.js"  // String instead of object
@@ -546,14 +546,14 @@ test("bin field with string value (not object)", async () => {
   // Build
   await build(testDir);
   
-  const distDir = path.join(testDir, "dist");
+  const distDir = Path.join(testDir, "dist");
   
   // Check dist package.json bin transformation (structure-preserving)
-  const distPkg = await readJSON(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(Path.join(distDir, "package.json"));
   expect(distPkg.bin).toBe("src/cli.js");  // src/cli.js → src/cli.js (npm convention)
   
   // Check root package.json bin transformation (no --save)
-  const rootPkg = await readJSON(path.join(testDir, "package.json"));
+  const rootPkg = await readJSON(Path.join(testDir, "package.json"));
   expect(rootPkg.bin).toBe("src/cli.js");  // No transformation without --save
   
   // Cleanup
@@ -566,14 +566,14 @@ test("bin field with string value (not object)", async () => {
 test("scoped package handling and --access public", async () => {
   const testDir = await createTempDir("scoped-package");
   
-  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
-  await fs.writeFile(path.join(testDir, "src", "index.ts"), `
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), `
 export const scopedPackage = true;
 export const version = "1.0.0";
 `);
   
   // Create a scoped package
-  await fs.writeFile(path.join(testDir, "package.json"), JSON.stringify({
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
     name: "@test-scope/my-package",
     version: "1.0.0",
     type: "module",
@@ -583,8 +583,8 @@ export const version = "1.0.0";
   
   await build(testDir);
   
-  const distDir = path.join(testDir, "dist");
-  const distPkg = await readJSON(path.join(distDir, "package.json"));
+  const distDir = Path.join(testDir, "dist");
+  const distPkg = await readJSON(Path.join(distDir, "package.json"));
   
   // Should preserve scoped name
   expect(distPkg.name).toBe("@test-scope/my-package");
@@ -610,8 +610,8 @@ test("comprehensive build verification for multi-entry project", async () => {
   await copyFixture("multi-entry", testDir);
   await build(testDir);
   
-  const distDir = path.join(testDir, "dist");
-  const distSrcDir = path.join(distDir, "src");
+  const distDir = Path.join(testDir, "dist");
+  const distSrcDir = Path.join(distDir, "src");
   
   // Verify all expected files exist
   const expectedFiles = [
@@ -622,11 +622,11 @@ test("comprehensive build verification for multi-entry project", async () => {
   ];
   
   for (const file of expectedFiles) {
-    expect(await fileExists(path.join(distSrcDir, file))).toBe(true);
+    expect(await fileExists(Path.join(distSrcDir, file))).toBe(true);
   }
   
   // Verify package.json structure
-  const distPkg = await readJSON(path.join(distDir, "package.json"));
+  const distPkg = await readJSON(Path.join(distDir, "package.json"));
   
   // Main entry exports
   expect(distPkg.exports["."]).toEqual({
@@ -649,8 +649,8 @@ test("comprehensive build verification for multi-entry project", async () => {
   });
   
   // Verify smart dependency resolution (no inlining between entry points)
-  const cliContent = await fs.readFile(path.join(distSrcDir, "cli.js"), "utf-8");
-  const utilsContent = await fs.readFile(path.join(distSrcDir, "utils.js"), "utf-8");
+  const cliContent = await FS.readFile(Path.join(distSrcDir, "cli.js"), "utf-8");
+  const utilsContent = await FS.readFile(Path.join(distSrcDir, "utils.js"), "utf-8");
   
   // CLI should import from utils, not bundle it
   expect(cliContent).toContain('from "./utils.js"');
@@ -660,5 +660,188 @@ test("comprehensive build verification for multi-entry project", async () => {
   expect(utilsContent).toContain('function add');
   expect(utilsContent).toContain('export');
   
+  await removeTempDir(testDir);
+});
+
+// =============================================================================
+// Bin Path Transformations Tests
+// =============================================================================
+
+test("bin paths follow npm conventions (no ./ prefix)", async () => {
+  const testDir = await createTempDir("bin-paths-test");
+  
+  // Create package.json with bin field
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "bin-paths-test",
+    version: "1.0.0",
+    main: "dist/index.cjs",
+    bin: {
+      mytool: "./dist/src/cli.js"
+    },
+    type: "module",
+    private: true
+  }));
+  
+  // Create src directory with CLI entry
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), 'export const index = "main";');
+  await FS.writeFile(Path.join(testDir, "src", "cli.ts"), '#!/usr/bin/env node\nexport const cli = "tool";');
+  
+  await build(testDir, false);
+  
+  const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
+  
+  // Dist package.json should have bin path without ./ prefix
+  expect(distPkg.bin).toEqual({
+    mytool: "src/cli.js"
+  });
+  
+  // Verify the CLI file actually exists
+  expect(await fileExists(Path.join(testDir, "dist", "src", "cli.js"))).toBe(true);
+  
+  // Cleanup
+  await removeTempDir(testDir);
+});
+
+test("bin paths work correctly in --save mode (no double dist/ prefix)", async () => {
+  const testDir = await createTempDir("bin-save-mode");
+  
+  // Create package.json with bin field
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "bin-save-test",
+    version: "1.0.0",
+    main: "dist/index.cjs",
+    bin: {
+      mytool: "./dist/src/cli.js"
+    },
+    type: "module",
+    private: true
+  }));
+  
+  // Create src directory
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), 'export const index = "main";');
+  await FS.writeFile(Path.join(testDir, "src", "cli.ts"), '#!/usr/bin/env node\nexport const cli = "tool";');
+  
+  await build(testDir, true); // --save mode
+  
+  // Check root package.json
+  const rootPkg = await readJSON(Path.join(testDir, "package.json"));
+  
+  // Should NOT have double dist/ prefix
+  expect(rootPkg.bin).toEqual({
+    mytool: "./dist/src/cli.js"
+  });
+  
+  // Check dist package.json
+  const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
+  
+  // Should have correct relative path without ./ prefix
+  expect(distPkg.bin).toEqual({
+    mytool: "src/cli.js"
+  });
+  
+  // Cleanup
+  await removeTempDir(testDir);
+});
+
+test("bin paths with multiple binaries work correctly", async () => {
+  const testDir = await createTempDir("multiple-bins");
+  
+  // Create package.json with multiple bin entries
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "multiple-bins-test",
+    version: "1.0.0",
+    main: "dist/index.cjs",
+    bin: {
+      tool1: "./dist/src/cli1.js",
+      tool2: "./dist/src/cli2.js"
+    },
+    type: "module",
+    private: true
+  }));
+  
+  // Create src directory with multiple CLI entries
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), 'export const index = "main";');
+  await FS.writeFile(Path.join(testDir, "src", "cli1.ts"), '#!/usr/bin/env node\nexport const cli1 = "tool1";');
+  await FS.writeFile(Path.join(testDir, "src", "cli2.ts"), '#!/usr/bin/env node\nexport const cli2 = "tool2";');
+  
+  await build(testDir, false);
+  
+  const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
+  
+  // All bin paths should be correct
+  expect(distPkg.bin).toEqual({
+    tool1: "src/cli1.js",
+    tool2: "src/cli2.js"
+  });
+  
+  // Verify all CLI files exist
+  expect(await fileExists(Path.join(testDir, "dist", "src", "cli1.js"))).toBe(true);
+  expect(await fileExists(Path.join(testDir, "dist", "src", "cli2.js"))).toBe(true);
+  
+  // Cleanup
+  await removeTempDir(testDir);
+});
+
+test("bin paths handle string format (single binary)", async () => {
+  const testDir = await createTempDir("string-bin");
+  
+  // Create package.json with string bin field
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "string-bin-test",
+    version: "1.0.0",
+    main: "dist/index.cjs",
+    bin: "./dist/src/cli.js", // String format instead of object
+    type: "module",
+    private: true
+  }));
+  
+  // Create src directory
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), 'export const index = "main";');
+  await FS.writeFile(Path.join(testDir, "src", "cli.ts"), '#!/usr/bin/env node\nexport const cli = "tool";');
+  
+  await build(testDir, false);
+  
+  const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
+  
+  // String bin should be transformed correctly
+  expect(distPkg.bin).toBe("src/cli.js");
+  
+  // Cleanup
+  await removeTempDir(testDir);
+});
+
+test("bin paths work in --save mode with string format", async () => {
+  const testDir = await createTempDir("string-bin-save");
+  
+  // Create package.json with string bin field
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "string-bin-save-test",
+    version: "1.0.0",
+    main: "dist/index.cjs",
+    bin: "./dist/src/cli.js",
+    type: "module",
+    private: true
+  }));
+  
+  // Create src directory
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), 'export const index = "main";');
+  await FS.writeFile(Path.join(testDir, "src", "cli.ts"), '#!/usr/bin/env node\nexport const cli = "tool";');
+  
+  await build(testDir, true); // --save mode
+  
+  // Check root package.json
+  const rootPkg = await readJSON(Path.join(testDir, "package.json"));
+  expect(rootPkg.bin).toBe("./dist/src/cli.js");
+  
+  // Check dist package.json
+  const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
+  expect(distPkg.bin).toBe("src/cli.js");
+  
+  // Cleanup
   await removeTempDir(testDir);
 });
