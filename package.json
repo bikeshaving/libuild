@@ -5,7 +5,7 @@
   "main": "./dist/src/libuild.cjs",
   "private": true,
   "bin": {
-    "libuild": "dist/src/cli.js"
+    "libuild": "./dist/src/cli.js"
   },
   "type": "module",
   "scripts": {

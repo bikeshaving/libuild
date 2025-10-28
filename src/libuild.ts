@@ -348,7 +348,11 @@ export function transformSrcToDist(value: any): any {
 
 function transformBinPaths(value: any): any {
   if (typeof value === "string") {
-    // Transform dist/src/ paths to src/ without ./ prefix for npm conventions
+    // Transform ./dist/src/ paths to src/ without ./ prefix for npm conventions
+    if (value.startsWith("./dist/src/")) {
+      return value.replace("./dist/", "");
+    }
+    // Transform dist/src/ paths to src/ without ./ prefix for npm conventions  
     if (value.startsWith("dist/src/")) {
       return value.replace("dist/", "");
     }
@@ -395,6 +399,9 @@ function fixExportsForDist(obj: any): any {
       if (key === "files" && Array.isArray(val)) {
         // For files field in dist package.json, remove "dist/" entries since we're already in dist
         fixed[key] = val.filter((file: string) => file !== "dist/" && file !== "dist").concat(val.includes("dist/") || val.includes("dist") ? ["src/"] : []);
+      } else if (key === "bin") {
+        // Don't transform bin field - it's already been processed by transformBinPaths
+        fixed[key] = val;
       } else {
         fixed[key] = fixExportsForDist(val);
       }
@@ -816,12 +823,22 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     if (rootPkg.bin) {
       if (typeof rootPkg.bin === "string") {
         if (!rootPkg.bin.startsWith("./dist/")) {
-          rootPkg.bin = "./" + Path.join("dist", rootPkg.bin);
+          // If binPath already starts with "dist/", just add "./" prefix
+          if (rootPkg.bin.startsWith("dist/")) {
+            rootPkg.bin = "./" + rootPkg.bin;
+          } else {
+            rootPkg.bin = "./" + Path.join("dist", rootPkg.bin);
+          }
         }
       } else {
         for (const [name, binPath] of Object.entries(rootPkg.bin)) {
           if (typeof binPath === "string" && !binPath.startsWith("./dist/")) {
-            rootPkg.bin[name] = "./" + Path.join("dist", binPath);
+            // If binPath already starts with "dist/", just add "./" prefix
+            if (binPath.startsWith("dist/")) {
+              rootPkg.bin[name] = "./" + binPath;
+            } else {
+              rootPkg.bin[name] = "./" + Path.join("dist", binPath);
+            }
           }
         }
       }
