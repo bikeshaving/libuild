@@ -637,7 +637,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       format: "cjs",
       bundle: true,
       minify: false,
-      sourcemap: true,
+      sourcemap: false,
       external: externalDeps,
       platform: "node",
       target: "node16",
