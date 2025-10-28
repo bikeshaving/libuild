@@ -564,15 +564,15 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       return name;
     });
 
-    // ESM build - batch all entries to enable code sharing
-    console.info(`  Building ${entryPoints.length} entries (ESM)...`);
-
     // External includes all npm deps (relative imports handled by plugin)
     const externalDeps = [
       ...Object.keys(pkg.dependencies || {}),
       ...Object.keys(pkg.peerDependencies || {}),
       ...Object.keys(pkg.optionalDependencies || {})
     ];
+
+    // ESM build - batch all entries to enable code sharing
+    console.info(`  Building ${entryPoints.length} entries (ESM)...`);
 
     await ESBuild.build({
       entryPoints,
@@ -638,7 +638,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       bundle: true,
       minify: false,
       sourcemap: true,
-      external: Object.keys(pkg.dependencies || {}),
+      external: externalDeps,
       platform: "node",
       target: "node16",
       plugins: [umdPlugin({globalName})],
