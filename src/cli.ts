@@ -55,11 +55,52 @@ async function main() {
   // Determine save behavior
   const shouldSave = values.save || (command === "publish" && !values["no-save"]);
 
-  // Extract additional arguments for forwarding to npm publish
-  const extraArgs = process.argv.slice(2).filter(arg => 
+  // Extract and validate additional arguments for forwarding to npm publish
+  const allowedNpmFlags = [
+    "--dry-run", "--tag", "--access", "--registry", "--otp", "--provenance",
+    "--workspace", "--workspaces", "--include-workspace-root"
+  ];
+  
+  const rawExtraArgs = process.argv.slice(2).filter(arg => 
     !["build", "publish"].includes(arg) && 
     !["--save", "--no-save", "--help", "-h", "--version", "-v"].includes(arg)
   );
+  
+  // Validate npm arguments for security
+  const extraArgs: string[] = [];
+  for (let i = 0; i < rawExtraArgs.length; i++) {
+    const arg = rawExtraArgs[i];
+    
+    // Check if it's a known flag
+    if (arg.startsWith("--")) {
+      const flagName = arg.split("=")[0]; // Handle --flag=value format
+      if (allowedNpmFlags.includes(flagName)) {
+        extraArgs.push(arg);
+        // If this flag expects a value and it's not in --flag=value format, include the next argument
+        if (!arg.includes("=") && ["--tag", "--access", "--registry", "--otp", "--workspace"].includes(flagName)) {
+          if (i + 1 < rawExtraArgs.length && !rawExtraArgs[i + 1].startsWith("--")) {
+            extraArgs.push(rawExtraArgs[i + 1]);
+            i++; // Skip the next argument as it's the value
+          }
+        }
+      } else {
+        console.warn(`Warning: Ignoring unknown/unsafe npm flag: ${arg}`);
+      }
+    } else {
+      // Non-flag arguments are only allowed as values to flags we've already validated
+      // Check if this is a value for a flag that expects one
+      const prevArg = i > 0 ? rawExtraArgs[i - 1] : "";
+      const isPrevArgValueFlag = ["--tag", "--access", "--registry", "--otp", "--workspace"].includes(prevArg) && 
+                                !prevArg.includes("=");
+      
+      if (isPrevArgValueFlag && extraArgs.includes(prevArg)) {
+        // This argument is the value for a flag that was already accepted
+        extraArgs.push(arg);
+      } else {
+        console.warn(`Warning: Ignoring unexpected argument: ${arg}`);
+      }
+    }
+  }
 
   try {
     switch (command) {

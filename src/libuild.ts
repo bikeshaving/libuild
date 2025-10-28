@@ -500,6 +500,28 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
+function validatePath(inputPath: string, basePath: string): string {
+  // Reject absolute paths
+  if (Path.isAbsolute(inputPath)) {
+    throw new Error(`Absolute paths are not allowed: ${inputPath}`);
+  }
+  
+  // Reject paths containing path traversal
+  if (inputPath.includes("..")) {
+    throw new Error(`Path traversal is not allowed: ${inputPath}`);
+  }
+  
+  // Resolve the path and ensure it's within the base directory
+  const resolvedPath = Path.resolve(basePath, inputPath);
+  const resolvedBase = Path.resolve(basePath);
+  
+  if (!resolvedPath.startsWith(resolvedBase + Path.sep) && resolvedPath !== resolvedBase) {
+    throw new Error(`Path ${inputPath} resolves outside the project directory`);
+  }
+  
+  return resolvedPath;
+}
+
 
 export async function build(cwd: string, save: boolean = false): Promise<{distPkg: PackageJSON, rootPkg: PackageJSON}> {
   console.info("Building with libuild...");
@@ -562,11 +584,31 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     console.info("  Formats: ESM" + (options.formats.umd ? ", UMD" : "") + " (no main field - CJS disabled)");
   }
 
-  // Clean dist directory
-  if (await fileExists(distDir)) {
-    await FS.rm(distDir, {recursive: true});
+  // Clean dist directory atomically using a temporary directory
+  const tempDistDir = `${distDir}.tmp.${Date.now()}.${Math.random().toString(36).substr(2, 9)}`;
+  
+  try {
+    // Create temporary directory
+    await FS.mkdir(tempDistDir, {recursive: true});
+    
+    // If old dist exists, remove it after we have the temp ready
+    if (await fileExists(distDir)) {
+      await FS.rm(distDir, {recursive: true});
+    }
+    
+    // Atomically move temp to final location
+    await FS.rename(tempDistDir, distDir);
+  } catch (error) {
+    // Cleanup temp directory if something went wrong
+    try {
+      if (await fileExists(tempDistDir)) {
+        await FS.rm(tempDistDir, {recursive: true});
+      }
+    } catch {
+      // Ignore cleanup errors
+    }
+    throw error;
   }
-  await FS.mkdir(distDir, {recursive: true});
 
   // External includes all npm deps (relative imports handled by plugin)
   const externalDeps = [
@@ -754,33 +796,48 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       }
 
       if (typeof pattern === "string") {
-        const srcPath = Path.join(cwd, pattern);
-        const destPath = Path.join(distDir, pattern);
+        // Validate the path for security
+        const validatedSrcPath = validatePath(pattern, cwd);
+        const validatedDestPath = validatePath(pattern, distDir);
 
-        if (await fileExists(srcPath)) {
-          const stat = await FS.stat(srcPath);
+        if (await fileExists(validatedSrcPath)) {
+          const stat = await FS.stat(validatedSrcPath);
+          
+          // Check for symlinks and reject them for security
+          if (stat.isSymbolicLink()) {
+            throw new Error(`Symbolic links are not allowed in files field: ${pattern}`);
+          }
+          
           if (stat.isDirectory()) {
             console.info(`  Copying directory ${pattern}/...`);
-            await FS.mkdir(Path.dirname(destPath), {recursive: true});
-            await FS.cp(srcPath, destPath, {recursive: true});
-          } else {
+            await FS.mkdir(Path.dirname(validatedDestPath), {recursive: true});
+            await FS.cp(validatedSrcPath, validatedDestPath, {recursive: true});
+          } else if (stat.isFile()) {
             console.info(`  Copying ${pattern}...`);
-            await FS.mkdir(Path.dirname(destPath), {recursive: true});
-            await FS.copyFile(srcPath, destPath);
+            await FS.mkdir(Path.dirname(validatedDestPath), {recursive: true});
+            await FS.copyFile(validatedSrcPath, validatedDestPath);
+          } else {
+            throw new Error(`Unsupported file type for ${pattern}. Only regular files and directories are allowed.`);
           }
         } else if (pattern.includes("*")) {
           const baseDir = pattern.split("*")[0].replace(/\/$/, "");
-          if (baseDir && await fileExists(Path.join(cwd, baseDir))) {
-            console.info(`  Copying pattern ${pattern}...`);
-            const baseSrcPath = Path.join(cwd, baseDir);
-            const baseDestPath = Path.join(distDir, baseDir);
-            await FS.mkdir(Path.dirname(baseDestPath), {recursive: true});
-            await FS.cp(baseSrcPath, baseDestPath, {recursive: true});
+          if (baseDir) {
+            // Validate the base directory path
+            const validatedBaseSrcPath = validatePath(baseDir, cwd);
+            const validatedBaseDestPath = validatePath(baseDir, distDir);
+            
+            if (await fileExists(validatedBaseSrcPath)) {
+              console.info(`  Copying pattern ${pattern}...`);
+              await FS.mkdir(Path.dirname(validatedBaseDestPath), {recursive: true});
+              await FS.cp(validatedBaseSrcPath, validatedBaseDestPath, {recursive: true});
+            } else {
+              throw new Error(`Pattern base directory not found for "${pattern}". Expected directory: ${validatedBaseSrcPath}`);
+            }
           } else {
-            throw new Error(`Pattern base directory not found for "${pattern}". Expected directory: ${Path.join(cwd, baseDir)}`);
+            throw new Error(`Invalid pattern "${pattern}". Pattern must have a base directory before the wildcard.`);
           }
         } else {
-          throw new Error(`File specified in files field not found: ${srcPath}. Remove "${pattern}" from package.json files field or create the file.`);
+          throw new Error(`File specified in files field not found: ${validatedSrcPath}. Remove "${pattern}" from package.json files field or create the file.`);
         }
       } else {
         throw new Error(`Invalid files field entry: ${JSON.stringify(pattern)}. Files field entries must be strings.`);
