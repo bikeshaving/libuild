@@ -1,6 +1,6 @@
 import {test, expect} from "bun:test";
-import * as fs from "fs/promises";
-import * as path from "path";
+import * as FS from "fs/promises";
+import * as Path from "path";
 import {build} from "../src/libuild.ts";
 import {createTempDir, removeTempDir, copyFixture, readJSON, fileExists} from "./test-utils.ts";
 
@@ -14,17 +14,17 @@ test("smart dependency resolution - entry points don't inline other entry points
   // Build
   await build(testDir);
   
-  const distSrcDir = path.join(testDir, "dist", "src");
+  const distSrcDir = Path.join(testDir, "dist", "src");
   
   // Check that both entry points were built
-  expect(await fileExists(path.join(distSrcDir, "cli.js"))).toBe(true);
-  expect(await fileExists(path.join(distSrcDir, "utils.js"))).toBe(true);
-  expect(await fileExists(path.join(distSrcDir, "cli.cjs"))).toBe(true);
-  expect(await fileExists(path.join(distSrcDir, "utils.cjs"))).toBe(true);
+  expect(await fileExists(Path.join(distSrcDir, "cli.js"))).toBe(true);
+  expect(await fileExists(Path.join(distSrcDir, "utils.js"))).toBe(true);
+  expect(await fileExists(Path.join(distSrcDir, "cli.cjs"))).toBe(true);
+  expect(await fileExists(Path.join(distSrcDir, "utils.cjs"))).toBe(true);
   
   // Read the CLI files to check they import rather than bundle
-  const cliESM = await fs.readFile(path.join(distSrcDir, "cli.js"), "utf-8");
-  const cliCJS = await fs.readFile(path.join(distSrcDir, "cli.cjs"), "utf-8");
+  const cliESM = await FS.readFile(Path.join(distSrcDir, "cli.js"), "utf-8");
+  const cliCJS = await FS.readFile(Path.join(distSrcDir, "cli.cjs"), "utf-8");
   
   // CLI should import from utils, not bundle it
   expect(cliESM).toContain('import'); // Should have import statement
@@ -37,16 +37,16 @@ test("smart dependency resolution - entry points don't inline other entry points
   expect(cliCJS).not.toContain('function add'); // Should NOT contain inlined utils code
   
   // Utils files should contain the actual implementation
-  const utilsESM = await fs.readFile(path.join(distSrcDir, "utils.js"), "utf-8");
-  const utilsCJS = await fs.readFile(path.join(distSrcDir, "utils.cjs"), "utf-8");
+  const utilsESM = await FS.readFile(Path.join(distSrcDir, "utils.js"), "utf-8");
+  const utilsCJS = await FS.readFile(Path.join(distSrcDir, "utils.cjs"), "utf-8");
   
   expect(utilsESM).toContain('function add'); // Utils should have the functions
   expect(utilsESM).toContain('export'); // Should export functions
   expect(utilsCJS).toContain('function add'); // CJS should have the functions
   
   // Check file sizes - CLI should be much smaller than utils since it's not bundling
-  const cliStats = await fs.stat(path.join(distSrcDir, "cli.js"));
-  const utilsStats = await fs.stat(path.join(distSrcDir, "utils.js"));
+  const cliStats = await FS.stat(Path.join(distSrcDir, "cli.js"));
+  const utilsStats = await FS.stat(Path.join(distSrcDir, "utils.js"));
   
   // CLI should be significantly smaller since it just imports, doesn't bundle
   expect(cliStats.size).toBeLessThan(utilsStats.size);
@@ -60,12 +60,12 @@ test("build performance - no duplicate code between entry points", async () => {
   await copyFixture("multi-entry", testDir);
   await build(testDir);
   
-  const distSrcDir = path.join(testDir, "dist", "src");
+  const distSrcDir = Path.join(testDir, "dist", "src");
   
   // Read all built files
-  const cliJS = await fs.readFile(path.join(distSrcDir, "cli.js"), "utf-8");
-  const utilsJS = await fs.readFile(path.join(distSrcDir, "utils.js"), "utf-8");
-  const apiJS = await fs.readFile(path.join(distSrcDir, "api.js"), "utf-8");
+  const cliJS = await FS.readFile(Path.join(distSrcDir, "cli.js"), "utf-8");
+  const utilsJS = await FS.readFile(Path.join(distSrcDir, "utils.js"), "utf-8");
+  const apiJS = await FS.readFile(Path.join(distSrcDir, "api.js"), "utf-8");
   
   // The add function should only be in utils.js, not duplicated
   const addFunctionMatches = [cliJS, utilsJS, apiJS].filter(content => 
@@ -87,12 +87,12 @@ test("significantly reduced bundle sizes with smart dependency resolution", asyn
   await copyFixture("multi-entry", testDir);
   await build(testDir);
   
-  const distSrcDir = path.join(testDir, "dist", "src");
+  const distSrcDir = Path.join(testDir, "dist", "src");
   
   // Get file sizes
-  const cliStats = await fs.stat(path.join(distSrcDir, "cli.js"));
-  const utilsStats = await fs.stat(path.join(distSrcDir, "utils.js"));
-  const apiStats = await fs.stat(path.join(distSrcDir, "api.js"));
+  const cliStats = await FS.stat(Path.join(distSrcDir, "cli.js"));
+  const utilsStats = await FS.stat(Path.join(distSrcDir, "utils.js"));
+  const apiStats = await FS.stat(Path.join(distSrcDir, "api.js"));
   
   // CLI should be much smaller since it imports rather than bundles
   expect(cliStats.size).toBeLessThan(utilsStats.size);
@@ -102,9 +102,9 @@ test("significantly reduced bundle sizes with smart dependency resolution", asyn
   expect(totalSize).toBeLessThan(50000); // Reasonable upper bound
   
   // Verify no code duplication
-  const cliContent = await fs.readFile(path.join(distSrcDir, "cli.js"), "utf-8");
-  const utilsContent = await fs.readFile(path.join(distSrcDir, "utils.js"), "utf-8");
-  const apiContent = await fs.readFile(path.join(distSrcDir, "api.js"), "utf-8");
+  const cliContent = await FS.readFile(Path.join(distSrcDir, "cli.js"), "utf-8");
+  const utilsContent = await FS.readFile(Path.join(distSrcDir, "utils.js"), "utf-8");
+  const apiContent = await FS.readFile(Path.join(distSrcDir, "api.js"), "utf-8");
   
   // VERSION constant should only appear in utils
   const versionMatches = [cliContent, utilsContent, apiContent].filter(content => 
@@ -122,11 +122,11 @@ test("external entry points plugin handles different extensions correctly", asyn
   await copyFixture("multi-entry", testDir);
   await build(testDir);
   
-  const distSrcDir = path.join(testDir, "dist", "src");
+  const distSrcDir = Path.join(testDir, "dist", "src");
   
   // Read the built files to check import transformations
-  const cliESM = await fs.readFile(path.join(distSrcDir, "cli.js"), "utf-8");
-  const cliCJS = await fs.readFile(path.join(distSrcDir, "cli.cjs"), "utf-8");
+  const cliESM = await FS.readFile(Path.join(distSrcDir, "cli.js"), "utf-8");
+  const cliCJS = await FS.readFile(Path.join(distSrcDir, "cli.cjs"), "utf-8");
   
   // ESM should import .js files
   expect(cliESM).toContain('"./utils.js"');
@@ -147,10 +147,10 @@ test("runtime behavior - imports work correctly", async () => {
   await copyFixture("multi-entry", testDir);
   await build(testDir);
   
-  const distSrcDir = path.join(testDir, "dist", "src");
+  const distSrcDir = Path.join(testDir, "dist", "src");
   
   // Check that the import statements are syntactically correct
-  const cliContent = await fs.readFile(path.join(distSrcDir, "cli.js"), "utf-8");
+  const cliContent = await FS.readFile(Path.join(distSrcDir, "cli.js"), "utf-8");
   
   // Should have valid ES module import
   expect(cliContent).toMatch(/import\s*{\s*add\s*}\s*from\s*['"]\.\/utils\.js['"]/);
@@ -159,7 +159,7 @@ test("runtime behavior - imports work correctly", async () => {
   expect(cliContent).not.toMatch(/require\s*\(\s*['"]\.\/utils/);
   
   // CJS version should have proper require
-  const cliCJSContent = await fs.readFile(path.join(distSrcDir, "cli.cjs"), "utf-8");
+  const cliCJSContent = await FS.readFile(Path.join(distSrcDir, "cli.cjs"), "utf-8");
   expect(cliCJSContent).toMatch(/require\s*\(\s*['"]\.\/utils\.cjs['"]\s*\)/);
   
   await removeTempDir(testDir);
@@ -172,15 +172,15 @@ test("plugins are properly extracted and organized", async () => {
   await copyFixture("multi-entry", testDir);
   await build(testDir);
   
-  const distSrcDir = path.join(testDir, "dist", "src");
+  const distSrcDir = Path.join(testDir, "dist", "src");
   
   // Check that plugins directory is NOT created in dist
   // (plugins should be bundled into the main files, not copied)
-  expect(await fileExists(path.join(distSrcDir, "plugins"))).toBe(false);
+  expect(await fileExists(Path.join(distSrcDir, "plugins"))).toBe(false);
   
   // The built files should work without external plugin files
-  expect(await fileExists(path.join(distSrcDir, "cli.js"))).toBe(true);
-  expect(await fileExists(path.join(distSrcDir, "utils.js"))).toBe(true);
+  expect(await fileExists(Path.join(distSrcDir, "cli.js"))).toBe(true);
+  expect(await fileExists(Path.join(distSrcDir, "utils.js"))).toBe(true);
   
   await removeTempDir(testDir);
 });
@@ -191,13 +191,13 @@ test("TypeScript plugin only generates declarations for entry points", async () 
   await copyFixture("multi-entry", testDir);
   await build(testDir);
   
-  const distSrcDir = path.join(testDir, "dist", "src");
+  const distSrcDir = Path.join(testDir, "dist", "src");
   
   // Should NOT have d.ts files for plugins directory
-  expect(await fileExists(path.join(distSrcDir, "plugins"))).toBe(false);
+  expect(await fileExists(Path.join(distSrcDir, "plugins"))).toBe(false);
   
   // Count d.ts files - should match entry points exactly
-  const files = await fs.readdir(distSrcDir);
+  const files = await FS.readdir(distSrcDir);
   const dtsFiles = files.filter(f => f.endsWith('.d.ts'));
   const jsFiles = files.filter(f => f.endsWith('.js'));
   
@@ -223,13 +223,13 @@ test("UMD plugin functionality still works", async () => {
   await copyFixture("with-umd", testDir);
   await build(testDir);
   
-  const distSrcDir = path.join(testDir, "dist", "src");
+  const distSrcDir = Path.join(testDir, "dist", "src");
   
   // Should have UMD build
-  expect(await fileExists(path.join(distSrcDir, "umd.js"))).toBe(true);
+  expect(await fileExists(Path.join(distSrcDir, "umd.js"))).toBe(true);
   
   // Check UMD wrapper structure
-  const umdContent = await fs.readFile(path.join(distSrcDir, "umd.js"), "utf-8");
+  const umdContent = await FS.readFile(Path.join(distSrcDir, "umd.js"), "utf-8");
   
   // Should contain UMD wrapper pattern
   expect(umdContent).toContain("(function (root, factory)");
@@ -247,15 +247,15 @@ test("shebang preservation in CLI builds", async () => {
   await copyFixture("multi-entry", testDir);
   await build(testDir);
   
-  const cliPath = path.join(testDir, "dist", "src", "cli.js");
-  const cliContent = await fs.readFile(cliPath, "utf-8");
+  const cliPath = Path.join(testDir, "dist", "src", "cli.js");
+  const cliContent = await FS.readFile(cliPath, "utf-8");
   
   // Should preserve shebang at the top
   expect(cliContent.startsWith("#!/usr/bin/env node")).toBe(true);
   
   // Should also have triple-slash reference for TypeScript (if d.ts file exists)
-  const distSrcDir = path.join(testDir, "dist", "src");
-  const dtsExists = await fileExists(path.join(distSrcDir, "cli.d.ts"));
+  const distSrcDir = Path.join(testDir, "dist", "src");
+  const dtsExists = await fileExists(Path.join(distSrcDir, "cli.d.ts"));
   if (dtsExists) {
     expect(cliContent).toContain("/// <reference types=");
   } else {
@@ -272,10 +272,10 @@ test("no chunking - clean output matching src structure", async () => {
   await copyFixture("multi-entry", testDir);
   await build(testDir);
   
-  const distSrcDir = path.join(testDir, "dist", "src");
+  const distSrcDir = Path.join(testDir, "dist", "src");
   
   // Should have clean 1:1 mapping from src to dist/src
-  const files = await fs.readdir(distSrcDir);
+  const files = await FS.readdir(distSrcDir);
   const jsFiles = files.filter(f => f.endsWith('.js'));
   const cjsFiles = files.filter(f => f.endsWith('.cjs'));
   const dtsFiles = files.filter(f => f.endsWith('.d.ts'));
@@ -304,19 +304,19 @@ test("all major features work together", async () => {
   await copyFixture("multi-entry", testDir);
   await build(testDir);
   
-  const distDir = path.join(testDir, "dist");
-  const distSrcDir = path.join(distDir, "src");
+  const distDir = Path.join(testDir, "dist");
+  const distSrcDir = Path.join(distDir, "src");
   
   // 1. Smart dependency resolution
-  const cliJS = await fs.readFile(path.join(distSrcDir, "cli.js"), "utf-8");
+  const cliJS = await FS.readFile(Path.join(distSrcDir, "cli.js"), "utf-8");
   expect(cliJS).toContain('from "./utils.js"'); // Imports, doesn't bundle
   expect(cliJS).not.toContain("export function add"); // No inlined code
   
   // 2. Plugin extraction (no plugin artifacts in output)
-  expect(await fileExists(path.join(distSrcDir, "plugins"))).toBe(false);
+  expect(await fileExists(Path.join(distSrcDir, "plugins"))).toBe(false);
   
   // 3. TypeScript declarations generated cleanly (if available)
-  const files = await fs.readdir(distSrcDir);
+  const files = await FS.readdir(distSrcDir);
   const dtsFiles = files.filter(f => f.endsWith('.d.ts'));
   const jsFiles = files.filter(f => f.endsWith('.js'));
   if (dtsFiles.length > 0) {
@@ -333,7 +333,7 @@ test("all major features work together", async () => {
   expect(chunkFiles).toEqual([]);
   
   // 6. External entry points work for both ESM and CJS
-  const cliCJS = await fs.readFile(path.join(distSrcDir, "cli.cjs"), "utf-8");
+  const cliCJS = await FS.readFile(Path.join(distSrcDir, "cli.cjs"), "utf-8");
   expect(cliCJS).toContain('"./utils.cjs"'); // CJS requires .cjs
   
   await removeTempDir(testDir);
@@ -346,8 +346,8 @@ test("backwards compatibility - existing features unchanged", async () => {
   await copyFixture("simple-lib", testDir);
   await build(testDir);
   
-  const distDir = path.join(testDir, "dist");
-  const distPkg = await readJSON(path.join(distDir, "package.json"));
+  const distDir = Path.join(testDir, "dist");
+  const distPkg = await readJSON(Path.join(distDir, "package.json"));
   
   // Core package.json structure unchanged
   expect(distPkg.name).toBe("simple-lib");
@@ -371,24 +371,24 @@ test("plugin integration doesn't break existing functionality", async () => {
   await copyFixture("simple-lib", testDir);
   await build(testDir);
   
-  const distDir = path.join(testDir, "dist");
-  const distSrcDir = path.join(distDir, "src");
+  const distDir = Path.join(testDir, "dist");
+  const distSrcDir = Path.join(distDir, "src");
   
   // Basic functionality should still work
-  expect(await fileExists(path.join(distSrcDir, "index.js"))).toBe(true);
-  expect(await fileExists(path.join(distSrcDir, "index.cjs"))).toBe(true);
+  expect(await fileExists(Path.join(distSrcDir, "index.js"))).toBe(true);
+  expect(await fileExists(Path.join(distSrcDir, "index.cjs"))).toBe(true);
   
   // Check for TypeScript declaration (may not be generated in test environment)
-  const dtsExists = await fileExists(path.join(distSrcDir, "index.d.ts"));
+  const dtsExists = await fileExists(Path.join(distSrcDir, "index.d.ts"));
   if (dtsExists) {
     console.log("✓ TypeScript declarations generated");
   } else {
     console.log("Note: TypeScript declarations not generated in test environment");
   }
-  expect(await fileExists(path.join(distDir, "package.json"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "package.json"))).toBe(true);
   
   // File contents should be properly built
-  const indexJS = await fs.readFile(path.join(distSrcDir, "index.js"), "utf-8");
+  const indexJS = await FS.readFile(Path.join(distSrcDir, "index.js"), "utf-8");
   expect(indexJS.length).toBeGreaterThan(0);
   
   // Triple-slash reference only if TypeScript declarations exist
@@ -416,13 +416,13 @@ test("no TypeScript compilation errors", async () => {
   expect(buildError).toBeUndefined();
   
   // All expected files should exist
-  const distSrcDir = path.join(testDir, "dist", "src");
-  expect(await fileExists(path.join(distSrcDir, "cli.js"))).toBe(true);
-  expect(await fileExists(path.join(distSrcDir, "utils.js"))).toBe(true);
+  const distSrcDir = Path.join(testDir, "dist", "src");
+  expect(await fileExists(Path.join(distSrcDir, "cli.js"))).toBe(true);
+  expect(await fileExists(Path.join(distSrcDir, "utils.js"))).toBe(true);
   
   // Check for TypeScript declarations (may not be generated in test environment)
-  const cliDtsExists = await fileExists(path.join(distSrcDir, "cli.d.ts"));
-  const utilsDtsExists = await fileExists(path.join(distSrcDir, "utils.d.ts"));
+  const cliDtsExists = await fileExists(Path.join(distSrcDir, "cli.d.ts"));
+  const utilsDtsExists = await fileExists(Path.join(distSrcDir, "utils.d.ts"));
   if (cliDtsExists && utilsDtsExists) {
     console.log("✓ TypeScript declarations generated successfully");
   } else {
@@ -436,19 +436,19 @@ test("circular dependencies handled correctly", async () => {
   const testDir = await createTempDir("circular");
   
   // Create a fixture with circular dependencies
-  await fs.mkdir(path.join(testDir, "src"), {recursive: true});
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
   
   // a.ts imports from b.ts, b.ts imports from a.ts
-  await fs.writeFile(path.join(testDir, "src", "a.ts"), `
+  await FS.writeFile(Path.join(testDir, "src", "a.ts"), `
 import { b } from './b.js';
 export function a() { return 'a' + b(); }
   `);
   
-  await fs.writeFile(path.join(testDir, "src", "b.ts"), `
+  await FS.writeFile(Path.join(testDir, "src", "b.ts"), `
 export function b() { return 'b'; }
   `);
   
-  await fs.writeFile(path.join(testDir, "package.json"), JSON.stringify({
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
     name: "circular-test",
     version: "1.0.0",
     main: "dist/src/a.cjs",
@@ -466,12 +466,104 @@ export function b() { return 'b'; }
   expect(buildError).toBeUndefined();
   
   // a.js should import from b.js, not bundle it
-  const distSrcDir = path.join(testDir, "dist", "src");
-  const aContent = await fs.readFile(path.join(distSrcDir, "a.js"), "utf-8");
-  const bContent = await fs.readFile(path.join(distSrcDir, "b.js"), "utf-8");
+  const distSrcDir = Path.join(testDir, "dist", "src");
+  const aContent = await FS.readFile(Path.join(distSrcDir, "a.js"), "utf-8");
+  const bContent = await FS.readFile(Path.join(distSrcDir, "b.js"), "utf-8");
   
   expect(aContent).toContain('from "./b.js"');
   expect(bContent).toContain('function b'); // b.js should contain the b function
   
+  await removeTempDir(testDir);
+});
+
+// =============================================================================
+// Shared Module Deduplication Tests
+// =============================================================================
+
+test("shared modules are deduplicated across entry points", async () => {
+  const testDir = await createTempDir("shared-modules");
+  
+  // Copy shared modules fixture
+  await copyFixture("shared-modules", testDir);
+  
+  // Build
+  await build(testDir);
+  
+  const distSrcDir = Path.join(testDir, "dist", "src");
+  
+  // Check that all entry files exist
+  expect(await fileExists(Path.join(distSrcDir, "entry1.js"))).toBe(true);
+  expect(await fileExists(Path.join(distSrcDir, "entry2.js"))).toBe(true);
+  expect(await fileExists(Path.join(distSrcDir, "shared.js"))).toBe(true);
+  
+  // Read the built files
+  const entry1JS = await FS.readFile(Path.join(distSrcDir, "entry1.js"), "utf-8");
+  const entry2JS = await FS.readFile(Path.join(distSrcDir, "entry2.js"), "utf-8");
+  const sharedJS = await FS.readFile(Path.join(distSrcDir, "shared.js"), "utf-8");
+  
+  // Verify that shared code is in the shared.js file
+  expect(sharedJS).toContain("sharedUtility");
+  expect(sharedJS).toContain("expensiveOperation");
+  expect(sharedJS).toContain("SharedClass");
+  
+  // Verify that entry files import from shared.js instead of duplicating code
+  expect(entry1JS).toContain('from "./shared.js"');
+  expect(entry2JS).toContain('from "./shared.js"');
+  
+  // Verify that shared code is NOT duplicated in entry files
+  expect(entry1JS).not.toContain("This is a shared utility function");
+  expect(entry2JS).not.toContain("This is a shared utility function");
+  expect(entry1JS).not.toContain("class SharedClass");
+  expect(entry2JS).not.toContain("class SharedClass");
+  
+  // Check file sizes - entry files should be smaller than shared file
+  const entry1Stats = await FS.stat(Path.join(distSrcDir, "entry1.js"));
+  const entry2Stats = await FS.stat(Path.join(distSrcDir, "entry2.js"));
+  const sharedStats = await FS.stat(Path.join(distSrcDir, "shared.js"));
+  
+  // Shared file should be the largest since it contains the bulk of the code
+  expect(sharedStats.size).toBeGreaterThan(entry1Stats.size);
+  expect(sharedStats.size).toBeGreaterThan(entry2Stats.size);
+  
+  // Cleanup
+  await removeTempDir(testDir);
+});
+
+test("shared modules work with both ESM and CJS builds", async () => {
+  const testDir = await createTempDir("shared-modules-dual");
+  
+  // Copy shared modules fixture
+  await copyFixture("shared-modules", testDir);
+  
+  // Build
+  await build(testDir);
+  
+  const distSrcDir = Path.join(testDir, "dist", "src");
+  
+  // Check that both ESM and CJS files exist
+  expect(await fileExists(Path.join(distSrcDir, "entry1.js"))).toBe(true);
+  expect(await fileExists(Path.join(distSrcDir, "entry1.cjs"))).toBe(true);
+  expect(await fileExists(Path.join(distSrcDir, "shared.js"))).toBe(true);
+  expect(await fileExists(Path.join(distSrcDir, "shared.cjs"))).toBe(true);
+  
+  // Read both formats
+  const entry1ESM = await FS.readFile(Path.join(distSrcDir, "entry1.js"), "utf-8");
+  const entry1CJS = await FS.readFile(Path.join(distSrcDir, "entry1.cjs"), "utf-8");
+  const sharedESM = await FS.readFile(Path.join(distSrcDir, "shared.js"), "utf-8");
+  const sharedCJS = await FS.readFile(Path.join(distSrcDir, "shared.cjs"), "utf-8");
+  
+  // Verify ESM imports
+  expect(entry1ESM).toContain('from "./shared.js"');
+  expect(sharedESM).toContain("export");
+  
+  // Verify CJS requires
+  expect(entry1CJS).toContain('require("./shared.cjs")');
+  expect(sharedCJS).toContain("exports");
+  
+  // Verify no code duplication in either format
+  expect(entry1ESM).not.toContain("This is a shared utility function");
+  expect(entry1CJS).not.toContain("This is a shared utility function");
+  
+  // Cleanup
   await removeTempDir(testDir);
 });
