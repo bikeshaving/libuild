@@ -391,9 +391,9 @@ test("complex bin field transformations", async () => {
   // Check dist package.json bin transformations
   const distPkg = await readJSON(path.join(distDir, "package.json"));
   expect(distPkg.bin).toEqual({
-    mytool: "./src/cli.js",               // src/cli.js → ./src/cli.js
-    helper: "./src/bin/helper.ts",        // ./src/bin/helper.ts → ./src/bin/helper.ts
-    processor: "./src/tools/processor.js" // src/tools/processor.js → ./src/tools/processor.js
+    mytool: "src/cli.js",               // src/cli.js → src/cli.js (npm convention)
+    helper: "src/bin/helper.ts",        // ./src/bin/helper.ts → src/bin/helper.ts (npm convention)
+    processor: "src/tools/processor.js" // src/tools/processor.js → src/tools/processor.js (npm convention)
   });
   
   // Check root package.json bin transformations
@@ -550,7 +550,7 @@ test("bin field with string value (not object)", async () => {
   
   // Check dist package.json bin transformation (structure-preserving)
   const distPkg = await readJSON(path.join(distDir, "package.json"));
-  expect(distPkg.bin).toBe("./src/cli.js");  // src/cli.js → ./src/cli.js
+  expect(distPkg.bin).toBe("src/cli.js");  // src/cli.js → src/cli.js (npm convention)
   
   // Check root package.json bin transformation (no --save)
   const rootPkg = await readJSON(path.join(testDir, "package.json"));

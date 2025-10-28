@@ -356,6 +356,10 @@ function transformBinPaths(value: any): any {
     if (value.startsWith("dist/src/")) {
       return value.replace("dist/", "");
     }
+    // Transform ./src/ paths (including nested) to src/ without ./ prefix for npm conventions
+    if (value.startsWith("./src/")) {
+      return value.replace("./", "");
+    }
     // Don't add ./ prefix for src/ paths
     if (value.startsWith("src/") || value === "src") {
       return value;
