@@ -346,6 +346,27 @@ export function transformSrcToDist(value: any): any {
   return value;
 }
 
+function transformBinPaths(value: any): any {
+  if (typeof value === "string") {
+    // Transform dist/src/ paths to src/ without ./ prefix for npm conventions
+    if (value.startsWith("dist/src/")) {
+      return value.replace("dist/", "");
+    }
+    // Don't add ./ prefix for src/ paths
+    if (value.startsWith("src/") || value === "src") {
+      return value;
+    }
+    return value;
+  } else if (typeof value === "object" && value !== null) {
+    const transformed: any = {};
+    for (const [key, val] of Object.entries(value)) {
+      transformed[key] = transformBinPaths(val);
+    }
+    return transformed;
+  }
+  return value;
+}
+
 function fixExportsForDist(obj: any): any {
   if (typeof obj === "string") {
     // Fix paths that incorrectly have ./dist/dist/dist/... -> ./src/
@@ -436,8 +457,8 @@ function cleanPackageJSON(pkg: PackageJSON, mainEntry: string, options: BuildOpt
           cleaned[field] = transformSrcToDist(filteredScripts);
         }
       } else if (field === "bin") {
-        // Apply path transformation to bin field
-        cleaned[field] = transformSrcToDist(pkg[field]);
+        // Apply path transformation to bin field (without ./ prefix for npm convention)
+        cleaned[field] = transformBinPaths(pkg[field]);
       } else if (pathFields.includes(field)) {
         cleaned[field] = transformSrcToDist(pkg[field]);
       } else {
