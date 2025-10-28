@@ -48,7 +48,13 @@ async function findEntrypoints(srcDir: string): Promise<string[]> {
 }
 
 function detectMainEntry(pkg: PackageJSON, entries: string[]): string {
-  // If exports["."] is specified, try to extract the main entry from it
+  // Helper function to extract entry name from path
+  function extractEntryFromPath(path: string): string | undefined {
+    const match = path.match(/\.\/src\/([^.]+)/);
+    return match ? match[1] : undefined;
+  }
+
+  // 1. Check exports["."] first (most specific)
   if (pkg.exports && pkg.exports["."]) {
     const dotExport = pkg.exports["."];
     let importPath: string | undefined;
@@ -60,15 +66,14 @@ function detectMainEntry(pkg: PackageJSON, entries: string[]): string {
     }
 
     if (importPath) {
-      // Extract entry name from path like "./src/foo.js" -> "foo"
-      const match = importPath.match(/\.\/src\/([^.]+)/);
-      if (match && entries.includes(match[1])) {
-        return match[1];
+      const entry = extractEntryFromPath(importPath);
+      if (entry && entries.includes(entry)) {
+        return entry;
       }
     }
   }
 
-  // If main is specified in package.json, use it
+  // 2. Check main field
   if (pkg.main && typeof pkg.main === "string") {
     const mainBase = Path.basename(pkg.main, Path.extname(pkg.main));
     if (entries.includes(mainBase)) {
@@ -76,17 +81,25 @@ function detectMainEntry(pkg: PackageJSON, entries: string[]): string {
     }
   }
 
-  // If there's an index entry, that's the main
+  // 3. Check module field
+  if (pkg.module && typeof pkg.module === "string") {
+    const moduleBase = Path.basename(pkg.module, Path.extname(pkg.module));
+    if (entries.includes(moduleBase)) {
+      return moduleBase;
+    }
+  }
+
+  // 4. If there's an index entry, that's the main
   if (entries.includes("index")) {
     return "index";
   }
 
-  // If there's only one entry, that's the main
+  // 5. If there's only one entry, that's the main
   if (entries.length === 1) {
     return entries[0];
   }
 
-  // Try to use the package name
+  // 6. Try to use the package name
   const pkgNameParts = pkg.name.split("/");
   const pkgName = pkgNameParts[pkgNameParts.length - 1];
   if (!pkgName) {
@@ -96,7 +109,7 @@ function detectMainEntry(pkg: PackageJSON, entries: string[]): string {
     return pkgName;
   }
 
-  // Default to first entry alphabetically
+  // 7. Default to first entry alphabetically
   return entries[0];
 }
 

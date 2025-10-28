@@ -2,6 +2,10 @@
 
 Zero-config library builds with ESBuild.
 
+Libuild is a build tool for JavaScript/TypeScript libraries which publish to
+NPM. It solves ESM/CJS support, type generation, and produces clean packages
+with just the files and configuration needed by consumers.
+
 ## Installation
 
 ```bash
@@ -24,12 +28,12 @@ libuild publish
 
 ## Features
 
-- **No configuration** - All configuration is based on package.json and source files
-- **Multiple formats** - Supports ESM, CJS, UMD and generates d.ts files
-- **Clean output** - Only necessary files and package.json fields go into the package
+- **No configuration** - Source files and standard package.json are all you need
+- **Multiple formats** - Supports ESM, CJS, UMD, and generates d.ts files
+- **Clean output** - Only necessary files and fields go into the package
 - **Development-friendly** - NPM link just works and changes can be saved to package.json
 
-## Conventions
+## Convention = Configuration
 
 ### Entry Points
 - **Library modules**: All top-level `.js`/`.ts` files in `src/` (excluding `_` prefixed files)
