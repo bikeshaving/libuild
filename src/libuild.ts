@@ -294,16 +294,6 @@ function generateExports(entries: string[], mainEntry: string, options: BuildOpt
     if (!exports[`${key}.js`]) {
       exports[`${key}.js`] = exports[key];
     }
-
-    // Special case for jsx-runtime
-    if (entry === "jsx-runtime") {
-      if (!exports["./jsx-dev-runtime"]) {
-        exports["./jsx-dev-runtime"] = exports[key];
-      }
-      if (!exports["./jsx-dev-runtime.js"]) {
-        exports["./jsx-dev-runtime.js"] = exports[key];
-      }
-    }
   }
 
   // UMD export (CommonJS only)
