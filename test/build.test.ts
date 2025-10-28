@@ -79,8 +79,8 @@ test("multi-entry library build", async () => {
     require: "./src/utils.cjs"
   });
   
-  // Check bin transformation (structure-preserving)
-  expect(distPkg.bin.mytool).toBe("./src/cli.js"); // src/cli.js → ./src/cli.js
+  // Check bin transformation (structure-preserving, npm convention)
+  expect(distPkg.bin.mytool).toBe("src/cli.js"); // src/cli.js → src/cli.js (no ./ prefix)
   
   // Verify dev scripts are filtered out (only npm lifecycle scripts preserved)
   expect(distPkg.scripts).toBeUndefined();

@@ -564,6 +564,13 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   }
   await FS.mkdir(distDir, {recursive: true});
 
+  // External includes all npm deps (relative imports handled by plugin)
+  const externalDeps = [
+    ...Object.keys(pkg.dependencies || {}),
+    ...Object.keys(pkg.peerDependencies || {}),
+    ...Object.keys(pkg.optionalDependencies || {})
+  ];
+
   // Prepare entry points for batch building
   const entryPoints: string[] = [];
   const umdEntries: string[] = [];
@@ -591,13 +598,6 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       const name = Path.basename(path, Path.extname(path));
       return name;
     });
-
-    // External includes all npm deps (relative imports handled by plugin)
-    const externalDeps = [
-      ...Object.keys(pkg.dependencies || {}),
-      ...Object.keys(pkg.peerDependencies || {}),
-      ...Object.keys(pkg.optionalDependencies || {})
-    ];
 
     // ESM build - batch all entries to enable code sharing
     console.info(`  Building ${entryPoints.length} entries (ESM)...`);
