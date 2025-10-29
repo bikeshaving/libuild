@@ -746,8 +746,9 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       sourcemap: false,
       external: externalDeps,
       platform: "node",
-      target: "node16",
+      target: "node18",
       packages: "external",
+      supported: { "import-attributes": true },
       plugins: [
         externalEntrypointsPlugin({
           entryNames,
@@ -775,7 +776,8 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
         sourcemap: false,
         external: externalDeps,
         platform: "node",
-        target: "node16",
+        target: "node18",
+        supported: { "import-attributes": true },
         plugins: [
           externalEntrypointsPlugin({
             entryNames,
@@ -803,7 +805,8 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       sourcemap: false,
       external: externalDeps,
       platform: "node",
-      target: "node16",
+      target: "node18",
+      supported: { "import-attributes": true },
       plugins: [umdPlugin({globalName})],
     });
   }
