@@ -1,6 +1,6 @@
 {
   "name": "@b9g/libuild",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Zero-config library builds",
   "main": "./dist/src/libuild.cjs",
   "private": true,

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.9] - 2025-10-29
+
+### Fixed
+- Preserve import attributes (`with { type: "json" }`) in externalized JSON imports to prevent Node.js runtime errors
+- Upgrade Node.js target to 18+ and engines requirement to >=18.20.0 for import attributes support
+
 ## [0.1.8] - 2025-10-29
 
 ### Added
