@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import {parseArgs} from "util";
+import * as Path from "path";
 import {build, publish} from "./libuild.ts";
 
 const {values, positionals} = parseArgs({
@@ -18,11 +19,14 @@ const HELP_TEXT = `
 libuild - Zero-config library builds
 
 Usage:
-  libuild [command] [options]
+  libuild [command] [directory] [options]
 
 Commands:
   build     Build the library (default command)
   publish   Build and publish the library
+
+Arguments:
+  directory Optional directory to build (defaults to current directory)
 
 Options:
   --save    Update root package.json to point to dist files
@@ -31,9 +35,11 @@ Options:
 For publish command, all additional flags are forwarded to npm publish.
 
 Examples:
-  libuild                 # Build the library
+  libuild                 # Build the library in current directory
+  libuild build           # Same as above
+  libuild ../other-proj   # Build library in ../other-proj
   libuild build --save    # Build and update package.json for npm link
-  libuild publish         # Build and publish to npm
+  libuild publish ../lib  # Build and publish library in ../lib
   libuild publish --dry-run --tag beta  # Build and publish with npm flags
 `;
 
@@ -49,8 +55,10 @@ async function main() {
     process.exit(0);
   }
 
+  // Parse command and optional directory
   const command = positionals[0] || "build";
-  const cwd = process.cwd();
+  const targetDir = positionals[1];
+  const cwd = targetDir ? Path.resolve(targetDir) : process.cwd();
 
   // Determine save behavior
   const shouldSave = values.save || (command === "publish" && !values["no-save"]);

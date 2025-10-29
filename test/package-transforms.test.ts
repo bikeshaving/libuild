@@ -845,3 +845,99 @@ test("bin paths work in --save mode with string format", async () => {
   // Cleanup
   await removeTempDir(testDir);
 });
+
+// =============================================================================
+// BIN PATH VALIDATION TESTS
+// =============================================================================
+
+test("bin path validation: throws error for dist/ paths", async () => {
+  const testDir = await createTempDir("bin-validation-dist");
+
+  // Create package.json with bin pointing to dist/
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "bin-validation-test",
+    version: "1.0.0",
+    type: "module",
+    bin: {
+      "tool": "dist/cli.js"
+    },
+    private: true
+  }));
+
+  // Create src directory (but no src/cli.ts to correspond to dist/cli.js)
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), 'export const index = "main";');
+
+  await expect(build(testDir)).rejects.toThrow('bin.tool field points to dist/ directory: "dist/cli.js"');
+
+  await removeTempDir(testDir);
+});
+
+test("bin path validation: throws error for ./dist/ paths", async () => {
+  const testDir = await createTempDir("bin-validation-dotdist");
+
+  // Create package.json with bin pointing to ./dist/
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "bin-validation-test",
+    version: "1.0.0",
+    type: "module",
+    bin: "./dist/src/cli.js",
+    private: true
+  }));
+
+  // Create src directory (but no src/cli.ts to correspond to ./dist/src/cli.js)
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), 'export const index = "main";');
+
+  await expect(build(testDir)).rejects.toThrow('bin field points to dist/ directory: "./dist/src/cli.js"');
+
+  await removeTempDir(testDir);
+});
+
+test("bin path validation: accepts src/ paths", async () => {
+  const testDir = await createTempDir("bin-validation-src");
+
+  // Create package.json with bin pointing to src/
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "bin-validation-test",
+    version: "1.0.0",
+    type: "module",
+    bin: {
+      "tool": "src/cli.js"
+    },
+    private: true
+  }));
+
+  // Create src directory
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), 'export const index = "main";');
+  await FS.writeFile(Path.join(testDir, "src", "cli.ts"), '#!/usr/bin/env node\nconsole.log("test");');
+
+  // Should not throw - this is the correct pattern
+  await build(testDir);
+
+  await removeTempDir(testDir);
+});
+
+test("bin path validation: accepts ./src/ paths", async () => {
+  const testDir = await createTempDir("bin-validation-dotsrc");
+
+  // Create package.json with bin pointing to ./src/
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "bin-validation-test",
+    version: "1.0.0",
+    type: "module",
+    bin: "./src/cli.js",
+    private: true
+  }));
+
+  // Create src directory
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), 'export const index = "main";');
+  await FS.writeFile(Path.join(testDir, "src", "cli.ts"), '#!/usr/bin/env node\nconsole.log("test");');
+
+  // Should not throw - this is the correct pattern
+  await build(testDir);
+
+  await removeTempDir(testDir);
+});

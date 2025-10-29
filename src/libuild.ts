@@ -358,6 +358,79 @@ export function transformSrcToDist(value: any): any {
   return value;
 }
 
+async function validateBinPaths(value: any, srcDir: string, fieldName: string = "bin"): Promise<void> {
+  if (typeof value === "string") {
+    await validateSingleBinPath(value, fieldName, srcDir);
+  } else if (typeof value === "object" && value !== null) {
+    for (const [key, val] of Object.entries(value)) {
+      if (typeof val === "string") {
+        await validateSingleBinPath(val, `${fieldName}.${key}`, srcDir);
+      }
+    }
+  }
+}
+
+async function validateSingleBinPath(binPath: string, fieldName: string, srcDir: string): Promise<void> {
+  // Check if pointing to dist/ files that don't have corresponding src/ files
+  if (binPath.startsWith("dist/") || binPath.startsWith("./dist/")) {
+    // Extract the potential src/ path
+    let srcPath: string;
+    if (binPath.startsWith("./dist/src/")) {
+      srcPath = binPath.replace("./dist/src/", "src/");
+    } else if (binPath.startsWith("dist/src/")) {
+      srcPath = binPath.replace("dist/src/", "src/");
+    } else if (binPath.startsWith("./dist/")) {
+      srcPath = binPath.replace("./dist/", "src/");
+    } else if (binPath.startsWith("dist/")) {
+      srcPath = binPath.replace("dist/", "src/");
+    } else {
+      srcPath = "";
+    }
+    
+    // Check if corresponding src file exists (try both .ts and .js extensions)
+    const basePath = srcPath.replace(/\.(js|cjs)$/, "");
+    const tsPath = Path.join(srcDir, "..", basePath + ".ts");
+    const jsPath = Path.join(srcDir, "..", basePath + ".js");
+    const srcExists = await fileExists(tsPath) || await fileExists(jsPath);
+    
+    
+    if (!srcExists) {
+      throw new Error(`${fieldName} field points to dist/ directory: "${binPath}"
+
+The bin field should reference source files that libuild will build and transform:
+  CORRECT:   "bin": {"tool": "src/cli.js"}
+  INCORRECT: "bin": {"tool": "dist/cli.js"}
+
+Libuild workflow:
+1. Point bin entries to src/ files
+2. Run 'libuild build --save' to update package.json with dist/ paths
+3. Set "private": true in your development package.json
+
+If you need to include pre-built executable files, use the files field instead:
+  "files": ["scripts/my-tool.js"]`);
+    }
+    
+    // If src file exists, warn but don't error (might be legitimate --save scenario)
+    console.warn(`⚠️  WARNING: ${fieldName} field points to dist/ directory: "${binPath}"
+   The libuild workflow is to point bin entries to src/ files and use --save to update paths.
+   Consider changing to: "${srcPath}" and running 'libuild build --save'`);
+    return;
+  }
+  
+  // Check if file doesn't exist in src/
+  if (binPath.startsWith("src/") || binPath.startsWith("./src/")) {
+    // This is correct, no validation needed here as build process will check file existence
+    return;
+  }
+  
+  // Warn about other patterns that might be incorrect
+  if (!binPath.startsWith("src/") && !binPath.startsWith("./src/")) {
+    console.warn(`⚠️  WARNING: ${fieldName} field points to "${binPath}" which is not in src/ directory.
+   Consider moving executable to src/ or using the files field for pre-built scripts.
+   Run 'libuild build --save' after fixing to update paths correctly.`);
+  }
+}
+
 function transformBinPaths(value: any): any {
   if (typeof value === "string") {
     // Transform ./dist/src/ paths to src/ without ./ prefix for npm conventions
@@ -551,6 +624,11 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   const pkgPath = Path.join(cwd, "package.json");
   const pkg = JSON.parse(await FS.readFile(pkgPath, "utf-8")) as PackageJSON;
 
+  // Validate bin paths early to provide clear error messages
+  if (pkg.bin) {
+    await validateBinPaths(pkg.bin, srcDir, "bin");
+  }
+
   // Check for unsafe publishing conditions
   if (!pkg.private) {
     console.warn("⚠️  WARNING: Root package.json is not private - this could lead to accidental publishing of development package.json");
@@ -622,11 +700,9 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     throw error;
   }
 
-  // External includes all npm deps (relative imports handled by plugin)
+  // External only JSON files (npm deps handled by packages: "external", Node.js built-ins by platform: "node")
   const externalDeps = [
-    ...Object.keys(pkg.dependencies || {}),
-    ...Object.keys(pkg.peerDependencies || {}),
-    ...Object.keys(pkg.optionalDependencies || {})
+    "*.json"  // Let Node.js handle JSON imports natively
   ];
 
   // Prepare entry points for batch building
@@ -671,6 +747,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       external: externalDeps,
       platform: "node",
       target: "node16",
+      packages: "external",
       plugins: [
         externalEntrypointsPlugin({
           entryNames,
