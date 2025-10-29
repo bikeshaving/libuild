@@ -36,14 +36,26 @@ function isValidEntrypoint(filename: string): boolean {
   if (filename.endsWith(".d.ts")) return false; // Ignore TypeScript declaration files
   if (filename.startsWith("_")) return false;
   if (filename.startsWith(".")) return false;
+  
+  // Auto-ignore common test file patterns
+  if (filename.includes(".test.")) return false; // Jest/Vitest standard
+  if (filename.includes(".spec.")) return false; // Jasmine/Angular standard
+  
   return true;
 }
 
 async function findEntrypoints(srcDir: string): Promise<string[]> {
-  const files = await FS.readdir(srcDir);
+  const files = await FS.readdir(srcDir, {withFileTypes: true});
   return files
-    .filter(isValidEntrypoint)
-    .map(file => Path.basename(file, Path.extname(file)))
+    .filter(dirent => {
+      if (dirent.isDirectory()) {
+        // Auto-ignore common test directories
+        if (dirent.name === "__tests__" || dirent.name === "test") return false;
+        return false; // Only process files, not directories
+      }
+      return isValidEntrypoint(dirent.name);
+    })
+    .map(dirent => Path.basename(dirent.name, Path.extname(dirent.name)))
     .sort();
 }
 

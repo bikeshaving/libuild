@@ -951,3 +951,166 @@ export function process() {
 
   await removeTempDir(testDir);
 });
+
+// =============================================================================
+// TEST FILE IGNORING TESTS
+// =============================================================================
+
+test("ignores common test file patterns", async () => {
+  const testDir = await createTempDir("test-ignore");
+
+  // Create package.json
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "test-ignore",
+    version: "1.0.0",
+    type: "module",
+    main: "dist/index.cjs",
+    private: true
+  }));
+
+  // Create src directory with various files including test patterns
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), 'export const index = "main";');
+  await FS.writeFile(Path.join(testDir, "src", "utils.ts"), 'export const utils = "helper";');
+  
+  // Test files that should be ignored
+  await FS.writeFile(Path.join(testDir, "src", "index.test.ts"), 'test file content');
+  await FS.writeFile(Path.join(testDir, "src", "utils.test.js"), 'test file content');
+  await FS.writeFile(Path.join(testDir, "src", "component.spec.ts"), 'spec file content');
+  await FS.writeFile(Path.join(testDir, "src", "api.spec.js"), 'spec file content');
+
+  await build(testDir);
+
+  const distDir = Path.join(testDir, "dist");
+  const distSrcDir = Path.join(distDir, "src");
+
+  // Check that valid entries were built
+  expect(await fileExists(Path.join(distSrcDir, "index.js"))).toBe(true);
+  expect(await fileExists(Path.join(distSrcDir, "utils.js"))).toBe(true);
+
+  // Check that test files were NOT built
+  expect(await fileExists(Path.join(distSrcDir, "index.test.js"))).toBe(false);
+  expect(await fileExists(Path.join(distSrcDir, "utils.test.js"))).toBe(false);
+  expect(await fileExists(Path.join(distSrcDir, "component.spec.js"))).toBe(false);
+  expect(await fileExists(Path.join(distSrcDir, "api.spec.js"))).toBe(false);
+
+  // Check exports - should only include valid entries
+  const distPkg = await readJSON(Path.join(distDir, "package.json"));
+  expect(distPkg.exports["."]).toBeDefined();
+  expect(distPkg.exports["./utils"]).toBeDefined();
+  expect(distPkg.exports["./index.test"]).toBeUndefined();
+  expect(distPkg.exports["./utils.test"]).toBeUndefined();
+  expect(distPkg.exports["./component.spec"]).toBeUndefined();
+  expect(distPkg.exports["./api.spec"]).toBeUndefined();
+
+  await removeTempDir(testDir);
+});
+
+test("ignores test directories", async () => {
+  const testDir = await createTempDir("test-dir-ignore");
+
+  // Create package.json
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "test-dir-ignore",
+    version: "1.0.0",
+    type: "module",
+    main: "dist/index.cjs",
+    private: true
+  }));
+
+  // Create src directory with valid files
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), 'export const index = "main";');
+  await FS.writeFile(Path.join(testDir, "src", "api.ts"), 'export const api = "api";');
+
+  // Create test directories that should be ignored
+  await FS.mkdir(Path.join(testDir, "src", "__tests__"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "__tests__", "index.test.ts"), 'test content');
+  await FS.writeFile(Path.join(testDir, "src", "__tests__", "api.test.ts"), 'test content');
+
+  await FS.mkdir(Path.join(testDir, "src", "test"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "test", "utils.test.ts"), 'test content');
+  await FS.writeFile(Path.join(testDir, "src", "test", "setup.ts"), 'test setup');
+
+  await build(testDir);
+
+  const distDir = Path.join(testDir, "dist");
+  const distSrcDir = Path.join(distDir, "src");
+
+  // Check that valid entries were built
+  expect(await fileExists(Path.join(distSrcDir, "index.js"))).toBe(true);
+  expect(await fileExists(Path.join(distSrcDir, "api.js"))).toBe(true);
+
+  // Check that test directories were NOT copied/processed
+  expect(await fileExists(Path.join(distSrcDir, "__tests__"))).toBe(false);
+  expect(await fileExists(Path.join(distSrcDir, "test"))).toBe(false);
+
+  // Check exports - should only include valid entries
+  const distPkg = await readJSON(Path.join(distDir, "package.json"));
+  expect(distPkg.exports["."]).toBeDefined();
+  expect(distPkg.exports["./api"]).toBeDefined();
+  expect(Object.keys(distPkg.exports)).toHaveLength(6); // ".", "./index", "./api", "./index.js", "./api.js", "./package.json"
+
+  await removeTempDir(testDir);
+});
+
+test("test ignoring works with mixed valid and test files", async () => {
+  const testDir = await createTempDir("mixed-files");
+
+  // Create package.json
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "mixed-files",
+    version: "1.0.0",
+    type: "module",
+    private: true
+  }));
+
+  // Create src directory with mixed files
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), 'export const index = "main";');
+  await FS.writeFile(Path.join(testDir, "src", "utils.ts"), 'export const utils = "helper";');
+  await FS.writeFile(Path.join(testDir, "src", "api.ts"), 'export const api = "api";');
+  
+  // Test files with various patterns
+  await FS.writeFile(Path.join(testDir, "src", "index.test.ts"), 'test content');
+  await FS.writeFile(Path.join(testDir, "src", "utils.spec.ts"), 'spec content');
+  await FS.writeFile(Path.join(testDir, "src", "integration.test.js"), 'integration test');
+  await FS.writeFile(Path.join(testDir, "src", "component.spec.js"), 'component spec');
+
+  // Files starting with underscore (already ignored)
+  await FS.writeFile(Path.join(testDir, "src", "_internal.ts"), 'internal file');
+
+  await build(testDir);
+
+  const distDir = Path.join(testDir, "dist");
+  const distSrcDir = Path.join(distDir, "src");
+
+  // Check that only valid entries were built (3 valid files)
+  const builtFiles = await FS.readdir(distSrcDir);
+  const jsFiles = builtFiles.filter(f => f.endsWith('.js'));
+  
+  // Should have index.js, utils.js, api.js only
+  expect(jsFiles).toEqual(expect.arrayContaining(['index.js', 'utils.js', 'api.js']));
+  expect(jsFiles).toHaveLength(3);
+
+  // Check that test files were not built
+  expect(jsFiles).not.toContain('index.test.js');
+  expect(jsFiles).not.toContain('utils.spec.js');
+  expect(jsFiles).not.toContain('integration.test.js');
+  expect(jsFiles).not.toContain('component.spec.js');
+  expect(jsFiles).not.toContain('_internal.js');
+
+  // Check exports
+  const distPkg = await readJSON(Path.join(distDir, "package.json"));
+  expect(distPkg.exports["."]).toBeDefined();
+  expect(distPkg.exports["./utils"]).toBeDefined();
+  expect(distPkg.exports["./api"]).toBeDefined();
+  
+  // Should not have exports for test files
+  expect(distPkg.exports["./index.test"]).toBeUndefined();
+  expect(distPkg.exports["./utils.spec"]).toBeUndefined();
+  expect(distPkg.exports["./integration.test"]).toBeUndefined();
+  expect(distPkg.exports["./component.spec"]).toBeUndefined();
+
+  await removeTempDir(testDir);
+});
