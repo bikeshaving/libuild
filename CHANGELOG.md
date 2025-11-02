@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.10] - 2025-10-29
+
+### Added
+- Automatic cleanup of invalid bin/exports paths when using --save flag
+- Clear messaging that libuild is zero-config with NO libuild.config.js file
+
+### Fixed
+- --save now validates and removes bin/exports entries pointing to non-existent files
+- Package.json fields are regenerated based on actual built files during --save
+
 ## [0.1.9] - 2025-10-29
 
 ### Fixed
