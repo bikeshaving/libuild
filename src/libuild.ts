@@ -412,6 +412,10 @@ If you need to include pre-built executable files, use the files field instead:
     
     // If src file exists, warn but don't error (might be legitimate --save scenario)
     console.warn(`⚠️  WARNING: ${fieldName} field points to dist/ directory: "${binPath}"
+   
+   libuild is ZERO-CONFIG - there is no libuild.config.js file!
+   Configuration comes from your package.json fields.
+   
    The libuild workflow is to point bin entries to src/ files and use --save to update paths.
    Consider changing to: "${srcPath}" and running 'libuild build --save'`);
     return;
@@ -610,6 +614,7 @@ function validatePath(inputPath: string, basePath: string): string {
 
 export async function build(cwd: string, save: boolean = false): Promise<{distPkg: PackageJSON, rootPkg: PackageJSON}> {
   console.info("Building with libuild...");
+  console.info("  Zero-config library build tool - configuration from package.json");
 
   const srcDir = Path.join(cwd, "src");
   const distDir = Path.join(cwd, "dist");
@@ -831,7 +836,8 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     if (save) {
       console.info("   Removing stale exports from root package.json (--save mode)");
     } else {
-      console.warn("   Use --save to remove these from root package.json");
+      console.warn("   libuild is ZERO-CONFIG - no libuild.config.js file needed!");
+      console.warn("   Use 'libuild build --save' to clean up package.json automatically");
     }
   }
 
@@ -954,45 +960,70 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       rootPkg.typings = rootPkg.typings.startsWith("./dist/") ? rootPkg.typings : "./" + Path.join("dist", rootPkg.typings);
     }
 
-    // Update exports to point to dist
+    // Clean up and regenerate exports based on actual built files
     const rootExports: any = {};
     for (const [key, value] of Object.entries(cleanedPkg.exports)) {
       if (typeof value === "string") {
-        // Only add ./dist prefix if not already present
-        rootExports[key] = value.startsWith("./dist/") ? value : `./dist${value.startsWith('.') ? value.slice(1) : value}`;
+        const distPath = value.startsWith("./dist/") ? value : `./dist${value.startsWith('.') ? value.slice(1) : value}`;
+        const fullPath = Path.join(cwd, distPath);
+        // Only include if the file actually exists
+        if (await fileExists(fullPath)) {
+          rootExports[key] = distPath;
+        }
       } else if (typeof value === "object" && value !== null) {
-        rootExports[key] = {};
+        const cleanedValue: any = {};
+        let hasValidPaths = false;
         for (const [subKey, subValue] of Object.entries(value)) {
           if (typeof subValue === "string") {
-            // Only add ./dist prefix if not already present
-            rootExports[key][subKey] = subValue.startsWith("./dist/") ? subValue : `./dist${subValue.startsWith('.') ? subValue.slice(1) : subValue}`;
+            const distPath = subValue.startsWith("./dist/") ? subValue : `./dist${subValue.startsWith('.') ? subValue.slice(1) : subValue}`;
+            const fullPath = Path.join(cwd, distPath);
+            // Only include if the file actually exists
+            if (await fileExists(fullPath)) {
+              cleanedValue[subKey] = distPath;
+              hasValidPaths = true;
+            }
           }
+        }
+        // Only include the export if it has at least one valid path
+        if (hasValidPaths) {
+          rootExports[key] = cleanedValue;
         }
       }
     }
     rootPkg.exports = rootExports;
 
-    // Update bin to point to dist
+    // Clean up and validate bin paths based on actual built files
     if (rootPkg.bin) {
       if (typeof rootPkg.bin === "string") {
-        if (!rootPkg.bin.startsWith("./dist/")) {
-          // If binPath already starts with "dist/", just add "./" prefix
-          if (rootPkg.bin.startsWith("dist/")) {
-            rootPkg.bin = "./" + rootPkg.bin;
-          } else {
-            rootPkg.bin = "./" + Path.join("dist", rootPkg.bin);
-          }
+        const distPath = rootPkg.bin.startsWith("./dist/") ? rootPkg.bin : 
+                        rootPkg.bin.startsWith("dist/") ? "./" + rootPkg.bin :
+                        "./" + Path.join("dist", rootPkg.bin);
+        const fullPath = Path.join(cwd, distPath);
+        // Only keep if the file actually exists
+        if (await fileExists(fullPath)) {
+          rootPkg.bin = distPath;
+        } else {
+          delete rootPkg.bin;
         }
       } else {
+        const cleanedBin: any = {};
         for (const [name, binPath] of Object.entries(rootPkg.bin)) {
-          if (typeof binPath === "string" && !binPath.startsWith("./dist/")) {
-            // If binPath already starts with "dist/", just add "./" prefix
-            if (binPath.startsWith("dist/")) {
-              rootPkg.bin[name] = "./" + binPath;
-            } else {
-              rootPkg.bin[name] = "./" + Path.join("dist", binPath);
+          if (typeof binPath === "string") {
+            const distPath = binPath.startsWith("./dist/") ? binPath :
+                            binPath.startsWith("dist/") ? "./" + binPath :
+                            "./" + Path.join("dist", binPath);
+            const fullPath = Path.join(cwd, distPath);
+            // Only include if the file actually exists
+            if (await fileExists(fullPath)) {
+              cleanedBin[name] = distPath;
             }
           }
+        }
+        // Update bin field or remove if no valid entries
+        if (Object.keys(cleanedBin).length > 0) {
+          rootPkg.bin = cleanedBin;
+        } else {
+          delete rootPkg.bin;
         }
       }
     }

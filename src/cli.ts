@@ -32,6 +32,12 @@ Options:
   --save    Update root package.json to point to dist files
   --no-save Skip package.json updates (for publish command)
 
+IMPORTANT:
+  • libuild is zero-config - there is NO libuild.config.js file
+  • Configuration comes from your package.json (main, module, exports, etc.)
+  • Use --save to regenerate package.json fields based on built files
+  • Invalid bin/exports paths are automatically cleaned up with --save
+
 For publish command, all additional flags are forwarded to npm publish.
 
 Examples:
