@@ -11,6 +11,8 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - --save now validates and removes bin/exports entries pointing to non-existent files
 - Package.json fields are regenerated based on actual built files during --save
+- Validation logic is now context-aware of --save flag to prevent warnings about configuration that libuild itself creates
+- CLI argument parsing to prevent npm flags from being incorrectly treated as directory arguments
 
 ## [0.1.9] - 2025-10-29
 
