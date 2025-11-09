@@ -358,81 +358,99 @@ export function transformSrcToDist(value: any): any {
   return value;
 }
 
-async function validateBinPaths(value: any, srcDir: string, fieldName: string = "bin"): Promise<void> {
+async function validateBinPaths(value: any, cwd: string, save: boolean, fieldName: string = "bin"): Promise<void> {
   if (typeof value === "string") {
-    await validateSingleBinPath(value, fieldName, srcDir);
+    await validateSingleBinPath(value, fieldName, cwd, save);
   } else if (typeof value === "object" && value !== null) {
     for (const [key, val] of Object.entries(value)) {
       if (typeof val === "string") {
-        await validateSingleBinPath(val, `${fieldName}.${key}`, srcDir);
+        await validateSingleBinPath(val, `${fieldName}.${key}`, cwd, save);
       }
     }
   }
 }
 
-async function validateSingleBinPath(binPath: string, fieldName: string, srcDir: string): Promise<void> {
-  // Check if pointing to dist/ files that don't have corresponding src/ files
-  if (binPath.startsWith("dist/") || binPath.startsWith("./dist/")) {
-    // Extract the potential src/ path
-    let srcPath: string;
-    if (binPath.startsWith("./dist/src/")) {
-      srcPath = binPath.replace("./dist/src/", "src/");
-    } else if (binPath.startsWith("dist/src/")) {
-      srcPath = binPath.replace("dist/src/", "src/");
-    } else if (binPath.startsWith("./dist/")) {
-      srcPath = binPath.replace("./dist/", "src/");
-    } else if (binPath.startsWith("dist/")) {
-      srcPath = binPath.replace("dist/", "src/");
-    } else {
-      srcPath = "";
+async function validateSingleBinPath(binPath: string, fieldName: string, cwd: string, save: boolean): Promise<void> {
+  // If --save is enabled, don't warn because --save will fix the paths
+  if (save) {
+    return;
+  }
+  
+  // If this points to a dist/src/ path (valid libuild output), check if it actually exists
+  if (binPath.startsWith("dist/src/") || binPath.startsWith("./dist/src/")) {
+    const fullPath = Path.join(cwd, binPath);
+    const distExists = await fileExists(fullPath);
+    
+    if (distExists) {
+      // This is a valid built file, no warning needed
+      return;
     }
     
-    // Check if corresponding src file exists (try both .ts and .js extensions)
-    const basePath = srcPath.replace(/\.(js|cjs)$/, "");
-    const tsPath = Path.join(srcDir, "..", basePath + ".ts");
-    const jsPath = Path.join(srcDir, "..", basePath + ".js");
+    // Extract the corresponding src/ path to suggest
+    const srcPath = binPath.startsWith("./dist/src/") 
+      ? binPath.replace("./dist/src/", "src/")
+      : binPath.replace("dist/src/", "src/");
+      
+    // Check if source file exists
+    const basePath = srcPath.replace(/\.(js|cjs|mjs)$/, "");
+    const tsPath = Path.join(cwd, basePath + ".ts");
+    const jsPath = Path.join(cwd, basePath + ".js");
+    
     const srcExists = await fileExists(tsPath) || await fileExists(jsPath);
     
-    
     if (!srcExists) {
-      throw new Error(`${fieldName} field points to dist/ directory: "${binPath}"
-
-The bin field should reference source files that libuild will build and transform:
-  CORRECT:   "bin": {"tool": "src/cli.js"}
-  INCORRECT: "bin": {"tool": "dist/cli.js"}
-
-Libuild workflow:
-1. Point bin entries to src/ files
-2. Run 'libuild build --save' to update package.json with dist/ paths
-3. Set "private": true in your development package.json
-
-If you need to include pre-built executable files, use the files field instead:
-  "files": ["scripts/my-tool.js"]`);
+      console.warn(`⚠️  WARNING: ${fieldName} field points to "${binPath}" but neither the dist file nor corresponding src file exists.
+   
+   Create "${srcPath}" and run 'libuild build --save' to update paths correctly.`);
+      return;
     }
     
-    // If src file exists, warn but don't error (might be legitimate --save scenario)
-    console.warn(`⚠️  WARNING: ${fieldName} field points to dist/ directory: "${binPath}"
+    // Source exists but dist doesn't - suggest build
+    console.warn(`⚠️  WARNING: ${fieldName} field points to "${binPath}" which doesn't exist yet.
+   
+   Run 'libuild build' to create the dist files, or use 'libuild build --save' to update the path to "${srcPath}".`);
+    return;
+  }
+  
+  // Check other dist/ patterns that aren't libuild's standard output
+  if (binPath.startsWith("dist/") || binPath.startsWith("./dist/")) {
+    console.warn(`⚠️  WARNING: ${fieldName} field points to "${binPath}" in dist/ directory.
+   
+   libuild expects bin entries to point to src/ files. Consider changing to the corresponding src/ path and using --save.`);
+    return;
+  }
+  
+  // Check if path points to a valid file that would exist after building
+  const fullPath = Path.join(cwd, binPath);
+  const pathExists = await fileExists(fullPath);
+  
+  // If the exact path exists, no warning needed
+  if (pathExists) {
+    return;
+  }
+  
+  // For src/ paths, check if a corresponding .ts or .js file exists
+  if (binPath.startsWith("src/") || binPath.startsWith("./src/")) {
+    const basePath = fullPath.replace(/\.(js|cjs|mjs)$/, "");
+    const tsPath = basePath + ".ts";
+    const jsPath = basePath + ".js";
+    
+    const tsExists = await fileExists(tsPath);
+    const jsExists = await fileExists(jsPath);
+    
+    // If source file exists (either .ts or .js), this is valid
+    if (tsExists || jsExists) {
+      return;
+    }
+  }
+  
+  // Only warn if the path doesn't point to a valid entrypoint
+  console.warn(`⚠️  WARNING: ${fieldName} field points to "${binPath}" which doesn't exist
    
    libuild is ZERO-CONFIG - there is no libuild.config.js file!
    Configuration comes from your package.json fields.
    
-   The libuild workflow is to point bin entries to src/ files and use --save to update paths.
-   Consider changing to: "${srcPath}" and running 'libuild build --save'`);
-    return;
-  }
-  
-  // Check if file doesn't exist in src/
-  if (binPath.startsWith("src/") || binPath.startsWith("./src/")) {
-    // This is correct, no validation needed here as build process will check file existence
-    return;
-  }
-  
-  // Warn about other patterns that might be incorrect
-  if (!binPath.startsWith("src/") && !binPath.startsWith("./src/")) {
-    console.warn(`⚠️  WARNING: ${fieldName} field points to "${binPath}" which is not in src/ directory.
-   Consider moving executable to src/ or using the files field for pre-built scripts.
-   Run 'libuild build --save' after fixing to update paths correctly.`);
-  }
+   Use 'libuild build --save' to update package.json with correct dist/ paths automatically.`);
 }
 
 function transformBinPaths(value: any): any {
@@ -710,7 +728,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
 
   // Validate bin paths early to provide clear error messages
   if (pkg.bin) {
-    await validateBinPaths(pkg.bin, srcDir, "bin");
+    await validateBinPaths(pkg.bin, cwd, save, "bin");
   }
 
   // Check for unsafe publishing conditions
