@@ -504,7 +504,83 @@ function fixExportsForDist(obj: any): any {
   return obj;
 }
 
-function cleanPackageJSON(pkg: PackageJSON, mainEntry: string, options: BuildOptions): PackageJSON {
+async function resolveWorkspaceDependencies(dependencies: Record<string, string> | undefined, cwd: string): Promise<Record<string, string> | undefined> {
+  if (!dependencies) return undefined;
+  
+  const resolved: Record<string, string> = {};
+  
+  for (const [depName, depVersion] of Object.entries(dependencies)) {
+    if (depVersion.startsWith("workspace:")) {
+      // Resolve workspace dependency to actual version
+      const resolvedVersion = await resolveWorkspaceVersion(depName, depVersion, cwd);
+      resolved[depName] = resolvedVersion;
+    } else {
+      // Keep non-workspace dependencies as-is
+      resolved[depName] = depVersion;
+    }
+  }
+  
+  return resolved;
+}
+
+async function resolveWorkspaceVersion(packageName: string, workspaceSpec: string, cwd: string): Promise<string> {
+  try {
+    // For workspace:*, find the actual package.json and get its version
+    if (workspaceSpec === "workspace:*") {
+      // Try to find the package in the workspace
+      // Look for package.json files in common workspace locations
+      const packageNameParts = packageName.replace('@', '').replace('/', '-');
+      const packageBaseName = packageName.split('/').pop() || packageName;
+      
+      const possiblePaths = [
+        `../packages/${packageNameParts}/package.json`,
+        `../packages/${packageBaseName}/package.json`,
+        `../${packageNameParts}/package.json`,
+        `../${packageBaseName}/package.json`,
+        `./packages/${packageNameParts}/package.json`,
+        `./packages/${packageBaseName}/package.json`,
+        `./${packageNameParts}/package.json`,
+        `./${packageBaseName}/package.json`,
+      ];
+      
+      for (const pkgPath of possiblePaths) {
+        try {
+          const resolvedPath = Path.resolve(cwd, pkgPath);
+          if (await fileExists(resolvedPath)) {
+            const pkgContent = await FS.readFile(resolvedPath, 'utf-8');
+            const pkgJson = JSON.parse(pkgContent);
+            if (pkgJson.name === packageName) {
+              console.info(`  Resolved workspace:* dependency "${packageName}" to ^${pkgJson.version}`);
+              return `^${pkgJson.version}`;
+            }
+          }
+        } catch {
+          // Continue to next path
+          continue;
+        }
+      }
+      
+      // If we can't find the package, warn and keep the workspace reference
+      console.warn(`⚠️  WARNING: Could not resolve workspace dependency "${packageName}" - keeping as workspace:*`);
+      console.warn(`    Searched in: ${possiblePaths.map(p => Path.resolve(cwd, p)).join(', ')}`);
+      return workspaceSpec;
+    }
+    
+    // For other workspace specs like workspace:^1.0.0, extract the version part
+    const versionPart = workspaceSpec.replace('workspace:', '');
+    if (versionPart !== '*') {
+      console.info(`  Resolved workspace:${versionPart} dependency "${packageName}" to ${versionPart}`);
+      return versionPart;
+    }
+    
+    return workspaceSpec;
+  } catch (error) {
+    console.warn(`⚠️  WARNING: Error resolving workspace dependency "${packageName}": ${error.message}`);
+    return workspaceSpec;
+  }
+}
+
+async function cleanPackageJSON(pkg: PackageJSON, mainEntry: string, options: BuildOptions, cwd: string): Promise<PackageJSON> {
   const cleaned: PackageJSON = {
     name: pkg.name,
     version: pkg.version,
@@ -561,6 +637,9 @@ function cleanPackageJSON(pkg: PackageJSON, mainEntry: string, options: BuildOpt
         cleaned[field] = transformBinPaths(pkg[field]);
       } else if (pathFields.includes(field)) {
         cleaned[field] = transformSrcToDist(pkg[field]);
+      } else if (field === "dependencies" || field === "devDependencies" || field === "peerDependencies" || field === "optionalDependencies") {
+        // Resolve workspace:* dependencies to actual version numbers
+        cleaned[field] = await resolveWorkspaceDependencies(pkg[field], cwd);
       } else {
         cleaned[field] = pkg[field];
       }
@@ -823,7 +902,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
 
   // Generate package.json
   console.info("  Generating package.json...");
-  const cleanedPkg = cleanPackageJSON(pkg, mainEntry, options);
+  const cleanedPkg = await cleanPackageJSON(pkg, mainEntry, options, cwd);
   const exportsResult = generateExports(entries, mainEntry, options, pkg.exports);
   cleanedPkg.exports = fixExportsForDist(exportsResult.exports);
 
