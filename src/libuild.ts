@@ -59,6 +59,27 @@ async function findEntrypoints(srcDir: string): Promise<string[]> {
     .sort();
 }
 
+async function findBinEntrypoints(binDir: string): Promise<string[]> {
+  try {
+    const files = await FS.readdir(binDir, {withFileTypes: true});
+    return files
+      .filter(dirent => {
+        if (dirent.isDirectory()) {
+          return false; // Only process files, not directories
+        }
+        return isValidEntrypoint(dirent.name);
+      })
+      .map(dirent => Path.basename(dirent.name, Path.extname(dirent.name)))
+      .sort();
+  } catch (error) {
+    // If bin directory doesn't exist, return empty array
+    if (error.code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+}
+
 function detectMainEntry(pkg: PackageJSON, entries: string[]): string {
   // Helper function to extract entry name from path
   function extractEntryFromPath(path: string): string | undefined {
@@ -195,14 +216,24 @@ function generateExports(entries: string[], mainEntry: string, options: BuildOpt
   const staleExports: string[] = [];
 
   function createExportEntry(entry: string) {
-    const exportEntry: any = {
-      types: `./src/${entry}.d.ts`,
-      import: `./src/${entry}.js`,
-    };
-    if (options.formats.cjs) {
-      exportEntry.require = `./src/${entry}.cjs`;
+    if (entry.startsWith("bin/")) {
+      // Bin entries only get ESM format (no CJS for executables)
+      const binEntry = entry.replace("bin/", "");
+      return {
+        types: `./src/bin/${binEntry}.d.ts`,
+        import: `./src/bin/${binEntry}.js`,
+      };
+    } else {
+      // Regular src entries get both ESM and CJS (if enabled)
+      const exportEntry: any = {
+        types: `./src/${entry}.d.ts`,
+        import: `./src/${entry}.js`,
+      };
+      if (options.formats.cjs) {
+        exportEntry.require = `./src/${entry}.cjs`;
+      }
+      return exportEntry;
     }
-    return exportEntry;
   }
 
   function expandExistingExport(existing: any, entryFromPath?: string) {
@@ -376,8 +407,9 @@ async function validateSingleBinPath(binPath: string, fieldName: string, cwd: st
     return;
   }
   
-  // If this points to a dist/src/ path (valid libuild output), check if it actually exists
-  if (binPath.startsWith("dist/src/") || binPath.startsWith("./dist/src/")) {
+  // If this points to a dist/src/ or dist/bin/ path (valid libuild output), check if it actually exists
+  if (binPath.startsWith("dist/src/") || binPath.startsWith("./dist/src/") || 
+      binPath.startsWith("dist/bin/") || binPath.startsWith("./dist/bin/")) {
     const fullPath = Path.join(cwd, binPath);
     const distExists = await fileExists(fullPath);
     
@@ -386,10 +418,26 @@ async function validateSingleBinPath(binPath: string, fieldName: string, cwd: st
       return;
     }
     
-    // Extract the corresponding src/ path to suggest
-    const srcPath = binPath.startsWith("./dist/src/") 
-      ? binPath.replace("./dist/src/", "src/")
-      : binPath.replace("dist/src/", "src/");
+    // Extract the corresponding src/ or bin/ path to suggest
+    let srcPath: string;
+    let sourceDir: string;
+    
+    if (binPath.startsWith("./dist/src/")) {
+      srcPath = binPath.replace("./dist/src/", "src/");
+      sourceDir = "src";
+    } else if (binPath.startsWith("dist/src/")) {
+      srcPath = binPath.replace("dist/src/", "src/");
+      sourceDir = "src";
+    } else if (binPath.startsWith("./dist/bin/")) {
+      srcPath = binPath.replace("./dist/bin/", "bin/");
+      sourceDir = "bin";
+    } else if (binPath.startsWith("dist/bin/")) {
+      srcPath = binPath.replace("dist/bin/", "bin/");
+      sourceDir = "bin";
+    } else {
+      srcPath = binPath;
+      sourceDir = "src";
+    }
       
     // Check if source file exists
     const basePath = srcPath.replace(/\.(js|cjs|mjs)$/, "");
@@ -429,8 +477,9 @@ async function validateSingleBinPath(binPath: string, fieldName: string, cwd: st
     return;
   }
   
-  // For src/ paths, check if a corresponding .ts or .js file exists
-  if (binPath.startsWith("src/") || binPath.startsWith("./src/")) {
+  // For src/ or bin/ paths, check if a corresponding .ts or .js file exists
+  if (binPath.startsWith("src/") || binPath.startsWith("./src/") || 
+      binPath.startsWith("bin/") || binPath.startsWith("./bin/")) {
     const basePath = fullPath.replace(/\.(js|cjs|mjs)$/, "");
     const tsPath = basePath + ".ts";
     const jsPath = basePath + ".js";
@@ -463,12 +512,24 @@ function transformBinPaths(value: any): any {
     if (value.startsWith("dist/src/")) {
       return value.replace("dist/", "");
     }
+    // Transform ./dist/bin/ paths to bin/ without ./ prefix for npm conventions
+    if (value.startsWith("./dist/bin/")) {
+      return value.replace("./dist/", "");
+    }
+    // Transform dist/bin/ paths to bin/ without ./ prefix for npm conventions  
+    if (value.startsWith("dist/bin/")) {
+      return value.replace("dist/", "");
+    }
     // Transform ./src/ paths (including nested) to src/ without ./ prefix for npm conventions
     if (value.startsWith("./src/")) {
       return value.replace("./", "");
     }
-    // Don't add ./ prefix for src/ paths
-    if (value.startsWith("src/") || value === "src") {
+    // Transform ./bin/ paths to bin/ without ./ prefix for npm conventions
+    if (value.startsWith("./bin/")) {
+      return value.replace("./", "");
+    }
+    // Don't add ./ prefix for src/ or bin/ paths
+    if (value.startsWith("src/") || value === "src" || value.startsWith("bin/") || value === "bin") {
       return value;
     }
     return value;
@@ -520,6 +581,52 @@ function fixExportsForDist(obj: any): any {
     return fixed;
   }
   return obj;
+}
+
+async function setExecutablePermissions(filePath: string): Promise<void> {
+  try {
+    await FS.chmod(filePath, 0o755);
+  } catch (error) {
+    console.warn(`⚠️  WARNING: Could not set executable permissions for ${filePath}: ${error.message}`);
+  }
+}
+
+async function makeFilesExecutable(pkg: PackageJSON, cwd: string, binEntries: string[]): Promise<void> {
+  const filesToMakeExecutable: string[] = [];
+  
+  // Files referenced in package.json bin field
+  if (pkg.bin) {
+    if (typeof pkg.bin === 'string') {
+      filesToMakeExecutable.push(Path.join(cwd, pkg.bin));
+    } else if (typeof pkg.bin === 'object') {
+      for (const binPath of Object.values(pkg.bin)) {
+        if (typeof binPath === 'string') {
+          filesToMakeExecutable.push(Path.join(cwd, binPath));
+        }
+      }
+    }
+  }
+  
+  // All files built from bin/ directory
+  for (const binEntry of binEntries) {
+    const jsPath = Path.join(cwd, "dist", "bin", `${binEntry}.js`);
+    const cjsPath = Path.join(cwd, "dist", "bin", `${binEntry}.cjs`);
+    
+    // Add to list if not already included
+    if (!filesToMakeExecutable.includes(jsPath)) {
+      filesToMakeExecutable.push(jsPath);
+    }
+    if (!filesToMakeExecutable.includes(cjsPath)) {
+      filesToMakeExecutable.push(cjsPath);
+    }
+  }
+  
+  // Set executable permissions
+  for (const filePath of filesToMakeExecutable) {
+    if (await fileExists(filePath)) {
+      await setExecutablePermissions(filePath);
+    }
+  }
 }
 
 async function resolveWorkspaceDependencies(dependencies: Record<string, string> | undefined, cwd: string): Promise<Record<string, string> | undefined> {
@@ -752,10 +859,23 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     }
   }
 
-  // Find entry points
-  const entries = await findEntrypoints(srcDir);
-  if (entries.length === 0) {
-    throw new Error("No entry points found in src/");
+  // Find entry points in both src/ and bin/ directories
+  const binDir = Path.join(cwd, "bin");
+  const srcEntries = await findEntrypoints(srcDir);
+  const binEntries = await findBinEntrypoints(binDir);
+  
+  // Combine entries, prefixing bin entries to distinguish them
+  const entries = [
+    ...srcEntries,
+    ...binEntries.map(entry => `bin/${entry}`)
+  ];
+  
+  if (srcEntries.length === 0 && binEntries.length === 0) {
+    throw new Error("No entry points found in src/ or bin/");
+  }
+  
+  if (binEntries.length > 0) {
+    console.info(`  Found bin entries: ${binEntries.join(", ")}`);
   }
 
   const options: BuildOptions = {
@@ -766,7 +886,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     }
   };
 
-  const mainEntry = detectMainEntry(pkg, entries);
+  const mainEntry = detectMainEntry(pkg, srcEntries);
 
   console.info("  Found entries:", entries.join(", "));
   console.info("  Main entry:", mainEntry);
@@ -812,12 +932,27 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   const umdEntries: string[] = [];
 
   for (const entry of entries) {
-    const entryPath = Path.join(srcDir, `${entry}.ts`);
-    const jsEntryPath = Path.join(srcDir, `${entry}.js`);
+    let entryPath: string;
+    let jsEntryPath: string;
+    let sourceDir: string;
+    
+    if (entry.startsWith("bin/")) {
+      // Handle bin/ entries
+      const binEntryName = entry.replace("bin/", "");
+      entryPath = Path.join(binDir, `${binEntryName}.ts`);
+      jsEntryPath = Path.join(binDir, `${binEntryName}.js`);
+      sourceDir = "bin/";
+    } else {
+      // Handle src/ entries (existing logic)
+      entryPath = Path.join(srcDir, `${entry}.ts`);
+      jsEntryPath = Path.join(srcDir, `${entry}.js`);
+      sourceDir = "src/";
+    }
+    
     const actualPath = await fileExists(entryPath) ? entryPath : jsEntryPath;
 
     if (!await fileExists(actualPath)) {
-      throw new Error(`Entry point file not found: ${actualPath}. Expected ${entry}.ts or ${entry}.js in src/ directory.`);
+      throw new Error(`Entry point file not found: ${actualPath}. Expected ${entry.replace("bin/", "")}.ts or ${entry.replace("bin/", "")}.js in ${sourceDir} directory.`);
     }
 
     if (entry === "umd") {
@@ -827,66 +962,121 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     }
   }
 
+  // Separate src and bin entries for different output directories
+  const srcEntryPoints = entryPoints.filter(path => path.includes(srcDir));
+  const binEntryPoints = entryPoints.filter(path => path.includes(binDir));
+  
+  // Create dist/bin directory if needed
+  const distBinDir = Path.join(distDir, "bin");
+  if (binEntryPoints.length > 0) {
+    await FS.mkdir(distBinDir, {recursive: true});
+  }
+
   // Build all regular entries with smart dependency resolution
   if (entryPoints.length > 0) {
-    // Get entry point names for external resolution (both .ts and .js versions)
-    const entryNames = entryPoints.map(path => {
+    
+    // ESM build - build src and bin entries separately to different output directories
+    console.info(`  Building ${entryPoints.length} entries (ESM)...`);
+
+    // Get entry point names for external resolution
+    const srcEntryNames = srcEntryPoints.map(path => {
       const name = Path.basename(path, Path.extname(path));
       return name;
     });
 
-    // ESM build - batch all entries to enable code sharing
-    console.info(`  Building ${entryPoints.length} entries (ESM)...`);
-
-    await ESBuild.build({
-      entryPoints,
-      outdir: distSrcDir,
-      format: "esm",
-      outExtension: {".js": ".js"},
-      bundle: true,
-      minify: false,
-      sourcemap: false,
-      external: externalDeps,
-      platform: "node",
-      target: "node18",
-      packages: "external",
-      supported: { "import-attributes": true },
-      plugins: [
-        externalEntrypointsPlugin({
-          entryNames,
-          outputExtension: ".js"
-        }),
-        dtsPlugin({
-          outDir: distSrcDir,
-          rootDir: srcDir,
-          entryPoints
-        })
-      ],
-    });
-
-    // CJS build (only if main field exists)
-    if (options.formats.cjs) {
-      console.info(`  Building ${entryPoints.length} entries (CJS)...`);
+    // Build src entries
+    if (srcEntryPoints.length > 0) {
 
       await ESBuild.build({
-        entryPoints,
+        entryPoints: srcEntryPoints,
         outdir: distSrcDir,
-        format: "cjs",
-        outExtension: {".js": ".cjs"},
+        format: "esm",
+        outExtension: {".js": ".js"},
         bundle: true,
         minify: false,
         sourcemap: false,
         external: externalDeps,
         platform: "node",
         target: "node18",
+        packages: "external",
         supported: { "import-attributes": true },
         plugins: [
           externalEntrypointsPlugin({
-            entryNames,
-            outputExtension: ".cjs"
+            entryNames: srcEntryNames,
+            outputExtension: ".js"
+          }),
+          dtsPlugin({
+            outDir: distSrcDir,
+            rootDir: srcDir,
+            entryPoints: srcEntryPoints
           })
         ],
       });
+    }
+
+    const binEntryNames = binEntryPoints.map(path => {
+      const name = Path.basename(path, Path.extname(path));
+      return name;
+    });
+
+    // Build bin entries
+    if (binEntryPoints.length > 0) {
+
+      await ESBuild.build({
+        entryPoints: binEntryPoints,
+        outdir: distBinDir,
+        format: "esm",
+        outExtension: {".js": ".js"},
+        bundle: true,
+        minify: false,
+        sourcemap: false,
+        external: externalDeps,
+        platform: "node",
+        target: "node18",
+        packages: "external",
+        supported: { "import-attributes": true },
+        plugins: [
+          externalEntrypointsPlugin({
+            entryNames: binEntryNames,
+            outputExtension: ".js"
+          }),
+          dtsPlugin({
+            outDir: distBinDir,
+            rootDir: binDir,
+            entryPoints: binEntryPoints
+          })
+        ],
+      });
+    }
+
+    // CJS build (only if main field exists)
+    if (options.formats.cjs) {
+      console.info(`  Building ${entryPoints.length} entries (CJS)...`);
+
+      // Build src entries (CJS)
+      if (srcEntryPoints.length > 0) {
+        await ESBuild.build({
+          entryPoints: srcEntryPoints,
+          outdir: distSrcDir,
+          format: "cjs",
+          outExtension: {".js": ".cjs"},
+          bundle: true,
+          minify: false,
+          sourcemap: false,
+          external: externalDeps,
+          platform: "node",
+          target: "node18",
+          supported: { "import-attributes": true },
+          plugins: [
+            externalEntrypointsPlugin({
+              entryNames: srcEntryNames,
+              outputExtension: ".cjs"
+            })
+          ],
+        });
+      }
+
+      // Skip CJS build for bin entries - executables only need ESM
     }
   }
 
@@ -1089,6 +1279,34 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     }
     rootPkg.exports = rootExports;
 
+    // Generate bin entries from discovered bin files
+    if (binEntries.length > 0) {
+      const generatedBin: any = {};
+      for (const binEntry of binEntries) {
+        const binPath = `./dist/bin/${binEntry}.js`;
+        const fullPath = Path.join(cwd, binPath);
+        // Only add if the file actually exists
+        if (await fileExists(fullPath)) {
+          generatedBin[binEntry] = binPath;
+        }
+      }
+      
+      // Merge with existing bin entries or create new bin field
+      if (Object.keys(generatedBin).length > 0) {
+        if (rootPkg.bin) {
+          // Merge with existing bin entries
+          if (typeof rootPkg.bin === "string") {
+            // Convert single bin entry to object first
+            const existingName = pkg.name?.split('/').pop() || 'cli';
+            rootPkg.bin = { [existingName]: rootPkg.bin };
+          }
+          rootPkg.bin = { ...rootPkg.bin, ...generatedBin };
+        } else {
+          rootPkg.bin = generatedBin;
+        }
+      }
+    }
+
     // Clean up and validate bin paths based on actual built files
     if (rootPkg.bin) {
       if (typeof rootPkg.bin === "string") {
@@ -1167,6 +1385,11 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   if (save) {
     // rootPkg was already created and saved above
     rootPkg = JSON.parse(await FS.readFile(pkgPath, "utf-8")) as PackageJSON;
+  }
+
+  // Set executable permissions for bin files
+  if (binEntries.length > 0 || pkg.bin) {
+    await makeFilesExecutable(pkg, cwd, binEntries);
   }
 
   return {distPkg: fixedDistPkg, rootPkg};
