@@ -61,9 +61,74 @@ async function main() {
     process.exit(0);
   }
 
-  // Parse command and optional directory
+  // Parse command and optional directory more carefully
+  // Need to handle that npm flag values might be in positionals due to strict: false
   const command = positionals[0] || "build";
-  const targetDir = positionals[1];
+  
+  // Find directory by looking for positionals that are actual directory paths
+  // Skip flag values by checking if previous positional was a flag that expects a value
+  let targetDir: string | undefined;
+  for (let i = 1; i < positionals.length; i++) {
+    const arg = positionals[i];
+    
+    // Skip if this looks like it's a value for a flag
+    const flagValueFlags = ["--tag", "--access", "--registry", "--otp", "--workspace"];
+    const isValueForFlag = flagValueFlags.some(flag => {
+      const flagIndex = process.argv.indexOf(flag);
+      const argIndex = process.argv.indexOf(arg);
+      return flagIndex !== -1 && argIndex === flagIndex + 1;
+    });
+    
+    if (isValueForFlag) {
+      continue;
+    }
+    
+    // Check if this looks like a valid directory path 
+    if (!arg.startsWith("--")) {
+      try {
+        // Only treat as directory if it looks like a project directory
+        // Skip system paths like /bin/sh, /usr/bin, etc.
+        const isSystemPath = Path.isAbsolute(arg) && (
+          arg.startsWith("/bin/") || 
+          arg.startsWith("/usr/") || 
+          arg.startsWith("/etc/") ||
+          arg.startsWith("/var/") ||
+          arg.startsWith("/opt/") ||
+          arg.startsWith("/tmp/") ||
+          arg.startsWith("/System/") ||
+          arg.startsWith("/Applications/")
+        );
+        
+        if (isSystemPath) {
+          continue;
+        }
+        
+        const resolvedPath = Path.resolve(arg);
+        
+        // Prefer relative paths or current directory references
+        if (arg.includes("/") || arg.includes("\\") || arg === "." || arg === ".." || 
+            arg.startsWith("./") || arg.startsWith("../")) {
+          targetDir = arg;
+          break;
+        }
+        
+        // For simple names, only use if they exist as directories in current working directory
+        const fs = await import("fs/promises");
+        try {
+          const stat = await fs.stat(resolvedPath);
+          if (stat.isDirectory() && !Path.isAbsolute(arg)) {
+            targetDir = arg;
+            break;
+          }
+        } catch {
+          // Doesn't exist, skip it
+        }
+      } catch {
+        // Invalid path, skip it
+      }
+    }
+  }
+  
   const cwd = targetDir ? Path.resolve(targetDir) : process.cwd();
 
   // Determine save behavior
@@ -77,7 +142,8 @@ async function main() {
   
   const rawExtraArgs = process.argv.slice(2).filter(arg => 
     !["build", "publish"].includes(arg) && 
-    !["--save", "--no-save", "--help", "-h", "--version", "-v"].includes(arg)
+    !["--save", "--no-save", "--help", "-h", "--version", "-v"].includes(arg) &&
+    arg !== targetDir // Don't filter out the target directory
   );
   
   // Validate npm arguments for security
