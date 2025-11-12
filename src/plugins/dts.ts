@@ -34,7 +34,7 @@ export function dtsPlugin(options: TypeScriptPluginOptions): ESBuild.Plugin {
         let TS: typeof import("typescript");
         try {
           TS = await import("typescript");
-        } catch {
+        } catch (error) {
           // TypeScript not available - skip .d.ts generation
           return;
         }
@@ -45,9 +45,18 @@ export function dtsPlugin(options: TypeScriptPluginOptions): ESBuild.Plugin {
 
           // Check if this file matches any of the entry points
           return options.entryPoints.some(entryPoint => {
-            const normalizedEntry = Path.resolve(entryPoint);
-            const normalizedFile = Path.resolve(file);
-            return normalizedEntry === normalizedFile;
+            try {
+              // Use realpath to resolve symlinks (macOS /var -> /private/var issue)
+              const fs = require("fs");
+              const normalizedEntry = fs.realpathSync(Path.resolve(entryPoint));
+              const normalizedFile = fs.realpathSync(Path.resolve(file));
+              return normalizedEntry === normalizedFile;
+            } catch {
+              // Fallback to regular path resolution if realpath fails
+              const normalizedEntry = Path.resolve(entryPoint);
+              const normalizedFile = Path.resolve(file);
+              return normalizedEntry === normalizedFile;
+            }
           });
         });
         if (tsFiles.length === 0) {
