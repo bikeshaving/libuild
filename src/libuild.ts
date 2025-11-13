@@ -211,24 +211,41 @@ function checkIfExportIsStale(exportKey: string, exportValue: any, entries: stri
   return entryName ? !entries.includes(entryName) : false;
 }
 
-function generateExports(entries: string[], mainEntry: string, options: BuildOptions, existingExports: any = {}): {exports: any, staleExports: string[]} {
+async function generateExports(entries: string[], mainEntry: string, options: BuildOptions, existingExports: any = {}, distDir?: string): Promise<{exports: any, staleExports: string[]}> {
   const exports: any = {};
   const staleExports: string[] = [];
 
-  function createExportEntry(entry: string) {
+  async function createExportEntry(entry: string) {
     if (entry.startsWith("bin/")) {
       // Bin entries only get ESM format (no CJS for executables)
       const binEntry = entry.replace("bin/", "");
-      return {
-        types: `./src/bin/${binEntry}.d.ts`,
+      const exportEntry: any = {
         import: `./src/bin/${binEntry}.js`,
       };
+      
+      // Only include types if .d.ts file exists
+      if (distDir) {
+        const dtsPath = Path.join(distDir, "bin", `${binEntry}.d.ts`);
+        if (await fileExists(dtsPath)) {
+          exportEntry.types = `./src/bin/${binEntry}.d.ts`;
+        }
+      }
+      
+      return exportEntry;
     } else {
       // Regular src entries get both ESM and CJS (if enabled)
       const exportEntry: any = {
-        types: `./src/${entry}.d.ts`,
         import: `./src/${entry}.js`,
       };
+      
+      // Only include types if .d.ts file exists
+      if (distDir) {
+        const dtsPath = Path.join(distDir, "src", `${entry}.d.ts`);
+        if (await fileExists(dtsPath)) {
+          exportEntry.types = `./src/${entry}.d.ts`;
+        }
+      }
+      
       if (options.formats.cjs) {
         exportEntry.require = `./src/${entry}.cjs`;
       }
@@ -328,7 +345,7 @@ function generateExports(entries: string[], mainEntry: string, options: BuildOpt
 
   // Handle main export - respect existing "." export or create new one
   if (!exports["."]) {
-    exports["."] = createExportEntry(mainEntry);
+    exports["."] = await createExportEntry(mainEntry);
   } else {
     exports["."] = expandExistingExport(exports["."], mainEntry);
   }
@@ -341,7 +358,7 @@ function generateExports(entries: string[], mainEntry: string, options: BuildOpt
 
     // Only add if not already specified by user
     if (!exports[key]) {
-      exports[key] = createExportEntry(entry);
+      exports[key] = await createExportEntry(entry);
     } else {
       exports[key] = expandExistingExport(exports[key], entry);
     }
@@ -705,7 +722,7 @@ async function resolveWorkspaceVersion(packageName: string, workspaceSpec: strin
   }
 }
 
-async function cleanPackageJSON(pkg: PackageJSON, mainEntry: string, options: BuildOptions, cwd: string): Promise<PackageJSON> {
+async function cleanPackageJSON(pkg: PackageJSON, mainEntry: string, options: BuildOptions, cwd: string, distDir?: string): Promise<PackageJSON> {
   const cleaned: PackageJSON = {
     name: pkg.name,
     version: pkg.version,
@@ -779,7 +796,14 @@ async function cleanPackageJSON(pkg: PackageJSON, mainEntry: string, options: Bu
     cleaned.main = `src/${mainEntry}.cjs`;
   }
   cleaned.module = `src/${mainEntry}.js`;
-  cleaned.types = `src/${mainEntry}.d.ts`;
+  
+  // Only include types field if .d.ts file exists
+  if (distDir) {
+    const dtsPath = Path.join(distDir, "src", `${mainEntry}.d.ts`);
+    if (await fileExists(dtsPath)) {
+      cleaned.types = `src/${mainEntry}.d.ts`;
+    }
+  }
 
   return cleaned;
 }
@@ -1110,8 +1134,8 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
 
   // Generate package.json
   console.info("  Generating package.json...");
-  const cleanedPkg = await cleanPackageJSON(pkg, mainEntry, options, cwd);
-  const exportsResult = generateExports(entries, mainEntry, options, pkg.exports);
+  const cleanedPkg = await cleanPackageJSON(pkg, mainEntry, options, cwd, distDir);
+  const exportsResult = await generateExports(entries, mainEntry, options, pkg.exports, distDir);
   cleanedPkg.exports = fixExportsForDist(exportsResult.exports);
 
   // Handle stale exports
@@ -1241,7 +1265,12 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       rootPkg.main = `./dist/src/${mainEntry}.cjs`;
     }
     rootPkg.module = `./dist/src/${mainEntry}.js`;
-    rootPkg.types = `./dist/src/${mainEntry}.d.ts`;
+    
+    // Only include types field if .d.ts file exists
+    const dtsPath = Path.join(distDir, "src", `${mainEntry}.d.ts`);
+    if (await fileExists(dtsPath)) {
+      rootPkg.types = `./dist/src/${mainEntry}.d.ts`;
+    }
 
     if (rootPkg.typings && typeof rootPkg.typings === "string") {
       rootPkg.typings = rootPkg.typings.startsWith("./dist/") ? rootPkg.typings : "./" + Path.join("dist", rootPkg.typings);
