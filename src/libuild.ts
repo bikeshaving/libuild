@@ -225,7 +225,7 @@ async function generateExports(entries: string[], mainEntry: string, options: Bu
       
       // Only include types if .d.ts file exists
       if (distDir) {
-        const dtsPath = Path.join(distDir, "bin", `${binEntry}.d.ts`);
+        const dtsPath = Path.join(distDir, "src", "bin", `${binEntry}.d.ts`);
         if (await fileExists(dtsPath)) {
           exportEntry.types = `./src/bin/${binEntry}.d.ts`;
         }
@@ -241,7 +241,8 @@ async function generateExports(entries: string[], mainEntry: string, options: Bu
       // Only include types if .d.ts file exists
       if (distDir) {
         const dtsPath = Path.join(distDir, "src", `${entry}.d.ts`);
-        if (await fileExists(dtsPath)) {
+        const exists = await fileExists(dtsPath);
+        if (exists) {
           exportEntry.types = `./src/${entry}.d.ts`;
         }
       }
@@ -800,7 +801,8 @@ async function cleanPackageJSON(pkg: PackageJSON, mainEntry: string, options: Bu
   // Only include types field if .d.ts file exists
   if (distDir) {
     const dtsPath = Path.join(distDir, "src", `${mainEntry}.d.ts`);
-    if (await fileExists(dtsPath)) {
+    const exists = await fileExists(dtsPath);
+    if (exists) {
       cleaned.types = `src/${mainEntry}.d.ts`;
     }
   }
@@ -1065,7 +1067,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
             outputExtension: ".js"
           }),
           dtsPlugin({
-            outDir: distBinDir,
+            outDir: Path.join(distSrcDir, "bin"),
             rootDir: binDir,
             entryPoints: binEntryPoints
           })

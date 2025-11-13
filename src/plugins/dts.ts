@@ -64,11 +64,13 @@ export function dtsPlugin(options: TypeScriptPluginOptions): ESBuild.Plugin {
         }
 
         try {
+          // Ensure output directory exists
+          await FS.mkdir(options.outDir, { recursive: true });
+
           const compilerOptions: TS.CompilerOptions = {
             declaration: true,
             emitDeclarationOnly: true,
             outDir: options.outDir,
-            rootDir: options.rootDir,
             skipLibCheck: true,
             esModuleInterop: true,
             target: TS.ScriptTarget.ES2020,
