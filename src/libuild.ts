@@ -1164,25 +1164,41 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
 
       // Build src entries (CJS)
       if (srcEntryPoints.length > 0) {
-        await ESBuild.build({
-          entryPoints: srcEntryPoints,
-          outdir: distSrcDir,
-          format: "cjs",
-          outExtension: {".js": ".cjs"},
-          bundle: true,
-          minify: false,
-          sourcemap: false,
-          external: externalDeps,
-          platform: "node",
-          target: "node18",
-          supported: { "import-attributes": true },
-          plugins: [
-            externalEntrypointsPlugin({
-              entryNames: srcEntryNames,
-              outputExtension: ".cjs"
-            })
-          ],
-        });
+        try {
+          await ESBuild.build({
+            entryPoints: srcEntryPoints,
+            outdir: distSrcDir,
+            format: "cjs",
+            outExtension: {".js": ".cjs"},
+            bundle: true,
+            minify: false,
+            sourcemap: false,
+            external: externalDeps,
+            platform: "node",
+            target: "node18",
+            supported: { "import-attributes": true },
+            plugins: [
+              externalEntrypointsPlugin({
+                entryNames: srcEntryNames,
+                outputExtension: ".cjs"
+              })
+            ],
+          });
+        } catch (error) {
+          // Check if error is due to top-level await
+          if (error.message && error.message.includes('Top-level await is currently not supported with the "cjs" output format')) {
+            console.info(`\n⚠️  Top-level await detected - CommonJS generation disabled`);
+            console.info(`   Top-level await is incompatible with CommonJS format`);
+            console.info(`   Building ESM-only (Node.js 14+ and modern bundlers supported)`);
+            console.info(`   To permanently disable CJS: remove "main" field from package.json\n`);
+            
+            // Disable CJS generation for package.json creation
+            options.formats.cjs = false;
+          } else {
+            // Re-throw non-TLA errors
+            throw error;
+          }
+        }
       }
 
       // Skip CJS build for bin entries - executables only need ESM
