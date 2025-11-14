@@ -1,0 +1,58 @@
+{
+  "name": "complex-bin-test",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "mytool": "./dist/src/cli.js",
+    "helper": "./dist/src/bin/helper.js"
+  },
+  "files": [
+    "src/**/*",
+    "docs/*.md",
+    "dist/"
+  ],
+  "scripts": {
+    "build": "src/build.js",
+    "test": "node src/test.js",
+    "dev": "bun src/dev.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/test/src-project.git",
+    "directory": "packages/src"
+  },
+  "module": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./cli": {
+      "types": "./dist/src/cli.d.ts",
+      "import": "./dist/src/cli.js"
+    },
+    "./cli.js": {
+      "types": "./dist/src/cli.d.ts",
+      "import": "./dist/src/cli.js"
+    },
+    "./index": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./index.js": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./package.json": "./dist/package.json",
+    "./bin/helper": {
+      "import": "./dist/src/bin/helper.js",
+      "types": "./dist/src/bin/helper.d.ts"
+    },
+    "./bin/helper.js": {
+      "import": "./dist/src/bin/helper.js",
+      "types": "./dist/src/bin/helper.d.ts"
+    }
+  }
+}

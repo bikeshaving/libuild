@@ -211,7 +211,7 @@ function checkIfExportIsStale(exportKey: string, exportValue: any, entries: stri
   return entryName ? !entries.includes(entryName) : false;
 }
 
-async function generateExports(entries: string[], mainEntry: string, options: BuildOptions, existingExports: any = {}, distDir?: string): Promise<{exports: any, staleExports: string[]}> {
+async function generateExports(entries: string[], mainEntry: string, options: BuildOptions, existingExports: any = {}, distDir?: string, allBinEntries: Array<{name: string, source: string}> = []): Promise<{exports: any, staleExports: string[]}> {
   const exports: any = {};
   const staleExports: string[] = [];
 
@@ -220,14 +220,14 @@ async function generateExports(entries: string[], mainEntry: string, options: Bu
       // Bin entries only get ESM format (no CJS for executables)
       const binEntry = entry.replace("bin/", "");
       const exportEntry: any = {
-        import: `./src/bin/${binEntry}.js`,
+        import: `./bin/${binEntry}.js`,
       };
       
       // Only include types if .d.ts file exists
       if (distDir) {
-        const dtsPath = Path.join(distDir, "src", "bin", `${binEntry}.d.ts`);
+        const dtsPath = Path.join(distDir, "bin", `${binEntry}.d.ts`);
         if (await fileExists(dtsPath)) {
-          exportEntry.types = `./src/bin/${binEntry}.d.ts`;
+          exportEntry.types = `./bin/${binEntry}.d.ts`;
         }
       }
       
@@ -498,6 +498,18 @@ async function validateSingleBinPath(binPath: string, fieldName: string, cwd: st
   // For src/ or bin/ paths, check if a corresponding .ts or .js file exists
   if (binPath.startsWith("src/") || binPath.startsWith("./src/") || 
       binPath.startsWith("bin/") || binPath.startsWith("./bin/")) {
+    
+    // Check if this is a non-top-level src/ file (in a subdirectory)
+    let normalizedPath = binPath.startsWith("./") ? binPath.slice(2) : binPath;
+    if (normalizedPath.startsWith("src/")) {
+      const srcRelativePath = normalizedPath.replace("src/", "");
+      if (srcRelativePath.includes("/")) {
+        console.warn(`⚠️  WARNING: ${fieldName} field points to "${binPath}" which is in a subdirectory of src/.`);
+        console.warn(`   libuild only auto-detects top-level src/ files as entrypoints.`);
+        console.warn(`   Consider moving the file to the top-level src/ directory or use the bin/ directory for executables.`);
+      }
+    }
+    
     const basePath = fullPath.replace(/\.(js|cjs|mjs)$/, "");
     const tsPath = basePath + ".ts";
     const jsPath = basePath + ".js";
@@ -609,7 +621,7 @@ async function setExecutablePermissions(filePath: string): Promise<void> {
   }
 }
 
-async function makeFilesExecutable(pkg: PackageJSON, cwd: string, binEntries: string[]): Promise<void> {
+async function makeFilesExecutable(pkg: PackageJSON, cwd: string, allBinEntries: Array<{name: string, source: string}>): Promise<void> {
   const filesToMakeExecutable: string[] = [];
   
   // Files referenced in package.json bin field
@@ -625,10 +637,11 @@ async function makeFilesExecutable(pkg: PackageJSON, cwd: string, binEntries: st
     }
   }
   
-  // All files built from bin/ directory
-  for (const binEntry of binEntries) {
-    const jsPath = Path.join(cwd, "dist", "bin", `${binEntry}.js`);
-    const cjsPath = Path.join(cwd, "dist", "bin", `${binEntry}.cjs`);
+  // All files built from bin/ directories
+  for (const binEntryInfo of allBinEntries) {
+    const baseDir = binEntryInfo.source === 'src' ? "dist/src/bin" : "dist/bin";
+    const jsPath = Path.join(cwd, baseDir, `${binEntryInfo.name}.js`);
+    const cjsPath = Path.join(cwd, baseDir, `${binEntryInfo.name}.cjs`);
     
     // Add to list if not already included
     if (!filesToMakeExecutable.includes(jsPath)) {
@@ -891,17 +904,18 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   const binEntries = await findBinEntrypoints(binDir);
   
   // Combine entries, prefixing bin entries to distinguish them
+  const allBinEntries = binEntries.map(entry => ({ name: entry, source: 'top-level' }));
   const entries = [
     ...srcEntries,
-    ...binEntries.map(entry => `bin/${entry}`)
+    ...allBinEntries.map(entry => `bin/${entry.name}`)
   ];
   
-  if (srcEntries.length === 0 && binEntries.length === 0) {
+  if (srcEntries.length === 0 && allBinEntries.length === 0) {
     throw new Error("No entry points found in src/ or bin/");
   }
   
-  if (binEntries.length > 0) {
-    console.info(`  Found bin entries: ${binEntries.join(", ")}`);
+  if (allBinEntries.length > 0) {
+    console.info(`  Found bin entries: ${allBinEntries.map(entry => entry.name).join(", ")}`);
   }
 
   const options: BuildOptions = {
@@ -963,11 +977,21 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     let sourceDir: string;
     
     if (entry.startsWith("bin/")) {
-      // Handle bin/ entries
+      // Handle bin/ entries - need to determine if from top-level bin/ or src/bin/
       const binEntryName = entry.replace("bin/", "");
-      entryPath = Path.join(binDir, `${binEntryName}.ts`);
-      jsEntryPath = Path.join(binDir, `${binEntryName}.js`);
-      sourceDir = "bin/";
+      const binEntryInfo = allBinEntries.find(binEntry => binEntry.name === binEntryName);
+      
+      if (binEntryInfo?.source === 'src') {
+        // This is a src/bin/ entry
+        entryPath = Path.join(srcDir, "bin", `${binEntryName}.ts`);
+        jsEntryPath = Path.join(srcDir, "bin", `${binEntryName}.js`);
+        sourceDir = "src/bin/";
+      } else {
+        // This is a top-level bin/ entry
+        entryPath = Path.join(binDir, `${binEntryName}.ts`);
+        jsEntryPath = Path.join(binDir, `${binEntryName}.js`);
+        sourceDir = "bin/";
+      }
     } else {
       // Handle src/ entries (existing logic)
       entryPath = Path.join(srcDir, `${entry}.ts`);
@@ -989,7 +1013,9 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   }
 
   // Separate src and bin entries for different output directories
+  // srcEntryPoints includes regular src/ entries and src/bin/ entries
   const srcEntryPoints = entryPoints.filter(path => path.includes(srcDir));
+  // binEntryPoints includes only top-level bin/ entries
   const binEntryPoints = entryPoints.filter(path => path.includes(binDir));
   
   // Create dist/bin directory if needed
@@ -1067,7 +1093,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
             outputExtension: ".js"
           }),
           dtsPlugin({
-            outDir: Path.join(distSrcDir, "bin"),
+            outDir: Path.join(distDir, "bin"),
             rootDir: binDir,
             entryPoints: binEntryPoints
           })
@@ -1137,7 +1163,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   // Generate package.json
   console.info("  Generating package.json...");
   const cleanedPkg = await cleanPackageJSON(pkg, mainEntry, options, cwd, distDir);
-  const exportsResult = await generateExports(entries, mainEntry, options, pkg.exports, distDir);
+  const exportsResult = await generateExports(entries, mainEntry, options, pkg.exports, distDir, allBinEntries);
   cleanedPkg.exports = fixExportsForDist(exportsResult.exports);
 
   // Handle stale exports
@@ -1311,14 +1337,16 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     rootPkg.exports = rootExports;
 
     // Generate bin entries from discovered bin files
-    if (binEntries.length > 0) {
+    if (allBinEntries.length > 0) {
       const generatedBin: any = {};
-      for (const binEntry of binEntries) {
-        const binPath = `./dist/bin/${binEntry}.js`;
+      for (const binEntryInfo of allBinEntries) {
+        const binPath = binEntryInfo.source === 'src' 
+          ? `./dist/src/bin/${binEntryInfo.name}.js`
+          : `./dist/bin/${binEntryInfo.name}.js`;
         const fullPath = Path.join(cwd, binPath);
         // Only add if the file actually exists
         if (await fileExists(fullPath)) {
-          generatedBin[binEntry] = binPath;
+          generatedBin[binEntryInfo.name] = binPath;
         }
       }
       
@@ -1419,8 +1447,8 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   }
 
   // Set executable permissions for bin files
-  if (binEntries.length > 0 || pkg.bin) {
-    await makeFilesExecutable(pkg, cwd, binEntries);
+  if (allBinEntries.length > 0 || pkg.bin) {
+    await makeFilesExecutable(pkg, cwd, allBinEntries);
   }
 
   return {distPkg: fixedDistPkg, rootPkg};

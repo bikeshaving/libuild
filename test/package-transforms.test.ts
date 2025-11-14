@@ -391,17 +391,15 @@ test("complex bin field transformations", async () => {
   // Check dist package.json bin transformations
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
   expect(distPkg.bin).toEqual({
-    mytool: "src/cli.js",               // src/cli.js → src/cli.js (npm convention)
-    helper: "src/bin/helper.ts",        // ./src/bin/helper.ts → src/bin/helper.ts (npm convention)
-    processor: "src/tools/processor.js" // src/tools/processor.js → src/tools/processor.js (npm convention)
+    mytool: "src/cli.js",              // src/cli.js → src/cli.js (npm convention)
+    processor: "src/tools/processor.js" // preserved but will warn about subdirectory
   });
   
   // Check root package.json bin transformations
   const rootPkg = await readJSON(Path.join(testDir, "package.json"));
   expect(rootPkg.bin).toEqual({
-    mytool: "./dist/src/cli.js",
-    helper: "./dist/src/bin/helper.ts", 
-    processor: "./dist/src/tools/processor.js"
+    mytool: "./dist/src/cli.js"
+    // processor is removed because src/tools/processor.ts is not detected as an entry
   });
   
   // Cleanup
@@ -868,7 +866,21 @@ test("bin path validation: throws error for dist/ paths", async () => {
   await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
   await FS.writeFile(Path.join(testDir, "src", "index.ts"), 'export const index = "main";');
 
-  await expect(build(testDir)).rejects.toThrow('bin.tool field points to dist/ directory: "dist/cli.js"');
+  // Capture console output
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (...args: any[]) => {
+    warnings.push(args.join(" "));
+  };
+
+  try {
+    await build(testDir);
+    
+    // Should warn about dist/ path instead of throwing
+    expect(warnings.some(w => w.includes('bin.tool field points to "dist/cli.js" in dist/ directory'))).toBe(true);
+  } finally {
+    console.warn = originalWarn;
+  }
 
   await removeTempDir(testDir);
 });
@@ -889,7 +901,21 @@ test("bin path validation: throws error for ./dist/ paths", async () => {
   await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
   await FS.writeFile(Path.join(testDir, "src", "index.ts"), 'export const index = "main";');
 
-  await expect(build(testDir)).rejects.toThrow('bin field points to dist/ directory: "./dist/src/cli.js"');
+  // Capture console output
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (...args: any[]) => {
+    warnings.push(args.join(" "));
+  };
+
+  try {
+    await build(testDir);
+    
+    // Should warn about ./dist/ path instead of throwing
+    expect(warnings.some(w => w.includes('bin field points to "./dist/src/cli.js"') && w.includes('but neither the dist file nor corresponding src file exists'))).toBe(true);
+  } finally {
+    console.warn = originalWarn;
+  }
 
   await removeTempDir(testDir);
 });

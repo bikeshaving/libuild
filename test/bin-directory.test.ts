@@ -87,8 +87,8 @@ test("bin directory detection and build", async () => {
   });
 
   expect(distPkg.exports["./bin/cli"]).toEqual({
-    types: "./src/bin/cli.d.ts",
-    import: "./src/bin/cli.js"
+    types: "./bin/cli.d.ts",
+    import: "./bin/cli.js"
     // No require field for bin entries
   });
 
@@ -214,13 +214,13 @@ test("mixed src and bin entries with exports", async () => {
 
   // Should have exports for all bin entries (ESM only)
   expect(distPkg.exports["./bin/cli"]).toEqual({
-    types: "./src/bin/cli.d.ts",
-    import: "./src/bin/cli.js"
+    types: "./bin/cli.d.ts",
+    import: "./bin/cli.js"
   });
 
   expect(distPkg.exports["./bin/helper"]).toEqual({
-    types: "./src/bin/helper.d.ts",
-    import: "./src/bin/helper.js"
+    types: "./bin/helper.d.ts",
+    import: "./bin/helper.js"
   });
 
   // Check actual files exist and have correct permissions

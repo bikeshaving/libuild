@@ -189,7 +189,7 @@ test("export cleanup warns about stale exports and removes them", async () => {
     expect(warnings.some(w => w.includes("Found 2 stale export(s)"))).toBe(true);
     expect(warnings.some(w => w.includes("./missing"))).toBe(true);
     expect(warnings.some(w => w.includes("./another"))).toBe(true);
-    expect(warnings.some(w => w.includes("Use --save to remove"))).toBe(true);
+    expect(warnings.some(w => w.includes("Use 'libuild build --save' to clean up package.json automatically"))).toBe(true);
 
     // Check that dist package.json has stale exports removed
     expect(distPkg.exports["./utils"]).toBeDefined();   // Valid export preserved

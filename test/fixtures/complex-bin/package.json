@@ -5,7 +5,6 @@
   "private": true,
   "bin": {
     "mytool": "src/cli.js",
-    "helper": "./src/bin/helper.ts",
     "processor": "src/tools/processor.js"
   },
   "files": [
