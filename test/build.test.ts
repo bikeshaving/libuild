@@ -878,7 +878,7 @@ export function add(a: number, b: number): number {
   const runtimeLine = lines[1];
 
   expect(shebangLine).toBe("#\!/usr/bin/env sh");
-  expect(runtimeLine).toContain("//bin/true");
+  expect(runtimeLine).toContain("':' //;");
   expect(runtimeLine).toContain("npm_config_user_agent");
 
   await removeTempDir(testDir);

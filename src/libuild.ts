@@ -10,13 +10,13 @@ import {dtsPlugin} from "./plugins/dts.js";
 // Generate runtime detection banner for bin entries
 function generateRuntimeBanner(pkg: PackageJSON): string {
   const prefersBun = pkg.engines?.bun !== undefined;
-  
+
   if (prefersBun) {
     // Allow bun for direct execution if engines.bun is specified
-    return '//bin/true; exec "$({ [ "${npm_config_user_agent#bun/}" != "$npm_config_user_agent" ] || true; } && command -v bun || command -v node)" "$0" "$@"';
+    return '\':\' //; exec "$({ [ "${npm_config_user_agent#bun/}" != "$npm_config_user_agent" ] || true; } && command -v bun || command -v node)" "$0" "$@"';
   } else {
     // Only use bun when explicitly bun run is used
-    return '//bin/true; exec "$([ "${npm_config_user_agent#bun/}" != "$npm_config_user_agent" ] && command -v bun || command -v node)" "$0" "$@"';
+    return '\':\' //; exec "$([ "${npm_config_user_agent#bun/}" != "$npm_config_user_agent" ] && command -v bun || command -v node)" "$0" "$@"';
   }
 }
 

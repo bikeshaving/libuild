@@ -349,7 +349,7 @@ test("src file referenced in package.json bin gets dual runtime shebang", async 
 
   // Should have dual runtime shebang
   expect(cliContent).toContain("#!/usr/bin/env sh");
-  expect(cliContent).toContain("//bin/true");
+  expect(cliContent).toContain("':' //;");
   expect(cliContent).toContain("npm_config_user_agent");
 
   // Should be executable
@@ -396,7 +396,7 @@ test("dual runtime shell script injection for bin entries", async () => {
   const lines = toolContent.split("\n");
   
   expect(lines[0]).toBe("#!/usr/bin/env sh");
-  expect(lines[1]).toContain("//bin/true");
+  expect(lines[1]).toContain("':' //;");
   expect(lines[1]).toContain("npm_config_user_agent");
   expect(lines[1]).toContain("command -v bun");
   expect(lines[1]).toContain("command -v node");
@@ -481,7 +481,7 @@ test("shebang replacement for bin entries", async () => {
     const content = await FS.readFile(Path.join(testDir, `dist/bin/${file}`), "utf-8");
     const lines = content.split("\n");
     expect(lines[0]).toBe("#!/usr/bin/env sh");
-    expect(lines[1]).toContain("//bin/true");
+    expect(lines[1]).toContain("':' //;");
   }
 
   await removeTempDir(testDir);
