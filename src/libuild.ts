@@ -1086,48 +1086,21 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       return name;
     });
 
-    // Build src entries
-    if (srcEntryPoints.length > 0) {
-
-      await ESBuild.build({
-        entryPoints: srcEntryPoints,
-        outdir: distSrcDir,
-        format: "esm",
-        outExtension: {".js": ".js"},
-        bundle: true,
-        minify: false,
-        sourcemap: false,
-        external: externalDeps,
-        platform: "node",
-        target: "node18",
-        packages: "external",
-        supported: { "import-attributes": true },
-        plugins: [
-          externalEntrypointsPlugin({
-            entryNames: srcEntryNames,
-            outputExtension: ".js"
-          }),
-          dtsPlugin({
-            outDir: distSrcDir,
-            rootDir: srcDir,
-            entryPoints: srcEntryPoints
-          })
-        ],
-      });
-    }
-
     const binEntryNames = binEntryPoints.map(path => {
       const name = Path.basename(path, Path.extname(path));
       return name;
     });
 
-    // Build bin entries with dual runtime support
-    if (binEntryPoints.length > 0) {
-      const runtimeBanner = generateRuntimeBanner(pkg);
+    // Build all ESM entries (src + bin) in a single batch
+    // Using outbase allows ESBuild to preserve src/ and bin/ directory structure
+    const allESMEntryPoints = [...srcEntryPoints, ...binEntryPoints];
+    const allEntryNames = [...srcEntryNames, ...binEntryNames];
 
+    if (allESMEntryPoints.length > 0) {
       await ESBuild.build({
-        entryPoints: binEntryPoints,
-        outdir: distBinDir,
+        entryPoints: allESMEntryPoints,
+        outdir: distDir,
+        outbase: cwd, // Preserve src/ and bin/ directory structure
         format: "esm",
         outExtension: {".js": ".js"},
         bundle: true,
@@ -1140,22 +1113,31 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
         supported: { "import-attributes": true },
         plugins: [
           externalEntrypointsPlugin({
-            entryNames: binEntryNames,
-            outputExtension: ".js",
-            srcEntryNames: srcEntryNames // Externalize src imports
+            entryNames: allEntryNames,
+            outputExtension: ".js"
           }),
-          dtsPlugin({
-            outDir: Path.join(distDir, "bin"),
+          // Generate TypeScript declarations for src entries
+          ...(srcEntryPoints.length > 0 ? [dtsPlugin({
+            outDir: distSrcDir,
+            rootDir: srcDir,
+            entryPoints: srcEntryPoints
+          })] : []),
+          // Generate TypeScript declarations for bin entries
+          ...(binEntryPoints.length > 0 ? [dtsPlugin({
+            outDir: distBinDir,
             rootDir: binDir,
             entryPoints: binEntryPoints
-          })
+          })] : [])
         ],
       });
 
-      // Process each bin executable for dual runtime support
-      for (const binEntryName of binEntryNames) {
-        const outputPath = Path.join(distBinDir, `${binEntryName}.js`);
-        await processJavaScriptExecutable(outputPath, runtimeBanner);
+      // Process bin executables for dual runtime support
+      if (binEntryPoints.length > 0) {
+        const runtimeBanner = generateRuntimeBanner(pkg);
+        for (const binEntryName of binEntryNames) {
+          const outputPath = Path.join(distBinDir, `${binEntryName}.js`);
+          await processJavaScriptExecutable(outputPath, runtimeBanner);
+        }
       }
     }
 

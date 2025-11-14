@@ -4,14 +4,13 @@ export interface ExternalEntrypointsOptions {
   entryNames: string[];
   currentEntry?: string; // Optional for batch builds
   outputExtension: string;
-  srcEntryNames?: string[]; // For externalizing src imports from bin
 }
 
 export function externalEntrypointsPlugin(options: ExternalEntrypointsOptions): ESBuild.Plugin {
   return {
     name: "external-entrypoints",
     setup(build) {
-      const {entryNames, currentEntry, outputExtension, srcEntryNames} = options;
+      const {entryNames, currentEntry, outputExtension} = options;
 
       // For batch builds (no currentEntry), make all entries external to each other
       // For individual builds, exclude only the current entry
@@ -19,7 +18,7 @@ export function externalEntrypointsPlugin(options: ExternalEntrypointsOptions): 
         ? entryNames.filter(name => name !== currentEntry)
         : entryNames;
 
-      // Mark entry points as external and transform extensions
+      // Mark same-directory entry points as external (./foo, ./bar)
       build.onResolve({filter: /^\.\//}, args => {
         const withoutExt = args.path.replace(/\.(ts|js)$/, '');
         const entryName = withoutExt.replace(/^\.\//, '');
@@ -32,20 +31,23 @@ export function externalEntrypointsPlugin(options: ExternalEntrypointsOptions): 
         }
       });
 
-      // Handle cross-directory imports (e.g., bin importing from ../src/)
-      if (srcEntryNames && srcEntryNames.length > 0) {
-        build.onResolve({filter: /^\.\.\/src\//}, args => {
-          const withoutExt = args.path.replace(/\.(ts|js)$/, '');
-          const entryName = withoutExt.replace(/^\.\.\/src\//, '');
-
-          if (srcEntryNames.includes(entryName)) {
+      // Mark cross-directory entry points as external (../src/foo, ../bin/bar)
+      build.onResolve({filter: /^\.\.\/(?:src|bin)\//}, args => {
+        const withoutExt = args.path.replace(/\.(ts|js)$/, '');
+        // Extract just the filename from paths like ../src/index or ../bin/cli
+        const match = withoutExt.match(/^\.\.\/(?:src|bin)\/(.+)$/);
+        if (match) {
+          const entryName = match[1];
+          if (externalEntries.includes(entryName)) {
+            // Preserve the directory structure in the external path
+            const dir = withoutExt.match(/^(\.\.\/(?:src|bin))\//)?.[1];
             return {
-              path: `../src/${entryName}${outputExtension}`,
+              path: `${dir}/${entryName}${outputExtension}`,
               external: true
             };
           }
-        });
-      }
+        }
+      });
     }
   };
 }
