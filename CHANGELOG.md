@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.14] - 2025-01-14
+
+### Fixed
+- **Eliminate stderr noise from dual-purpose shebang** - Changed from `//bin/true` to standard polyglot pattern `':' //;` to prevent shell from attempting to execute non-existent path, eliminating "No such file or directory" errors while maintaining dual runtime detection
+
 ## [0.1.13] - 2025-01-14
 
 ### Fixed
