@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.13] - 2025-01-14
+
+### Fixed
+- **Dual runtime shebang for src/ executables** - src/ files referenced in package.json bin field now correctly receive dual runtime shebang support (previously only bin/ directory files were processed)
+- All executable files now have consistent dual runtime behavior regardless of directory location
+
 ## [0.1.12] - 2025-01-14
 
 ### Added
