@@ -7,6 +7,56 @@ import {umdPlugin} from "./plugins/umd.js";
 import {externalEntrypointsPlugin} from "./plugins/external.js";
 import {dtsPlugin} from "./plugins/dts.js";
 
+// Generate runtime detection banner for bin entries
+function generateRuntimeBanner(pkg: PackageJSON): string {
+  const prefersBun = pkg.engines?.bun !== undefined;
+  
+  if (prefersBun) {
+    // Allow bun for direct execution if engines.bun is specified
+    return '//bin/true; exec "$({ [ "${npm_config_user_agent#bun/}" != "$npm_config_user_agent" ] || true; } && command -v bun || command -v node)" "$0" "$@"';
+  } else {
+    // Only use bun when explicitly bun run is used
+    return '//bin/true; exec "$([ "${npm_config_user_agent#bun/}" != "$npm_config_user_agent" ] && command -v bun || command -v node)" "$0" "$@"';
+  }
+}
+
+// Handle shebang replacement and banner injection for JavaScript executables
+async function processJavaScriptExecutable(filePath: string, runtimeBanner: string): Promise<void> {
+  try {
+    const contents = await FS.readFile(filePath, 'utf8');
+    const lines = contents.split('\n');
+    let modified = false;
+    
+    if (lines[0]?.startsWith('#!')) {
+      const existingShebang = lines[0];
+      
+      // Warn about non-JavaScript shebangs on .js/.ts files
+      if (existingShebang.includes('python') || 
+          existingShebang.includes('bash') || 
+          (!existingShebang.includes('node') && 
+           !existingShebang.includes('bun') && 
+           !existingShebang.includes('sh'))) {
+        console.warn(`⚠️  WARNING: ${filePath} has non-JavaScript shebang but is a JS file. Adding dual runtime support.`);
+      }
+      
+      // Replace any shebang with shell for dual runtime
+      lines[0] = '#!/usr/bin/env sh';
+      lines.splice(1, 0, runtimeBanner);
+      modified = true;
+    } else {
+      // No shebang - add shell + dual runtime
+      lines.unshift('#!/usr/bin/env sh', runtimeBanner);
+      modified = true;
+    }
+    
+    if (modified) {
+      await FS.writeFile(filePath, lines.join('\n'));
+    }
+  } catch (error) {
+    console.warn(`⚠️  WARNING: Could not process executable ${filePath}: ${error.message}`);
+  }
+}
+
 interface PackageJSON {
   name: string;
   version: string;
@@ -1071,8 +1121,9 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       return name;
     });
 
-    // Build bin entries
+    // Build bin entries with dual runtime support
     if (binEntryPoints.length > 0) {
+      const runtimeBanner = generateRuntimeBanner(pkg);
 
       await ESBuild.build({
         entryPoints: binEntryPoints,
@@ -1099,6 +1150,12 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
           })
         ],
       });
+
+      // Process each bin executable for dual runtime support
+      for (const binEntryName of binEntryNames) {
+        const outputPath = Path.join(distBinDir, `${binEntryName}.js`);
+        await processJavaScriptExecutable(outputPath, runtimeBanner);
+      }
     }
 
     // CJS build (only if main field exists)

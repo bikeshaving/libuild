@@ -1,7 +1,0 @@
-{
-  "name": "test-bin-project",
-  "version": "1.0.0",
-  "type": "module",
-  "private": true,
-  "main": "dist/src/index.cjs"
-}
