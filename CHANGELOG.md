@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.12] - 2025-01-14
+
+### Added
+- **Dual runtime support** for bin entries with intelligent bun/node detection based on package manager context
+- **Top-level await (TLA) support** with graceful CJS fallback - automatically disables CJS generation when TLA is detected
+- **bin/ directory support** for executable entrypoints alongside src/ entries
+- Respect `engines.bun` field for runtime preferences in dual runtime detection
+- Automatic shebang replacement with shell script wrapper for maximum compatibility
+
+### Changed
+- **Single-batch ESM build** - combined src/ and bin/ builds for better performance
+- **Smart externalization** - entry points are externalized, nested files are bundled to prevent code duplication
+- TypeScript declarations now conditional on tsc availability (no failures in environments without TypeScript)
+
+### Fixed
+- Fix TypeScript declaration generation for bin entries
+- Fix CLI argument parsing for directory paths with npm flags
+- Fix externalization to only apply to entry points, not nested utility files
+
 ## [0.1.11] - 2025-11-02
 
 ### Fixed
