@@ -250,6 +250,66 @@ test("mixed src and bin entries with exports", async () => {
   await removeTempDir(testDir);
 });
 
+test("bin entry externalizes entry point imports but bundles non-entries", async () => {
+  const testDir = await createTempDir("bin-externalization");
+
+  await FS.writeFile(
+    Path.join(testDir, "package.json"),
+    JSON.stringify({
+      name: "externalization-test",
+      version: "1.0.0",
+      type: "module",
+      private: true,
+      main: "dist/src/index.cjs"
+    }, null, 2)
+  );
+
+  const srcDir = Path.join(testDir, "src");
+  await FS.mkdir(srcDir, {recursive: true});
+  await FS.mkdir(Path.join(srcDir, "utils"), {recursive: true});
+
+  // Entry point file
+  await FS.writeFile(
+    Path.join(srcDir, "index.ts"),
+    'export function greet(name: string) { return `Hello, ${name}!`; }'
+  );
+
+  // Non-entry nested file
+  await FS.writeFile(
+    Path.join(srcDir, "utils", "helper.ts"),
+    'export function helper() { return "help"; }'
+  );
+
+  // Bin entry importing both
+  const binDir = Path.join(testDir, "bin");
+  await FS.mkdir(binDir, {recursive: true});
+  await FS.writeFile(
+    Path.join(binDir, "cli.ts"),
+    `#!/usr/bin/env node
+import {greet} from "../src/index.js";
+import {helper} from "../src/utils/helper.js";
+console.log(greet("World"));
+console.log(helper());`
+  );
+
+  await build(testDir, false);
+
+  const binContent = await FS.readFile(
+    Path.join(testDir, "dist/bin/cli.js"),
+    "utf-8"
+  );
+
+  // Entry point import should be externalized
+  expect(binContent).toContain('from "../src/index.js"');
+  expect(binContent).not.toContain('function greet'); // Should NOT be bundled
+
+  // Non-entry import should be bundled
+  expect(binContent).not.toContain('from "../src/utils/helper.js"'); // Should NOT be external
+  expect(binContent).toContain('function helper'); // Should BE bundled
+
+  await removeTempDir(testDir);
+});
+
 // TODO: Support bin-only projects (without src directory)
 // Currently libuild requires src/ directory to exist
 // =============================================================================

@@ -31,7 +31,8 @@ export function externalEntrypointsPlugin(options: ExternalEntrypointsOptions): 
         }
       });
 
-      // Mark cross-directory entry points as external (../src/foo, ../bin/bar)
+      // Mark cross-directory ENTRY POINT imports as external (../src/foo, ../bin/bar)
+      // Only externalize if the imported file is an actual entry point
       build.onResolve({filter: /^\.\.\/(?:src|bin)\//}, args => {
         const withoutExt = args.path.replace(/\.(ts|js)$/, '');
         // Extract just the filename from paths like ../src/index or ../bin/cli
@@ -39,7 +40,7 @@ export function externalEntrypointsPlugin(options: ExternalEntrypointsOptions): 
         if (match) {
           const entryName = match[1];
           if (externalEntries.includes(entryName)) {
-            // Preserve the directory structure in the external path
+            // This is an entry point, externalize it
             const dir = withoutExt.match(/^(\.\.\/(?:src|bin))\//)?.[1];
             return {
               path: `${dir}/${entryName}${outputExtension}`,
@@ -47,6 +48,8 @@ export function externalEntrypointsPlugin(options: ExternalEntrypointsOptions): 
             };
           }
         }
+        // Not an entry point, let it be bundled
+        return undefined;
       });
     }
   };
