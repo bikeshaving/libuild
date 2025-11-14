@@ -310,6 +310,55 @@ console.log(helper());`
   await removeTempDir(testDir);
 });
 
+test("src file referenced in package.json bin gets dual runtime shebang", async () => {
+  const testDir = await createTempDir("src-bin-shebang");
+
+  await FS.writeFile(
+    Path.join(testDir, "package.json"),
+    JSON.stringify({
+      name: "src-bin-test",
+      version: "1.0.0",
+      type: "module",
+      private: true,
+      main: "dist/src/index.cjs",
+      bin: {
+        "mycli": "./dist/src/cli.js"
+      }
+    }, null, 2)
+  );
+
+  const srcDir = Path.join(testDir, "src");
+  await FS.mkdir(srcDir, {recursive: true});
+
+  await FS.writeFile(
+    Path.join(srcDir, "index.ts"),
+    'export function greet(name: string) { return `Hello, ${name}!`; }'
+  );
+
+  await FS.writeFile(
+    Path.join(srcDir, "cli.ts"),
+    '#!/usr/bin/env node\nimport {greet} from "./index.js";\nconsole.log(greet("CLI"));'
+  );
+
+  await build(testDir, false);
+
+  const cliContent = await FS.readFile(
+    Path.join(testDir, "dist/src/cli.js"),
+    "utf-8"
+  );
+
+  // Should have dual runtime shebang
+  expect(cliContent).toContain("#!/usr/bin/env sh");
+  expect(cliContent).toContain("//bin/true");
+  expect(cliContent).toContain("npm_config_user_agent");
+
+  // Should be executable
+  const cliStat = await FS.stat(Path.join(testDir, "dist/src/cli.js"));
+  expect((cliStat.mode & 0o111) !== 0).toBe(true);
+
+  await removeTempDir(testDir);
+});
+
 // TODO: Support bin-only projects (without src directory)
 // Currently libuild requires src/ directory to exist
 // =============================================================================

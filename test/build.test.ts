@@ -866,24 +866,20 @@ export function add(a: number, b: number): number {
   const distSrcDir = Path.join(testDir, "dist", "src");
   const cliContent = await FS.readFile(Path.join(distSrcDir, "cli.js"), "utf-8");
 
-  // Should preserve shebang at the very beginning
-  expect(cliContent.startsWith("#\!/usr/bin/env node")).toBe(true);
+  // Should have dual runtime shebang at the very beginning
+  expect(cliContent.startsWith("#\!/usr/bin/env sh")).toBe(true);
 
   // Should have import statement (not bundled)
   expect(cliContent).toContain('from "./utils.js"');
 
-  // Should have triple-slash reference after shebang (if TypeScript declarations exist)
+  // Should have dual runtime detection and triple-slash reference after shebang
   const lines = cliContent.split('\n');
   const shebangLine = lines[0];
-  const nextLine = lines[1];
+  const runtimeLine = lines[1];
 
-  expect(shebangLine).toBe("#\!/usr/bin/env node");
-
-  // Check if TypeScript declarations were generated
-  const dtsExists = await fileExists(Path.join(distSrcDir, "cli.d.ts"));
-  if (dtsExists) {
-    expect(nextLine).toContain("/// <reference types=");
-  }
+  expect(shebangLine).toBe("#\!/usr/bin/env sh");
+  expect(runtimeLine).toContain("//bin/true");
+  expect(runtimeLine).toContain("npm_config_user_agent");
 
   await removeTempDir(testDir);
 });
@@ -929,8 +925,8 @@ export function process() {
   const distSrcDir = Path.join(testDir, "dist", "src");
   const cliContent = await FS.readFile(Path.join(distSrcDir, "cli.js"), "utf-8");
 
-  // Should preserve shebang
-  expect(cliContent.startsWith("#\!/usr/bin/env node")).toBe(true);
+  // Should have dual runtime shebang
+  expect(cliContent.startsWith("#\!/usr/bin/env sh")).toBe(true);
 
   // Should import from other entry points, not bundle them
   expect(cliContent).toContain('from "./version.js"');

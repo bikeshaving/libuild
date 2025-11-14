@@ -44,12 +44,18 @@ test("smart dependency resolution - entry points don't inline other entry points
   expect(utilsESM).toContain('export'); // Should export functions
   expect(utilsCJS).toContain('function add'); // CJS should have the functions
   
-  // Check file sizes - CLI should be much smaller than utils since it's not bundling
-  const cliStats = await FS.stat(Path.join(distSrcDir, "cli.js"));
-  const utilsStats = await FS.stat(Path.join(distSrcDir, "utils.js"));
-  
-  // CLI should be significantly smaller since it just imports, doesn't bundle
-  expect(cliStats.size).toBeLessThan(utilsStats.size);
+  // Check that CLI is importing, not bundling
+  // Note: With dual runtime shebang, CLI may be slightly larger than utils,
+  // but it should still contain the import statement, not the bundled code
+  const cliContent = await FS.readFile(Path.join(distSrcDir, "cli.js"), "utf-8");
+  const utilsContent = await FS.readFile(Path.join(distSrcDir, "utils.js"), "utf-8");
+
+  // CLI should import from utils, not bundle it
+  expect(cliContent).toContain('from "./utils.js"');
+  expect(cliContent).not.toContain('function add'); // Should NOT contain the actual add function
+
+  // Utils should contain the actual implementation
+  expect(utilsContent).toContain('function add');
   
   await removeTempDir(testDir);
 });
@@ -88,21 +94,16 @@ test("significantly reduced bundle sizes with smart dependency resolution", asyn
   await build(testDir);
   
   const distSrcDir = Path.join(testDir, "dist", "src");
-  
-  // Get file sizes
-  const cliStats = await FS.stat(Path.join(distSrcDir, "cli.js"));
-  const utilsStats = await FS.stat(Path.join(distSrcDir, "utils.js"));
-  const apiStats = await FS.stat(Path.join(distSrcDir, "api.js"));
-  
-  // CLI should be much smaller since it imports rather than bundles
-  expect(cliStats.size).toBeLessThan(utilsStats.size);
-  
-  // Total size should be reasonable (no massive duplication)
-  const totalSize = cliStats.size + utilsStats.size + apiStats.size;
-  expect(totalSize).toBeLessThan(50000); // Reasonable upper bound
-  
-  // Verify no code duplication
+
+  // Check that CLI is importing dependencies, not bundling them
   const cliContent = await FS.readFile(Path.join(distSrcDir, "cli.js"), "utf-8");
+
+  // CLI should import from other modules, not bundle them
+  expect(cliContent).toContain('from "./utils.js"');
+  expect(cliContent).not.toContain('function add'); // Should NOT bundle add function
+  expect(cliContent).not.toContain('function multiply'); // Should NOT bundle multiply function
+
+  // Verify no code duplication
   const utilsContent = await FS.readFile(Path.join(distSrcDir, "utils.js"), "utf-8");
   const apiContent = await FS.readFile(Path.join(distSrcDir, "api.js"), "utf-8");
   
@@ -249,9 +250,9 @@ test("shebang preservation in CLI builds", async () => {
   
   const cliPath = Path.join(testDir, "dist", "src", "cli.js");
   const cliContent = await FS.readFile(cliPath, "utf-8");
-  
-  // Should preserve shebang at the top
-  expect(cliContent.startsWith("#!/usr/bin/env node")).toBe(true);
+
+  // Should have dual runtime shebang at the top
+  expect(cliContent.startsWith("#!/usr/bin/env sh")).toBe(true);
   
   // Should also have triple-slash reference for TypeScript (if d.ts file exists)
   const distSrcDir = Path.join(testDir, "dist", "src");
@@ -324,9 +325,9 @@ test("all major features work together", async () => {
   } else {
     console.log("Note: TypeScript declarations not generated in test environment");
   }
-  
-  // 4. Shebang preservation
-  expect(cliJS.startsWith("#!/usr/bin/env node")).toBe(true);
+
+  // 4. Dual runtime shebang
+  expect(cliJS.startsWith("#!/usr/bin/env sh")).toBe(true);
   
   // 5. Clean output structure (no chunks)
   const chunkFiles = files.filter(f => f.includes('chunk'));

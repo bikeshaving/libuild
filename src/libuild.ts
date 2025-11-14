@@ -671,28 +671,44 @@ async function setExecutablePermissions(filePath: string): Promise<void> {
   }
 }
 
-async function makeFilesExecutable(pkg: PackageJSON, cwd: string, allBinEntries: Array<{name: string, source: string}>): Promise<void> {
+async function makeFilesExecutable(pkg: PackageJSON, cwd: string, allBinEntries: Array<{name: string, source: string}>, runtimeBanner: string): Promise<void> {
   const filesToMakeExecutable: string[] = [];
-  
-  // Files referenced in package.json bin field
+  const filesToProcessForDualRuntime: string[] = [];
+  const distDir = Path.join(cwd, "dist");
+
+  // Files referenced in package.json bin field (from dist/package.json)
+  // These paths are relative to dist/, so we need to join with distDir
   if (pkg.bin) {
     if (typeof pkg.bin === 'string') {
-      filesToMakeExecutable.push(Path.join(cwd, pkg.bin));
+      const fullPath = Path.join(distDir, pkg.bin);
+      filesToMakeExecutable.push(fullPath);
+      // Only process .js files (not .cjs) for dual runtime
+      if (pkg.bin.endsWith('.js')) {
+        filesToProcessForDualRuntime.push(fullPath);
+      }
     } else if (typeof pkg.bin === 'object') {
       for (const binPath of Object.values(pkg.bin)) {
         if (typeof binPath === 'string') {
-          filesToMakeExecutable.push(Path.join(cwd, binPath));
+          const fullPath = Path.join(distDir, binPath);
+          filesToMakeExecutable.push(fullPath);
+          // Only process .js files (not .cjs) for dual runtime
+          if (binPath.endsWith('.js')) {
+            filesToProcessForDualRuntime.push(fullPath);
+          }
         }
       }
     }
   }
-  
+
   // All files built from bin/ directories
+  const binDirFiles = new Set<string>();
   for (const binEntryInfo of allBinEntries) {
     const baseDir = binEntryInfo.source === 'src' ? "dist/src/bin" : "dist/bin";
     const jsPath = Path.join(cwd, baseDir, `${binEntryInfo.name}.js`);
     const cjsPath = Path.join(cwd, baseDir, `${binEntryInfo.name}.cjs`);
-    
+
+    binDirFiles.add(jsPath);
+
     // Add to list if not already included
     if (!filesToMakeExecutable.includes(jsPath)) {
       filesToMakeExecutable.push(jsPath);
@@ -701,7 +717,15 @@ async function makeFilesExecutable(pkg: PackageJSON, cwd: string, allBinEntries:
       filesToMakeExecutable.push(cjsPath);
     }
   }
-  
+
+  // Process dual runtime shebang for package.json bin entries (excluding bin/ directory files)
+  // bin/ directory files are already processed during the build
+  for (const filePath of filesToProcessForDualRuntime) {
+    if (await fileExists(filePath) && !binDirFiles.has(filePath)) {
+      await processJavaScriptExecutable(filePath, runtimeBanner);
+    }
+  }
+
   // Set executable permissions
   for (const filePath of filesToMakeExecutable) {
     if (await fileExists(filePath)) {
@@ -1509,9 +1533,10 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     rootPkg = JSON.parse(await FS.readFile(pkgPath, "utf-8")) as PackageJSON;
   }
 
-  // Set executable permissions for bin files
-  if (allBinEntries.length > 0 || pkg.bin) {
-    await makeFilesExecutable(pkg, cwd, allBinEntries);
+  // Set executable permissions and dual runtime shebang for bin files
+  if (allBinEntries.length > 0 || fixedDistPkg.bin) {
+    const runtimeBanner = generateRuntimeBanner(pkg);
+    await makeFilesExecutable(fixedDistPkg, cwd, allBinEntries, runtimeBanner);
   }
 
   return {distPkg: fixedDistPkg, rootPkg};
