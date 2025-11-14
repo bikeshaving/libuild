@@ -76,6 +76,11 @@ test("bin directory detection and build", async () => {
   const isExecutable = (binStat.mode & 0o111) !== 0;
   expect(isExecutable).toBe(true);
 
+  // Verify that bin entry externalizes src imports
+  const binContent = await FS.readFile(Path.join(distBinDir, "cli.js"), "utf-8");
+  expect(binContent).toContain('from "../src/index.js"'); // Should be external, not bundled
+  expect(binContent).not.toContain('function greet'); // Should NOT contain the actual greet function
+
   // Check package.json was generated correctly
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
   
@@ -247,3 +252,129 @@ test("mixed src and bin entries with exports", async () => {
 
 // TODO: Support bin-only projects (without src directory)
 // Currently libuild requires src/ directory to exist
+// =============================================================================
+// DUAL RUNTIME SUPPORT TESTS
+// =============================================================================
+
+test("dual runtime shell script injection for bin entries", async () => {
+  const testDir = await createTempDir("dual-runtime");
+
+  await FS.writeFile(
+    Path.join(testDir, "package.json"),
+    JSON.stringify({
+      name: "dual-runtime-test",
+      version: "1.0.0",
+      type: "module",
+      private: true
+    }, null, 2)
+  );
+
+  const srcDir = Path.join(testDir, "src");
+  await FS.mkdir(srcDir, {recursive: true});
+  await FS.writeFile(Path.join(srcDir, "index.ts"), 'export const msg = "hello";');
+
+  const binDir = Path.join(testDir, "bin");
+  await FS.mkdir(binDir, {recursive: true});
+  await FS.writeFile(
+    Path.join(binDir, "tool.ts"),
+    '#!/usr/bin/env node\nconsole.log("tool");'
+  );
+
+  await build(testDir, false);
+
+  // Check that dual runtime shell script was injected
+  const toolContent = await FS.readFile(Path.join(testDir, "dist/bin/tool.js"), "utf-8");
+  const lines = toolContent.split("\n");
+  
+  expect(lines[0]).toBe("#!/usr/bin/env sh");
+  expect(lines[1]).toContain("//bin/true");
+  expect(lines[1]).toContain("npm_config_user_agent");
+  expect(lines[1]).toContain("command -v bun");
+  expect(lines[1]).toContain("command -v node");
+
+  await removeTempDir(testDir);
+});
+
+test("dual runtime respects engines.bun field", async () => {
+  const testDir = await createTempDir("engines-bun");
+
+  await FS.writeFile(
+    Path.join(testDir, "package.json"),
+    JSON.stringify({
+      name: "engines-bun-test",
+      version: "1.0.0",
+      type: "module",
+      private: true,
+      engines: {
+        bun: ">=1.0.0"
+      }
+    }, null, 2)
+  );
+
+  const srcDir = Path.join(testDir, "src");
+  await FS.mkdir(srcDir, {recursive: true});
+  await FS.writeFile(Path.join(srcDir, "index.ts"), 'export const msg = "hello";');
+
+  const binDir = Path.join(testDir, "bin");
+  await FS.mkdir(binDir, {recursive: true});
+  await FS.writeFile(
+    Path.join(binDir, "tool.ts"),
+    'console.log("tool");'
+  );
+
+  await build(testDir, false);
+
+  // Check that shell script includes "|| true" for bun preference
+  const toolContent = await FS.readFile(Path.join(testDir, "dist/bin/tool.js"), "utf-8");
+  expect(toolContent).toContain("|| true");
+
+  await removeTempDir(testDir);
+});
+
+test("shebang replacement for bin entries", async () => {
+  const testDir = await createTempDir("shebang-replace");
+
+  await FS.writeFile(
+    Path.join(testDir, "package.json"),
+    JSON.stringify({
+      name: "shebang-test",
+      version: "1.0.0",
+      type: "module",
+      private: true
+    }, null, 2)
+  );
+
+  const srcDir = Path.join(testDir, "src");
+  await FS.mkdir(srcDir, {recursive: true});
+  await FS.writeFile(Path.join(srcDir, "index.ts"), 'export const msg = "hello";');
+
+  const binDir = Path.join(testDir, "bin");
+  await FS.mkdir(binDir, {recursive: true});
+  
+  // Test with different shebangs
+  await FS.writeFile(
+    Path.join(binDir, "node-shebang.ts"),
+    '#!/usr/bin/env node\nconsole.log("node");'
+  );
+  await FS.writeFile(
+    Path.join(binDir, "bun-shebang.ts"),
+    '#!/usr/bin/env bun\nconsole.log("bun");'
+  );
+  await FS.writeFile(
+    Path.join(binDir, "no-shebang.ts"),
+    'console.log("none");'
+  );
+
+  await build(testDir, false);
+
+  // All should have shell shebang + dual runtime
+  for (const file of ["node-shebang.js", "bun-shebang.js", "no-shebang.js"]) {
+    const content = await FS.readFile(Path.join(testDir, `dist/bin/${file}`), "utf-8");
+    const lines = content.split("\n");
+    expect(lines[0]).toBe("#!/usr/bin/env sh");
+    expect(lines[1]).toContain("//bin/true");
+  }
+
+  await removeTempDir(testDir);
+});
+

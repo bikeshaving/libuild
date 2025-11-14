@@ -1141,7 +1141,8 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
         plugins: [
           externalEntrypointsPlugin({
             entryNames: binEntryNames,
-            outputExtension: ".js"
+            outputExtension: ".js",
+            srcEntryNames: srcEntryNames // Externalize src imports
           }),
           dtsPlugin({
             outDir: Path.join(distDir, "bin"),
@@ -1184,14 +1185,21 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
               })
             ],
           });
-        } catch (error) {
+        } catch (error: any) {
           // Check if error is due to top-level await
-          if (error.message && error.message.includes('Top-level await is currently not supported with the "cjs" output format')) {
+          // ESBuild errors can be in error.message or in error.errors array
+          const errorMessage = error.message || '';
+          const hasErrorsArray = error.errors && Array.isArray(error.errors);
+          const isTLAError = errorMessage.includes('Top-level await is currently not supported with the "cjs" output format') ||
+                            (hasErrorsArray && error.errors.some((e: any) =>
+                              e.text && e.text.includes('Top-level await is currently not supported with the "cjs" output format')));
+
+          if (isTLAError) {
             console.info(`\n⚠️  Top-level await detected - CommonJS generation disabled`);
             console.info(`   Top-level await is incompatible with CommonJS format`);
             console.info(`   Building ESM-only (Node.js 14+ and modern bundlers supported)`);
             console.info(`   To permanently disable CJS: remove "main" field from package.json\n`);
-            
+
             // Disable CJS generation for package.json creation
             options.formats.cjs = false;
           } else {
