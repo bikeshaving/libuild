@@ -130,7 +130,7 @@ async function findBinEntrypoints(binDir: string): Promise<string[]> {
   }
 }
 
-function detectMainEntry(pkg: PackageJSON, entries: string[]): string {
+function detectMainEntry(pkg: PackageJSON, entries: string[]): string | undefined {
   // Helper function to extract entry name from path
   function extractEntryFromPath(path: string): string | undefined {
     const match = path.match(/\.\/src\/([^.]+)/);
@@ -192,8 +192,8 @@ function detectMainEntry(pkg: PackageJSON, entries: string[]): string {
     return pkgName;
   }
 
-  // 7. Default to first entry alphabetically
-  return entries[0];
+  // 7. Default to first entry alphabetically (or undefined if no entries)
+  return entries[0]; // May be undefined if entries is empty
 }
 
 function checkIfExportIsStale(exportKey: string, exportValue: any, entries: string[]): boolean {
@@ -261,7 +261,7 @@ function checkIfExportIsStale(exportKey: string, exportValue: any, entries: stri
   return entryName ? !entries.includes(entryName) : false;
 }
 
-async function generateExports(entries: string[], mainEntry: string, options: BuildOptions, existingExports: any = {}, distDir?: string, allBinEntries: Array<{name: string, source: string}> = []): Promise<{exports: any, staleExports: string[]}> {
+async function generateExports(entries: string[], mainEntry: string | undefined, options: BuildOptions, existingExports: any = {}, distDir?: string, allBinEntries: Array<{name: string, source: string}> = []): Promise<{exports: any, staleExports: string[]}> {
   const exports: any = {};
   const staleExports: string[] = [];
 
@@ -395,10 +395,13 @@ async function generateExports(entries: string[], mainEntry: string, options: Bu
   }
 
   // Handle main export - respect existing "." export or create new one
-  if (!exports["."]) {
-    exports["."] = await createExportEntry(mainEntry);
-  } else {
-    exports["."] = expandExistingExport(exports["."], mainEntry);
+  // Only create "." export if we have a mainEntry (skip for bin-only packages)
+  if (mainEntry) {
+    if (!exports["."]) {
+      exports["."] = await createExportEntry(mainEntry);
+    } else {
+      exports["."] = expandExistingExport(exports["."], mainEntry);
+    }
   }
 
   // All entries (including duplicating main for clarity)
@@ -810,7 +813,7 @@ async function resolveWorkspaceVersion(packageName: string, workspaceSpec: strin
   }
 }
 
-async function cleanPackageJSON(pkg: PackageJSON, mainEntry: string, options: BuildOptions, cwd: string, distDir?: string): Promise<PackageJSON> {
+async function cleanPackageJSON(pkg: PackageJSON, mainEntry: string | undefined, options: BuildOptions, cwd: string, distDir?: string): Promise<PackageJSON> {
   const cleaned: PackageJSON = {
     name: pkg.name,
     version: pkg.version,
@@ -880,17 +883,21 @@ async function cleanPackageJSON(pkg: PackageJSON, mainEntry: string, options: Bu
     cleaned.type = "module";
   }
 
-  if (options.formats.cjs) {
-    cleaned.main = `src/${mainEntry}.cjs`;
-  }
-  cleaned.module = `src/${mainEntry}.js`;
-  
-  // Only include types field if .d.ts file exists
-  if (distDir) {
-    const dtsPath = Path.join(distDir, "src", `${mainEntry}.d.ts`);
-    const exists = await fileExists(dtsPath);
-    if (exists) {
-      cleaned.types = `src/${mainEntry}.d.ts`;
+  // Only set main/module/types for packages with a main entry
+  // Bin-only packages don't need these fields
+  if (mainEntry) {
+    if (options.formats.cjs) {
+      cleaned.main = `src/${mainEntry}.cjs`;
+    }
+    cleaned.module = `src/${mainEntry}.js`;
+
+    // Only include types field if .d.ts file exists
+    if (distDir) {
+      const dtsPath = Path.join(distDir, "src", `${mainEntry}.d.ts`);
+      const exists = await fileExists(dtsPath);
+      if (exists) {
+        cleaned.types = `src/${mainEntry}.d.ts`;
+      }
     }
   }
 

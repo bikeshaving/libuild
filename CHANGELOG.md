@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.15] - 2025-01-14
+
+### Fixed
+- **Support bin-only packages** - Packages with only bin/ executables and no src/ library code no longer crash. Main/module/types fields and "." export are now correctly omitted for bin-only packages, while bin exports are properly generated.
+
 ## [0.1.14] - 2025-01-14
 
 ### Fixed

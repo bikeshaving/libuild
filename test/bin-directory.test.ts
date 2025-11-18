@@ -359,6 +359,81 @@ test("src file referenced in package.json bin gets dual runtime shebang", async 
   await removeTempDir(testDir);
 });
 
+test("bin-only package without src files", async () => {
+  const testDir = await createTempDir("bin-only");
+
+  await FS.writeFile(
+    Path.join(testDir, "package.json"),
+    JSON.stringify({
+      name: "bin-only-test",
+      version: "1.0.0",
+      type: "module",
+      private: true,
+      bin: {
+        "mycli": "./dist/bin/cli.js",
+        "create": "./dist/bin/create.js"
+      },
+      exports: {
+        "./package.json": "./package.json"
+      }
+    }, null, 2)
+  );
+
+  // Create src directory (required) but with NO files
+  const srcDir = Path.join(testDir, "src");
+  await FS.mkdir(srcDir, {recursive: true});
+
+  // Create bin directory with executables
+  const binDir = Path.join(testDir, "bin");
+  await FS.mkdir(binDir, {recursive: true});
+
+  await FS.writeFile(
+    Path.join(binDir, "cli.ts"),
+    '#!/usr/bin/env node\nconsole.log("CLI tool");'
+  );
+
+  await FS.writeFile(
+    Path.join(binDir, "create.ts"),
+    '#!/usr/bin/env node\nconsole.log("Create tool");'
+  );
+
+  await build(testDir, false);
+
+  const distDir = Path.join(testDir, "dist");
+  const distBinDir = Path.join(distDir, "bin");
+
+  // Bin files should exist
+  expect(await fileExists(Path.join(distBinDir, "cli.js"))).toBe(true);
+  expect(await fileExists(Path.join(distBinDir, "create.js"))).toBe(true);
+
+  // Check package.json was generated correctly
+  const distPkg = await readJSON(Path.join(distDir, "package.json"));
+
+  // Should NOT have main/module/types fields (bin-only package)
+  expect(distPkg.main).toBeUndefined();
+  expect(distPkg.module).toBeUndefined();
+  expect(distPkg.types).toBeUndefined();
+
+  // Should have exports for bin entries
+  expect(distPkg.exports["./bin/cli"]).toEqual({
+    types: "./bin/cli.d.ts",
+    import: "./bin/cli.js"
+  });
+
+  expect(distPkg.exports["./bin/create"]).toEqual({
+    types: "./bin/create.d.ts",
+    import: "./bin/create.js"
+  });
+
+  // Should preserve package.json export
+  expect(distPkg.exports["./package.json"]).toBe("./package.json");
+
+  // Should NOT have "." export (no main entry)
+  expect(distPkg.exports["."]).toBeUndefined();
+
+  await removeTempDir(testDir);
+});
+
 // TODO: Support bin-only projects (without src directory)
 // Currently libuild requires src/ directory to exist
 // =============================================================================
