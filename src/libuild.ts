@@ -221,6 +221,9 @@ function checkIfExportIsStale(exportKey: string, exportValue: any, entries: stri
         } else {
           entryName = match[1];
         }
+      } else if (exportValue.startsWith("./") && !exportValue.includes("package.json")) {
+        // Path doesn't point to src/ - this is invalid and should be validated
+        hasInvalidPath = true;
       }
     }
   } else if (typeof exportValue === "object" && exportValue !== null) {
@@ -239,6 +242,9 @@ function checkIfExportIsStale(exportKey: string, exportValue: any, entries: stri
           } else {
             entryName = match[1];
           }
+        } else if (importPath.startsWith("./") && !importPath.includes("package.json")) {
+          // Path doesn't point to src/ - this is invalid and should be validated
+          hasInvalidPath = true;
         }
       }
     }
@@ -981,8 +987,52 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
 
   // Find entry points in both src/ and bin/ directories
   const binDir = Path.join(cwd, "bin");
-  const srcEntries = await findEntrypoints(srcDir);
+  const allSrcFiles = await findEntrypoints(srcDir);
   const binEntries = await findBinEntrypoints(binDir);
+
+  // Determine which src files should be entry points
+  // This is crucial for code splitting to work correctly
+  let srcEntries: string[];
+
+  if (pkg.exports && typeof pkg.exports === 'object') {
+    // Check if exports contains multiple src/ entry points beyond "."
+    // (we handle "." separately via hasCustomMain check)
+    const srcExportKeys = Object.keys(pkg.exports).filter(key => {
+      // Skip "." and package.json exports
+      if (key === "." || key === "./package.json") return false;
+      // Look for exports that reference src/ files (like ./api, ./utils)
+      const val = pkg.exports[key];
+      if (typeof val === 'string') return val.includes('/src/');
+      if (typeof val === 'object' && val !== null) {
+        return Object.values(val).some(v => typeof v === 'string' && v.includes('/src/'));
+      }
+      return false;
+    });
+
+    // Check if "." export points to a custom main (not index)
+    const dotExport = pkg.exports["."];
+    let hasCustomMain = false;
+    if (dotExport) {
+      const importPath = typeof dotExport === 'string' ? dotExport :
+                        (dotExport as any).import || (dotExport as any).default;
+      if (importPath && !importPath.includes('/index.')) {
+        hasCustomMain = true;
+      }
+    }
+
+    if (srcExportKeys.length > 0 || hasCustomMain) {
+      // Has explicit src exports OR custom main - use all discovered files
+      srcEntries = allSrcFiles;
+    } else {
+      // Only "." export pointing to index, or package.json/bin exports only
+      // Use only index for better code splitting
+      srcEntries = allSrcFiles.includes("index") ? ["index"] : allSrcFiles;
+    }
+  } else {
+    // No exports field at all - this is likely a multi-entry library
+    // Use all discovered files to maintain backward compatibility
+    srcEntries = allSrcFiles;
+  }
   
   // Combine entries, prefixing bin entries to distinguish them
   const allBinEntries = binEntries.map(entry => ({ name: entry, source: 'top-level' }));
@@ -1135,6 +1185,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
         format: "esm",
         outExtension: {".js": ".js"},
         bundle: true,
+        splitting: true, // Enable code splitting for dynamic imports
         minify: false,
         sourcemap: false,
         external: externalDeps,
@@ -1161,6 +1212,24 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
           })] : [])
         ],
       });
+
+      // Check if code splitting created chunks and warn about CJS incompatibility
+      if (options.formats.cjs) {
+        // Look for chunk files (files in dist root that aren't entry points)
+        const distFiles = await FS.readdir(distDir);
+        const chunkFiles = distFiles.filter(f =>
+          f.endsWith('.js') &&
+          !f.endsWith('.d.ts') &&
+          (f.startsWith('chunk-') || f.includes('-') && !f.startsWith('package'))
+        );
+
+        if (chunkFiles.length > 0) {
+          console.info(`\n⚠️  Code splitting detected - CommonJS build will bundle dynamic imports inline`);
+          console.info(`   ESM build: ${chunkFiles.length} chunk file(s) created for lazy loading`);
+          console.info(`   CJS build: Dynamic imports bundled inline (no chunks)`);
+          console.info(`   To get code splitting benefits, use ESM imports or remove "main" field\n`);
+        }
+      }
 
       // Process bin executables for dual runtime support
       if (binEntryPoints.length > 0) {
