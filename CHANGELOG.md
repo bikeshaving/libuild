@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.16] - 2025-01-14
+
+### Added
+- **Code splitting for dynamic imports** - ESM builds now use ESBuild's `splitting: true` to create separate chunk files for dynamically imported modules, enabling lazy loading and reducing initial bundle size
+- **Smart entry point detection** - Packages with only "." or bin exports build only index.ts as entry point, allowing subdirectory files to be chunked when dynamically imported
+- **Code splitting warning** - Warns when dual-format builds have chunks, informing users that CommonJS builds cannot benefit from code splitting (CJS bundles dynamic imports inline)
+
+### Fixed
+- **Export validation** - Invalid export paths that don't point to src/ files are now properly validated and rejected with clear error messages
+
 ## [0.1.15] - 2025-01-14
 
 ### Fixed
