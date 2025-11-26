@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.17] - 2025-11-25
+
+### Added
+- **Ambient .d.ts file copying** - Hand-written ambient TypeScript declaration files (e.g., global.d.ts with `declare module` statements) are now automatically copied from src/ to dist/src/ during build. These files are automatically discovered by TypeScript when the package is consumed, providing global type declarations for module augmentation.
+
+### Fixed
+- **Non-deterministic export field ordering** - Fixed issue where package.json exports fields (types/import/require) would reorder non-deterministically across rebuilds with --save flag, causing unnecessary git diffs. All builds now consistently use types-first ordering.
+
 ## [0.1.16] - 2025-01-14
 
 ### Added
