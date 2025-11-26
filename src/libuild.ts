@@ -1095,7 +1095,8 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
 
   // External only JSON files (npm deps handled by packages: "external", Node.js built-ins by platform: "node")
   const externalDeps = [
-    "*.json"  // Let Node.js handle JSON imports natively
+    "*.json",  // Let Node.js handle JSON imports natively
+    "esbuild"  // Explicit external to suppress require.resolve warning from esbuild's own code
   ];
 
   // Prepare entry points for batch building
