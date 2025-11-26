@@ -275,10 +275,8 @@ async function generateExports(entries: string[], mainEntry: string | undefined,
     if (entry.startsWith("bin/")) {
       // Bin entries only get ESM format (no CJS for executables)
       const binEntry = entry.replace("bin/", "");
-      const exportEntry: any = {
-        import: `./bin/${binEntry}.js`,
-      };
-      
+      const exportEntry: any = {};
+
       // Only include types if .d.ts file exists
       if (distDir) {
         const dtsPath = Path.join(distDir, "bin", `${binEntry}.d.ts`);
@@ -286,14 +284,14 @@ async function generateExports(entries: string[], mainEntry: string | undefined,
           exportEntry.types = `./bin/${binEntry}.d.ts`;
         }
       }
-      
+
+      exportEntry.import = `./bin/${binEntry}.js`;
+
       return exportEntry;
     } else {
       // Regular src entries get both ESM and CJS (if enabled)
-      const exportEntry: any = {
-        import: `./src/${entry}.js`,
-      };
-      
+      const exportEntry: any = {};
+
       // Only include types if .d.ts file exists
       if (distDir) {
         const dtsPath = Path.join(distDir, "src", `${entry}.d.ts`);
@@ -302,7 +300,9 @@ async function generateExports(entries: string[], mainEntry: string | undefined,
           exportEntry.types = `./src/${entry}.d.ts`;
         }
       }
-      
+
+      exportEntry.import = `./src/${entry}.js`;
+
       if (options.formats.cjs) {
         exportEntry.require = `./src/${entry}.cjs`;
       }
