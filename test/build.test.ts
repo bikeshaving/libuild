@@ -82,8 +82,10 @@ test("multi-entry library build", async () => {
   // Check bin transformation (structure-preserving, npm convention)
   expect(distPkg.bin.mytool).toBe("src/cli.js"); // src/cli.js → src/cli.js (no ./ prefix)
 
-  // Verify dev scripts are filtered out (only npm lifecycle scripts preserved)
-  expect(distPkg.scripts).toBeUndefined();
+  // Verify dev scripts are filtered out (only npm lifecycle scripts + prepublishOnly guard preserved)
+  expect(distPkg.scripts.prepublishOnly).toContain("exit 1");
+  expect(distPkg.scripts.build).toBeUndefined();
+  expect(distPkg.scripts.test).toBeUndefined();
 
   // Cleanup
   await removeTempDir(testDir);

@@ -867,10 +867,11 @@ async function cleanPackageJSON(pkg: PackageJSON, mainEntry: string | undefined,
             filteredScripts[scriptName] = scriptValue;
           }
         }
-        if (Object.keys(filteredScripts).length > 0) {
-          // Apply path transformation to the filtered scripts
-          cleaned[field] = transformSrcToDist(filteredScripts);
-        }
+        // Add prepublishOnly guard to prevent accidental publishing from dist/
+        filteredScripts.prepublishOnly = "echo 'ERROR: Cannot publish from dist/ directory. Use libuild publish instead.' && exit 1";
+
+        // Apply path transformation to the filtered scripts
+        cleaned[field] = transformSrcToDist(filteredScripts);
       } else if (field === "bin") {
         // Apply path transformation to bin field (without ./ prefix for npm convention)
         cleaned[field] = transformBinPaths(pkg[field]);
@@ -965,9 +966,13 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   }
 
   // Check for unsafe publishing conditions
-  if (!pkg.private) {
-    console.warn("⚠️  WARNING: Root package.json is not private - this could lead to accidental publishing of development package.json");
-    console.warn("   Consider setting 'private: true' in your root package.json");
+  // Accept any prepublishOnly that contains "exit 1" as a valid guard
+  const hasPublishGuard = pkg.scripts?.prepublishOnly?.includes("exit 1");
+
+  // Only warn if we're not about to fix it with --save
+  if (!hasPublishGuard && !save) {
+    console.warn("⚠️  WARNING: Root package.json lacks publish protection - this could lead to accidental publishing");
+    console.warn("   Run 'libuild build --save' to add publish protection, or manually add a prepublishOnly script");
   }
 
   // Check if dist directory is gitignored
@@ -1466,7 +1471,11 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     console.info("  Updating root package.json...");
     const rootPkg = {...pkg};
 
-    rootPkg.private = true;
+    // Add prepublishOnly guard to prevent accidental publishing from root
+    if (!rootPkg.scripts) {
+      rootPkg.scripts = {};
+    }
+    rootPkg.scripts.prepublishOnly = "echo 'ERROR: Cannot publish from root directory. Use libuild publish instead.' && exit 1";
 
     // Update main/module/types to point to dist
     if (options.formats.cjs) {

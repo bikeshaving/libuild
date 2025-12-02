@@ -3,7 +3,6 @@
   "version": "0.1.17",
   "description": "Zero-config library builds",
   "main": "./dist/src/libuild.cjs",
-  "private": true,
   "bin": {
     "libuild": "./dist/src/cli.js"
   },
@@ -12,6 +11,7 @@
     "build": "bun run src/cli.ts",
     "dev": "bun run src/cli.ts",
     "publish": "bun run src/cli.ts publish",
+    "prepublishOnly": "echo 'ERROR: Cannot publish from root directory. Use libuild publish instead.' && exit 1",
     "test": "bun test",
     "test-src": "node test.js"
   },

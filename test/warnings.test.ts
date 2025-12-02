@@ -4,14 +4,15 @@ import * as Path from "path";
 import {build} from "../src/libuild.ts";
 import {createTempDir, removeTempDir, copyFixture, readJSON} from "./test-utils.ts";
 
-test("warns when package.json is not private", async () => {
-  const testDir = await createTempDir("warn-private");
+test("warns when package.json lacks publish protection", async () => {
+  const testDir = await createTempDir("warn-publish-guard");
 
-  // Copy fixture and make it non-private
+  // Copy fixture and remove publish protection
   await copyFixture("simple-lib", testDir);
 
   const pkg = await readJSON(Path.join(testDir, "package.json"));
   pkg.private = false;
+  delete pkg.scripts?.prepublishOnly;
   await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify(pkg, null, 2));
 
   // Capture console output
@@ -22,8 +23,8 @@ test("warns when package.json is not private", async () => {
   try {
     await build(testDir);
 
-    // Should have warned about non-private package
-    expect(warnings.some(w => w.includes("Root package.json is not private"))).toBe(true);
+    // Should have warned about missing publish protection
+    expect(warnings.some(w => w.includes("lacks publish protection"))).toBe(true);
   } finally {
     console.warn = originalWarn;
     await removeTempDir(testDir);

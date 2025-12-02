@@ -139,11 +139,10 @@ test("npm lifecycle scripts are preserved", async () => {
   
   const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
   
-  // Should only have lifecycle scripts
-  expect(distPkg.scripts).toEqual({
-    "postinstall": "echo 'after install'",
-    "preinstall": "echo 'before install'"
-  });
+  // Should have lifecycle scripts plus prepublishOnly guard
+  expect(distPkg.scripts.postinstall).toBe("echo 'after install'");
+  expect(distPkg.scripts.preinstall).toBe("echo 'before install'");
+  expect(distPkg.scripts.prepublishOnly).toContain("exit 1");
   
   // Cleanup
   await removeTempDir(testDir);
@@ -449,9 +448,12 @@ test("dev scripts should be filtered out in dist (only npm lifecycle scripts pre
   
   const distDir = Path.join(testDir, "dist");
   
-  // Check that dev scripts are NOT included in dist package.json (only npm lifecycle scripts)
+  // Check that dev scripts are NOT included in dist package.json (only npm lifecycle scripts + prepublishOnly guard)
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
-  expect(distPkg.scripts).toBeUndefined(); // No npm lifecycle scripts in this fixture
+  expect(distPkg.scripts.prepublishOnly).toContain("exit 1"); // prepublishOnly guard is always added
+  expect(distPkg.scripts.build).toBeUndefined(); // Dev scripts filtered out
+  expect(distPkg.scripts.test).toBeUndefined();
+  expect(distPkg.scripts.dev).toBeUndefined();
   
   // Check that scripts in root are NOT transformed (no --save)
   const rootPkg = await readJSON(Path.join(testDir, "package.json"));

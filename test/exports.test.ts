@@ -395,9 +395,9 @@ test("private field behavior with --save", async () => {
   // Build with --save
   await build(testDir, true);
 
-  // Check that private is set to true
+  // Check that prepublishOnly guard is added
   const rootPkg = await readJSON(Path.join(testDir, "package.json"));
-  expect(rootPkg.private).toBe(true);
+  expect(rootPkg.scripts?.prepublishOnly).toContain("exit 1");
 
   // Cleanup
   await removeTempDir(testDir);
