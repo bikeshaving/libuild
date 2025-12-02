@@ -83,9 +83,11 @@ test("multi-entry library build", async () => {
   expect(distPkg.bin.mytool).toBe("src/cli.js"); // src/cli.js → src/cli.js (no ./ prefix)
 
   // Verify dev scripts are filtered out (only npm lifecycle scripts + prepublishOnly guard preserved)
-  expect(distPkg.scripts.prepublishOnly).toContain("exit 1");
   expect(distPkg.scripts.build).toBeUndefined();
   expect(distPkg.scripts.test).toBeUndefined();
+  expect(distPkg.scripts.prepublishOnly).toContain("exit 1");
+  // Private field is copied over too
+  expect(distPkg.private).toBe(true);
 
   // Cleanup
   await removeTempDir(testDir);

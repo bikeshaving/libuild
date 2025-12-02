@@ -852,6 +852,7 @@ async function cleanPackageJSON(pkg: PackageJSON, mainEntry: string | undefined,
     "files",
     "sideEffects",
     "browserslist",
+    "private",
   ];
 
   const pathFields = ["files", "types", "scripts"];
@@ -966,8 +967,8 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   }
 
   // Check for unsafe publishing conditions
-  // Accept any prepublishOnly that contains "exit 1" as a valid guard
-  const hasPublishGuard = pkg.scripts?.prepublishOnly?.includes("exit 1");
+  // Accept either private: true OR prepublishOnly with "exit 1"
+  const hasPublishGuard = pkg.private || pkg.scripts?.prepublishOnly?.includes("exit 1");
 
   // Only warn if we're not about to fix it with --save
   if (!hasPublishGuard && !save) {
@@ -1660,6 +1661,7 @@ export async function publish(cwd: string, save: boolean = true, extraArgs: stri
   const distPkg = JSON.parse(await FS.readFile(distPkgPath, "utf-8")) as PackageJSON;
 
   // Run npm publish in dist directory
+  // Note: If package has private: true, npm will reject the publish
   const publishArgs = ["publish"];
   if (distPkg.name.startsWith("@")) {
     publishArgs.push("--access", "public");

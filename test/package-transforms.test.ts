@@ -143,6 +143,7 @@ test("npm lifecycle scripts are preserved", async () => {
   expect(distPkg.scripts.postinstall).toBe("echo 'after install'");
   expect(distPkg.scripts.preinstall).toBe("echo 'before install'");
   expect(distPkg.scripts.prepublishOnly).toContain("exit 1");
+  expect(distPkg.private).toBe(true);
   
   // Cleanup
   await removeTempDir(testDir);
@@ -454,6 +455,7 @@ test("dev scripts should be filtered out in dist (only npm lifecycle scripts pre
   expect(distPkg.scripts.build).toBeUndefined(); // Dev scripts filtered out
   expect(distPkg.scripts.test).toBeUndefined();
   expect(distPkg.scripts.dev).toBeUndefined();
+  expect(distPkg.private).toBe(true);
   
   // Check that scripts in root are NOT transformed (no --save)
   const rootPkg = await readJSON(Path.join(testDir, "package.json"));
