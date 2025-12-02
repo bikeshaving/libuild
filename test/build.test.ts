@@ -82,10 +82,8 @@ test("multi-entry library build", async () => {
   // Check bin transformation (structure-preserving, npm convention)
   expect(distPkg.bin.mytool).toBe("src/cli.js"); // src/cli.js → src/cli.js (no ./ prefix)
 
-  // Verify dev scripts are filtered out (only npm lifecycle scripts + prepublishOnly guard preserved)
-  expect(distPkg.scripts.build).toBeUndefined();
-  expect(distPkg.scripts.test).toBeUndefined();
-  expect(distPkg.scripts.prepublishOnly).toContain("exit 1");
+  // Verify scripts are not copied to dist (they won't work anyway)
+  expect(distPkg.scripts).toBeUndefined();
   // Private field is copied over too
   expect(distPkg.private).toBe(true);
 

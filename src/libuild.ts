@@ -860,19 +860,9 @@ async function cleanPackageJSON(pkg: PackageJSON, mainEntry: string | undefined,
   for (const field of fieldsToKeep) {
     if (pkg[field] !== undefined) {
       if (field === "scripts") {
-        // Only keep scripts that npm actually runs for installed packages
-        const npmLifecycleScripts = ["postinstall", "preinstall", "install", "preuninstall", "postuninstall", "shrinkwrap"];
-        const filteredScripts: Record<string, string> = {};
-        for (const [scriptName, scriptValue] of Object.entries(pkg[field] || {})) {
-          if (npmLifecycleScripts.includes(scriptName)) {
-            filteredScripts[scriptName] = scriptValue;
-          }
-        }
-        // Add prepublishOnly guard to prevent accidental publishing from dist/
-        filteredScripts.prepublishOnly = "echo 'ERROR: Cannot publish from dist/ directory. Use libuild publish instead.' && exit 1";
-
-        // Apply path transformation to the filtered scripts
-        cleaned[field] = transformSrcToDist(filteredScripts);
+        // Don't copy scripts to dist - they won't work (can't reference dev scripts/files)
+        // Skip this field entirely
+        continue;
       } else if (field === "bin") {
         // Apply path transformation to bin field (without ./ prefix for npm convention)
         cleaned[field] = transformBinPaths(pkg[field]);

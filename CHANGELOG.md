@@ -2,13 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.1.18] - 2025-12-01
+## [0.1.18] - 2025-12-02
 
 ### Changed
-- **prepublishOnly guards** - Replaced `private: true` with `prepublishOnly` script guards as the standard publish protection mechanism. Dist packages now include helpful error messages when accidentally publishing from wrong directory. The `private` field is now properly copied to dist/ for actual private packages, enabling libuild to work with private packages while maintaining publish protection.
-
-### Fixed
-- **Private package publishing** - Fixed bug where packages marked with `private: true` could still be published via `libuild publish`. npm now correctly handles private package rejection.
+- **BREAKING: Scripts not copied to dist** - Scripts field is no longer copied to dist/package.json as they don't work correctly in the dist context (can't reference other scripts that were filtered out). This fixes the issue where prepublishOnly guards would block `libuild publish`. Users who need install scripts (postinstall, etc.) can manually add them to dist/package.json if needed.
+- **prepublishOnly guards for root** - Root package.json gets `prepublishOnly` guard (via `--save`) to prevent accidental publishing from root directory.
+- **Copy private field** - The `private` field is now properly copied from root to dist/, enabling actual private packages to work with libuild while npm prevents their publication.
 
 ## [0.1.17] - 2025-11-25
 
