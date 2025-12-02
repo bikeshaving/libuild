@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.18] - 2025-12-01
+
+### Changed
+- **prepublishOnly guards** - Replaced `private: true` with `prepublishOnly` script guards as the standard publish protection mechanism. Dist packages now include helpful error messages when accidentally publishing from wrong directory. The `private` field is now properly copied to dist/ for actual private packages, enabling libuild to work with private packages while maintaining publish protection.
+
+### Fixed
+- **Private package publishing** - Fixed bug where packages marked with `private: true` could still be published via `libuild publish`. npm now correctly handles private package rejection.
+
 ## [0.1.17] - 2025-11-25
 
 ### Added
