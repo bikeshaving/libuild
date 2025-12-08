@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.20] - 2025-12-08
+
+### Fixed
+- **Ambient .d.ts export validation** - Fixed validation error when using `--save` with ambient .d.ts files. The build now correctly handles both `./src/` and `./dist/src/` paths for ambient declarations in exports.
+
 ## [0.1.19] - 2025-12-08
 
 ### Added
