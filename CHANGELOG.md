@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.19] - 2025-12-08
+
+### Added
+- **Ambient .d.ts exports** - Ambient TypeScript declaration files (*.d.ts) in src/ are now automatically added to the exports map, making them discoverable and importable by consumers.
+- **Triple-slash references for ambient types** - Generated .d.ts files now include triple-slash reference directives to ambient .d.ts files, ensuring TypeScript can find ambient type declarations.
+
+### Fixed
+- **Hard fail on invalid workspace package.json** - Invalid JSON in workspace dependencies now causes build to fail immediately with clear error instead of silently continuing with a warning.
+
 ## [0.1.18] - 2025-12-02
 
 ### Changed
