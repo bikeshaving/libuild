@@ -218,3 +218,51 @@ declare global {
   const copiedContent = await FS.readFile(distDtsPath, "utf-8");
   expect(copiedContent).toBe(complexAmbient);
 });
+
+test("adds ambient .d.ts files to exports map with --save", async () => {
+  // Create package.json
+  await FS.writeFile(
+    Path.join(testDir, "package.json"),
+    JSON.stringify({
+      name: "test-ambient-exports",
+      version: "0.0.1",
+      type: "module",
+    })
+  );
+
+  // Create src directory with TypeScript file and ambient .d.ts
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(
+    Path.join(testDir, "src", "index.ts"),
+    'export function hello() { return "Hello!"; }'
+  );
+  await FS.writeFile(
+    Path.join(testDir, "src", "globals.d.ts"),
+    'declare module "*.svg" { const url: string; export default url; }'
+  );
+
+  // Build with --save
+  await build(testDir, true);
+
+  // Read root package.json
+  const rootPkgContent = await FS.readFile(Path.join(testDir, "package.json"), "utf-8");
+  const rootPkg = JSON.parse(rootPkgContent);
+
+  // Read dist package.json
+  const distPkgContent = await FS.readFile(Path.join(testDir, "dist", "package.json"), "utf-8");
+  const distPkg = JSON.parse(distPkgContent);
+
+  // Verify exports in root package.json point to dist
+  expect(rootPkg.exports["./globals.d.ts"]).toBe("./dist/src/globals.d.ts");
+
+  // Verify exports in dist package.json point to src (relative to dist/)
+  expect(distPkg.exports["./globals.d.ts"]).toBe("./src/globals.d.ts");
+
+  // Verify the file actually exists
+  const globalsDtsPath = Path.join(testDir, "dist", "src", "globals.d.ts");
+  const exists = await FS.stat(globalsDtsPath).then(() => true, () => false);
+  expect(exists).toBe(true);
+
+  // Build again to verify validation passes with the new exports
+  await build(testDir, true);
+});

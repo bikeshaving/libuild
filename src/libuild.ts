@@ -317,6 +317,12 @@ async function generateExports(entries: string[], mainEntry: string | undefined,
         return existing;
       }
 
+      // Special case for ambient .d.ts files - they're just copied, not built
+      // They can be in ./src/ or ./dist/src/ depending on context (root vs dist package.json)
+      if (existing.endsWith('.d.ts') && (existing.match(/\.\/(?:dist\/)?src\/[^/]+\.d\.ts$/))) {
+        return existing;
+      }
+
       // Extract entry name and validate it's a valid entrypoint
       const match = existing.match(/\.\/src\/([^/]+\.(?:ts|js))$/);
       if (match) {
@@ -1326,17 +1332,18 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   console.info("  Generating package.json...");
   const cleanedPkg = await cleanPackageJSON(pkg, mainEntry, options, cwd, distDir);
   const exportsResult = await generateExports(entries, mainEntry, options, pkg.exports, distDir, allBinEntries);
-  cleanedPkg.exports = fixExportsForDist(exportsResult.exports);
 
-  // Add ambient .d.ts files to exports
+  // Add ambient .d.ts files to exports BEFORE fixExportsForDist
   for (const dtsFile of ambientDtsFiles) {
     const baseName = Path.basename(dtsFile, '.d.ts');
     const exportKey = `./${baseName}.d.ts`;
     // Only add if not already in exports
-    if (!cleanedPkg.exports[exportKey]) {
-      cleanedPkg.exports[exportKey] = `./src/${dtsFile}`;
+    if (!exportsResult.exports[exportKey]) {
+      exportsResult.exports[exportKey] = `./src/${dtsFile}`;
     }
   }
+
+  cleanedPkg.exports = fixExportsForDist(exportsResult.exports);
 
   // Handle stale exports
   if (exportsResult.staleExports.length > 0) {
