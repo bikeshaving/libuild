@@ -112,6 +112,9 @@ export function dtsPlugin(options: TypeScriptPluginOptions): ESBuild.Plugin {
 
         // Add triple-slash references to JS files for Deno compatibility
         await addTripleSlashReferences(tsFiles, options.outDir);
+
+        // Add triple-slash references to ambient .d.ts files in generated .d.ts files
+        await addAmbientReferences(tsFiles, options.outDir, options.rootDir);
       });
     }
   };
@@ -151,6 +154,42 @@ async function addTripleSlashReferences(tsFiles: string[], outDir: string) {
 
     // Write the modified content
     await FS.writeFile(jsPath, modifiedContent);
+  }
+}
+
+async function addAmbientReferences(tsFiles: string[], outDir: string, rootDir: string) {
+  // Find all ambient .d.ts files in the source directory
+  // rootDir is already pointing to the src/ directory
+  let ambientFiles: string[] = [];
+
+  try {
+    const files = await FS.readdir(rootDir);
+    ambientFiles = files.filter(f => f.endsWith('.d.ts'));
+  } catch {
+    // Directory doesn't exist or can't be read
+    return;
+  }
+
+  if (ambientFiles.length === 0) return;
+
+  // Add references to each generated .d.ts file
+  for (const tsFile of tsFiles) {
+    const baseName = Path.basename(tsFile, Path.extname(tsFile));
+    const dtsPath = Path.join(outDir, `${baseName}.d.ts`);
+
+    const dtsExists = await FS.access(dtsPath).then(() => true).catch(() => false);
+    if (!dtsExists) continue;
+
+    const content = await FS.readFile(dtsPath, "utf-8");
+
+    // Generate triple-slash reference directives for each ambient file
+    const references = ambientFiles
+      .map(ambientFile => `/// <reference path="./${ambientFile}" />`)
+      .join('\n');
+
+    // Prepend references to the generated .d.ts file
+    const modifiedContent = `${references}\n${content}`;
+    await FS.writeFile(dtsPath, modifiedContent);
   }
 }
 
