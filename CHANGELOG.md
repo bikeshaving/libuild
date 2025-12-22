@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.21] - 2025-12-22
+
+### Fixed
+- **Internal module .d.ts generation** - Fixed issue where .d.ts files were not generated for internal modules (e.g., `src/impl/utils.ts`), causing broken import paths in published packages. TypeScript now follows imports to generate declarations for all modules, not just entry points.
+- **Module augmentation in .d.ts** - Fixed `declare module` blocks (module augmentation) not appearing in published type definitions. This resolves [#1](https://github.com/bikeshaving/libuild/issues/1).
+- **Symlink path consistency** - Fixed path mismatches on macOS where `/tmp` symlinks to `/private/tmp`, which could cause .d.ts files to be emitted to wrong locations.
+
+### Changed
+- **Chunk files location** - ESM code splitting chunks are now placed in `dist/src/_chunks/` instead of the dist root, keeping the package structure cleaner.
+
 ## [0.1.20] - 2025-12-08
 
 ### Fixed

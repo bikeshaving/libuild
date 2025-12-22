@@ -44,7 +44,9 @@ libuild publish
 - **Structure-preserving**: `src/index.ts` → `dist/src/index.js` (maintains src/ directory)
 - **ESM**: `.js` files with ES module syntax
 - **CommonJS**: `.cjs` files for Node.js compatibility
-- **TypeScript**: `.d.ts` declaration files (when TypeScript is available)
+- **TypeScript**: `.d.ts` declaration files for all modules (when TypeScript is available)
+- **Module augmentation**: `declare module` blocks are preserved in .d.ts output
+- **Code splitting**: Dynamic imports create chunks in `dist/src/_chunks/`
 - **Clean package.json**: Optimized for consumers (no dev scripts)
 
 ### Format Control
