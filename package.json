@@ -9,11 +9,9 @@
   "type": "module",
   "scripts": {
     "build": "bun run src/cli.ts",
-    "dev": "bun run src/cli.ts",
     "publish": "bun run src/cli.ts publish",
     "prepublishOnly": "echo 'ERROR: Cannot publish from root directory. Use libuild publish instead.' && exit 1",
-    "test": "bun test",
-    "test-src": "node test.js"
+    "test": "bun test"
   },
   "dependencies": {
     "esbuild": "^0.19.0"

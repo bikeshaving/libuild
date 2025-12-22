@@ -39,48 +39,39 @@ export function dtsPlugin(options: TypeScriptPluginOptions): ESBuild.Plugin {
           return;
         }
 
-        // Only generate declarations for actual entry points, not internal modules
-        const tsFiles = entryFiles.filter(file => {
-          if (!file.endsWith('.ts')) return false;
-
-          // Check if this file matches any of the entry points
-          return options.entryPoints.some(entryPoint => {
-            try {
-              // Use realpath to resolve symlinks (macOS /var -> /private/var issue)
-              const fs = require("fs");
-              const normalizedEntry = fs.realpathSync(Path.resolve(entryPoint));
-              const normalizedFile = fs.realpathSync(Path.resolve(file));
-              return normalizedEntry === normalizedFile;
-            } catch {
-              // Fallback to regular path resolution if realpath fails
-              const normalizedEntry = Path.resolve(entryPoint);
-              const normalizedFile = Path.resolve(file);
-              return normalizedEntry === normalizedFile;
-            }
-          });
-        });
+        // Collect all TypeScript files for declaration generation
+        // This includes internal modules so their .d.ts files are generated
+        const tsFiles = entryFiles.filter(file => file.endsWith('.ts') && !file.endsWith('.d.ts'));
         if (tsFiles.length === 0) {
           return;
         }
 
-        try {
-          // Ensure output directory exists
-          await FS.mkdir(options.outDir, { recursive: true });
+        // Ensure output directory exists
+        await FS.mkdir(options.outDir, { recursive: true });
 
+        // Resolve symlinks in paths to ensure consistency
+        // (e.g., /tmp -> /private/tmp on macOS)
+        const fs = await import("fs");
+        const resolvedRootDir = fs.realpathSync(options.rootDir);
+        const resolvedOutDir = fs.realpathSync(options.outDir);
+        // Also resolve tsFiles paths to match rootDir/outDir
+        const resolvedTsFiles = tsFiles.map(f => fs.realpathSync(f));
+
+        try {
           const compilerOptions: TS.CompilerOptions = {
             declaration: true,
             emitDeclarationOnly: true,
-            outDir: options.outDir,
+            outDir: resolvedOutDir,
+            rootDir: resolvedRootDir,
             skipLibCheck: true,
             esModuleInterop: true,
             target: TS.ScriptTarget.ES2020,
             module: TS.ModuleKind.ESNext,
-            isolatedModules: true, // Prevent cross-file type dependencies
-            noResolve: true, // Don't resolve imports - only process the specific files
+            moduleResolution: TS.ModuleResolutionKind.Bundler,
           };
 
           // Create program with explicit config to avoid tsconfig.json interference
-          const program = TS.createProgram(tsFiles, compilerOptions);
+          const program = TS.createProgram(resolvedTsFiles, compilerOptions);
           const emitResult = program.emit();
 
           if (emitResult.diagnostics.length > 0) {
@@ -111,20 +102,26 @@ export function dtsPlugin(options: TypeScriptPluginOptions): ESBuild.Plugin {
         }
 
         // Add triple-slash references to JS files for Deno compatibility
-        await addTripleSlashReferences(tsFiles, options.outDir);
+        await addTripleSlashReferences(resolvedTsFiles, resolvedOutDir, resolvedRootDir);
 
         // Add triple-slash references to ambient .d.ts files in generated .d.ts files
-        await addAmbientReferences(tsFiles, options.outDir, options.rootDir);
+        await addAmbientReferences(resolvedTsFiles, resolvedOutDir, resolvedRootDir);
       });
     }
   };
 }
 
-async function addTripleSlashReferences(tsFiles: string[], outDir: string) {
+async function addTripleSlashReferences(tsFiles: string[], outDir: string, rootDir: string) {
   for (const tsFile of tsFiles) {
+    // Get relative path from rootDir to preserve directory structure
+    const relativePath = Path.relative(rootDir, tsFile);
+    const relativeDir = Path.dirname(relativePath);
     const baseName = Path.basename(tsFile, Path.extname(tsFile));
-    const jsPath = Path.join(outDir, `${baseName}.js`);
-    const dtsPath = Path.join(outDir, `${baseName}.d.ts`);
+
+    // Build paths preserving subdirectory structure
+    const outputSubDir = relativeDir === '.' ? outDir : Path.join(outDir, relativeDir);
+    const jsPath = Path.join(outputSubDir, `${baseName}.js`);
+    const dtsPath = Path.join(outputSubDir, `${baseName}.d.ts`);
 
     // Only add reference if both files exist
     const [jsExists, dtsExists] = await Promise.all([
@@ -174,17 +171,26 @@ async function addAmbientReferences(tsFiles: string[], outDir: string, rootDir: 
 
   // Add references to each generated .d.ts file
   for (const tsFile of tsFiles) {
+    // Get relative path from rootDir to preserve directory structure
+    const relativePath = Path.relative(rootDir, tsFile);
+    const relativeDir = Path.dirname(relativePath);
     const baseName = Path.basename(tsFile, Path.extname(tsFile));
-    const dtsPath = Path.join(outDir, `${baseName}.d.ts`);
+
+    // Build paths preserving subdirectory structure
+    const outputSubDir = relativeDir === '.' ? outDir : Path.join(outDir, relativeDir);
+    const dtsPath = Path.join(outputSubDir, `${baseName}.d.ts`);
 
     const dtsExists = await FS.access(dtsPath).then(() => true).catch(() => false);
     if (!dtsExists) continue;
 
     const content = await FS.readFile(dtsPath, "utf-8");
 
+    // Calculate relative path from this .d.ts file back to the ambient files in root
+    const relativeToRoot = relativeDir === '.' ? './' : '../'.repeat(relativeDir.split(Path.sep).length);
+
     // Generate triple-slash reference directives for each ambient file
     const references = ambientFiles
-      .map(ambientFile => `/// <reference path="./${ambientFile}" />`)
+      .map(ambientFile => `/// <reference path="${relativeToRoot}${ambientFile}" />`)
       .join('\n');
 
     // Prepend references to the generated .d.ts file
