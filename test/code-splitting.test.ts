@@ -56,14 +56,12 @@ export const version = "1.0.0";
   // Main entry should exist
   expect(await fileExists(Path.join(distSrcDir, "index.js"))).toBe(true);
 
-  // Check for chunk files in dist root (esbuild places chunks at outdir root)
-  // Entry files are in dist/src/, but chunks are in dist/
-  const distFiles = await FS.readdir(distDir);
-  const chunkFiles = distFiles.filter(f =>
-    (f.startsWith("chunk-") || f.startsWith("feature-")) &&
-    f.endsWith(".js") &&
-    !f.includes(".d.ts")
-  );
+  // Check for chunk files in dist/src/_chunks/
+  const chunksDir = Path.join(distSrcDir, "_chunks");
+  const chunksExist = await FS.stat(chunksDir).then(() => true, () => false);
+  expect(chunksExist).toBe(true);
+
+  const chunkFiles = (await FS.readdir(chunksDir)).filter(f => f.endsWith(".js"));
 
   // Should have at least one chunk file for the dynamic import
   expect(chunkFiles.length).toBeGreaterThan(0);
@@ -139,13 +137,13 @@ main();
   // CLI should exist
   expect(await fileExists(Path.join(distBinDir, "cli.js"))).toBe(true);
 
-  // Check for chunk files in dist root
-  const distFiles = await FS.readdir(distDir);
-  const chunkFiles = distFiles.filter(f =>
-    (f.startsWith("chunk-") || f.startsWith("build-") || f.includes("commands")) &&
-    f.endsWith(".js") &&
-    !f.includes(".d.ts")
-  );
+  // Check for chunk files in dist/src/_chunks/
+  const distSrcDir = Path.join(distDir, "src");
+  const chunksDir = Path.join(distSrcDir, "_chunks");
+  const chunksExist = await FS.stat(chunksDir).then(() => true, () => false);
+  expect(chunksExist).toBe(true);
+
+  const chunkFiles = (await FS.readdir(chunksDir)).filter(f => f.endsWith(".js"));
 
   // Should have chunk files for the dynamic import
   expect(chunkFiles.length).toBeGreaterThan(0);
@@ -200,13 +198,12 @@ test("runtime execution with code splitting works", async () => {
   const distDir = Path.join(testDir, "dist");
   const distSrcDir = Path.join(distDir, "src");
 
-  // Verify chunk files were created in dist root
-  const distFiles = await FS.readdir(distDir);
-  const chunkFiles = distFiles.filter(f =>
-    (f.startsWith("chunk-") || f.startsWith("math-")) &&
-    f.endsWith(".js") &&
-    !f.includes(".d.ts")
-  );
+  // Verify chunk files were created in dist/src/_chunks/
+  const chunksDir = Path.join(distSrcDir, "_chunks");
+  const chunksExist = await FS.stat(chunksDir).then(() => true, () => false);
+  expect(chunksExist).toBe(true);
+
+  const chunkFiles = (await FS.readdir(chunksDir)).filter(f => f.endsWith(".js"));
   expect(chunkFiles.length).toBeGreaterThan(0);
 
   // Test runtime execution
@@ -277,13 +274,12 @@ export async function loadFeatureC() {
   const distDir = Path.join(testDir, "dist");
   const distSrcDir = Path.join(distDir, "src");
 
-  // Check for multiple chunk files in dist root
-  const distFiles = await FS.readdir(distDir);
-  const chunkFiles = distFiles.filter(f =>
-    (f.startsWith("chunk-") || f.startsWith("feature-")) &&
-    f.endsWith(".js") &&
-    !f.includes(".d.ts")
-  );
+  // Check for multiple chunk files in dist/src/_chunks/
+  const chunksDir = Path.join(distSrcDir, "_chunks");
+  const chunksExist = await FS.stat(chunksDir).then(() => true, () => false);
+  expect(chunksExist).toBe(true);
+
+  const chunkFiles = (await FS.readdir(chunksDir)).filter(f => f.endsWith(".js"));
 
   // Should have multiple chunks (one for each dynamic import)
   expect(chunkFiles.length).toBeGreaterThanOrEqual(3);

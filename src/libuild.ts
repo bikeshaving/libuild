@@ -1180,6 +1180,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
         entryPoints: allESMEntryPoints,
         outdir: distDir,
         outbase: cwd, // Preserve src/ and bin/ directory structure
+        chunkNames: "src/_chunks/[name]-[hash]", // Put chunks in a subdirectory
         format: "esm",
         outExtension: {".js": ".js"},
         bundle: true,
@@ -1213,19 +1214,19 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
 
       // Check if code splitting created chunks and warn about CJS incompatibility
       if (options.formats.cjs) {
-        // Look for chunk files (files in dist root that aren't entry points)
-        const distFiles = await FS.readdir(distDir);
-        const chunkFiles = distFiles.filter(f =>
-          f.endsWith('.js') &&
-          !f.endsWith('.d.ts') &&
-          (f.startsWith('chunk-') || f.includes('-') && !f.startsWith('package'))
-        );
+        // Look for chunk files in the _chunks subdirectory
+        const chunksDir = Path.join(distSrcDir, "_chunks");
+        const chunksExist = await FS.stat(chunksDir).then(() => true, () => false);
+        if (chunksExist) {
+          const chunkFiles = await FS.readdir(chunksDir);
+          const jsChunks = chunkFiles.filter(f => f.endsWith('.js'));
 
-        if (chunkFiles.length > 0) {
-          console.info(`\n⚠️  Code splitting detected - CommonJS build will bundle dynamic imports inline`);
-          console.info(`   ESM build: ${chunkFiles.length} chunk file(s) created for lazy loading`);
-          console.info(`   CJS build: Dynamic imports bundled inline (no chunks)`);
-          console.info(`   To get code splitting benefits, use ESM imports or remove "main" field\n`);
+          if (jsChunks.length > 0) {
+            console.info(`\n⚠️  Code splitting detected - CommonJS build will bundle dynamic imports inline`);
+            console.info(`   ESM build: ${jsChunks.length} chunk file(s) created for lazy loading`);
+            console.info(`   CJS build: Dynamic imports bundled inline (no chunks)`);
+            console.info(`   To get code splitting benefits, use ESM imports or remove "main" field\n`);
+          }
         }
       }
 
