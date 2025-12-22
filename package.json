@@ -14,7 +14,8 @@
     "test": "bun test"
   },
   "dependencies": {
-    "esbuild": "^0.19.0"
+    "esbuild": "^0.19.0",
+    "expect": "^30.2.0"
   },
   "peerDependencies": {
     "typescript": "^5.0.0"
@@ -53,30 +54,49 @@
   "exports": {
     ".": {
       "types": "./dist/src/libuild.d.ts",
-      "import": "./dist/src/libuild.js",
-      "require": "./dist/src/libuild.cjs"
+      "import": "./dist/src/libuild.js"
     },
     "./cli": {
       "types": "./dist/src/cli.d.ts",
-      "import": "./dist/src/cli.js",
-      "require": "./dist/src/cli.cjs"
+      "import": "./dist/src/cli.js"
     },
     "./cli.js": {
       "types": "./dist/src/cli.d.ts",
-      "import": "./dist/src/cli.js",
-      "require": "./dist/src/cli.cjs"
+      "import": "./dist/src/cli.js"
     },
     "./libuild": {
       "types": "./dist/src/libuild.d.ts",
-      "import": "./dist/src/libuild.js",
-      "require": "./dist/src/libuild.cjs"
+      "import": "./dist/src/libuild.js"
     },
     "./libuild.js": {
       "types": "./dist/src/libuild.d.ts",
-      "import": "./dist/src/libuild.js",
-      "require": "./dist/src/libuild.cjs"
+      "import": "./dist/src/libuild.js"
     },
-    "./package.json": "./dist/package.json"
+    "./package.json": "./dist/package.json",
+    "./test": {
+      "types": "./dist/src/test.d.ts",
+      "import": "./dist/src/test.js"
+    },
+    "./test.js": {
+      "types": "./dist/src/test.d.ts",
+      "import": "./dist/src/test.js"
+    },
+    "./test-bun": {
+      "types": "./dist/src/test-bun.d.ts",
+      "import": "./dist/src/test-bun.js"
+    },
+    "./test-bun.js": {
+      "types": "./dist/src/test-bun.d.ts",
+      "import": "./dist/src/test-bun.js"
+    },
+    "./test-node": {
+      "types": "./dist/src/test-node.d.ts",
+      "import": "./dist/src/test-node.js"
+    },
+    "./test-node.js": {
+      "types": "./dist/src/test-node.d.ts",
+      "import": "./dist/src/test-node.js"
+    }
   },
   "files": [
     "dist/",
