@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.22] - 2025-12-22
+
+### Fixed
+- **Bin imports from src polluting source tree** - Fixed .d.ts files being emitted to source directories when bin entries import from `../src/`. This caused lint failures and polluted the src/ folder. Fixes [#2](https://github.com/bikeshaving/libuild/issues/2).
+
 ## [0.1.21] - 2025-12-22
 
 ### Fixed
