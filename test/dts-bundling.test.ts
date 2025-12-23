@@ -230,3 +230,50 @@ declare global {
   expect(globalsDts).toContain("declare global");
   expect(globalsDts).toContain("myLib");
 });
+
+test("bin importing from src does not emit .d.ts to src directory", async () => {
+  await FS.writeFile(
+    Path.join(testDir, "package.json"),
+    JSON.stringify({
+      name: "test-bin-imports-src",
+      version: "0.0.1",
+      type: "module",
+      bin: {
+        "mycli": "./bin/cli.js"
+      }
+    })
+  );
+
+  // Create bin and src directories
+  await FS.mkdir(Path.join(testDir, "bin"), {recursive: true});
+  await FS.mkdir(Path.join(testDir, "src", "utils"), {recursive: true});
+
+  // CLI that imports from src
+  await FS.writeFile(
+    Path.join(testDir, "bin", "cli.ts"),
+    `#!/usr/bin/env node
+import { helper } from "../src/utils/helper.js";
+console.log(helper());
+`
+  );
+
+  // Src utility file
+  await FS.writeFile(
+    Path.join(testDir, "src", "utils", "helper.ts"),
+    `export function helper() { return "helper"; }`
+  );
+
+  await build(testDir, false);
+
+  // .d.ts should NOT be emitted to src directory
+  const srcDtsExists = await FS.stat(
+    Path.join(testDir, "src", "utils", "helper.d.ts")
+  ).then(() => true, () => false);
+  expect(srcDtsExists).toBe(false);
+
+  // bin .d.ts should exist in dist
+  const binDtsExists = await FS.stat(
+    Path.join(testDir, "dist", "bin", "cli.d.ts")
+  ).then(() => true, () => false);
+  expect(binDtsExists).toBe(true);
+});

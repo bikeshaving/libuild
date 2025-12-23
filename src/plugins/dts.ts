@@ -39,13 +39,6 @@ export function dtsPlugin(options: TypeScriptPluginOptions): ESBuild.Plugin {
           return;
         }
 
-        // Collect all TypeScript files for declaration generation
-        // This includes internal modules so their .d.ts files are generated
-        const tsFiles = entryFiles.filter(file => file.endsWith('.ts') && !file.endsWith('.d.ts'));
-        if (tsFiles.length === 0) {
-          return;
-        }
-
         // Ensure output directory exists
         await FS.mkdir(options.outDir, { recursive: true });
 
@@ -54,8 +47,20 @@ export function dtsPlugin(options: TypeScriptPluginOptions): ESBuild.Plugin {
         const fs = await import("fs");
         const resolvedRootDir = fs.realpathSync(options.rootDir);
         const resolvedOutDir = fs.realpathSync(options.outDir);
-        // Also resolve tsFiles paths to match rootDir/outDir
-        const resolvedTsFiles = tsFiles.map(f => fs.realpathSync(f));
+
+        // Collect all TypeScript files for declaration generation
+        // This includes internal modules so their .d.ts files are generated
+        // Filter to only files within rootDir to prevent emitting .d.ts to wrong locations
+        const tsFiles = entryFiles
+          .filter(file => file.endsWith('.ts') && !file.endsWith('.d.ts'))
+          .map(f => fs.realpathSync(f))
+          .filter(f => f.startsWith(resolvedRootDir + Path.sep));
+
+        if (tsFiles.length === 0) {
+          return;
+        }
+
+        const resolvedTsFiles = tsFiles;
 
         try {
           const compilerOptions: TS.CompilerOptions = {
@@ -72,7 +77,18 @@ export function dtsPlugin(options: TypeScriptPluginOptions): ESBuild.Plugin {
 
           // Create program with explicit config to avoid tsconfig.json interference
           const program = TS.createProgram(resolvedTsFiles, compilerOptions);
-          const emitResult = program.emit();
+
+          // Custom writeFile to prevent emitting .d.ts files outside outDir
+          // This can happen when files import from outside rootDir (e.g., bin importing from src)
+          const writeFile: TS.WriteFileCallback = (fileName, data, writeByteOrderMark, onError, sourceFiles) => {
+            // Only write files that would go into the outDir
+            if (!fileName.startsWith(resolvedOutDir + Path.sep)) {
+              return; // Skip files outside outDir
+            }
+            TS.sys.writeFile(fileName, data, writeByteOrderMark);
+          };
+
+          const emitResult = program.emit(undefined, writeFile);
 
           if (emitResult.diagnostics.length > 0) {
             const diagnostics = TS.formatDiagnosticsWithColorAndContext(emitResult.diagnostics, {
