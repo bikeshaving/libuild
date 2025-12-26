@@ -14,14 +14,20 @@
     "test": "bun test"
   },
   "dependencies": {
+    "commander": "^14.0.2",
     "esbuild": "^0.19.0",
-    "expect": "^30.2.0"
+    "expect": "^30.2.0",
+    "glob": "^13.0.0"
   },
   "peerDependencies": {
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "playwright": "^1.40.0"
   },
   "peerDependenciesMeta": {
     "typescript": {
+      "optional": true
+    },
+    "playwright": {
       "optional": true
     }
   },
@@ -96,6 +102,14 @@
     "./test-node.js": {
       "types": "./dist/src/test-node.d.ts",
       "import": "./dist/src/test-node.js"
+    },
+    "./test-browser": {
+      "types": "./dist/src/test-browser.d.ts",
+      "import": "./dist/src/test-browser.js"
+    },
+    "./test-browser.js": {
+      "types": "./dist/src/test-browser.d.ts",
+      "import": "./dist/src/test-browser.js"
     }
   },
   "files": [
