@@ -14,13 +14,20 @@
     "test": "bun test"
   },
   "dependencies": {
-    "esbuild": "^0.19.0"
+    "commander": "^14.0.2",
+    "esbuild": "^0.19.0",
+    "expect": "^30.2.0",
+    "glob": "^13.0.0"
   },
   "peerDependencies": {
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "playwright": "^1.40.0"
   },
   "peerDependenciesMeta": {
     "typescript": {
+      "optional": true
+    },
+    "playwright": {
       "optional": true
     }
   },
@@ -53,30 +60,57 @@
   "exports": {
     ".": {
       "types": "./dist/src/libuild.d.ts",
-      "import": "./dist/src/libuild.js",
-      "require": "./dist/src/libuild.cjs"
+      "import": "./dist/src/libuild.js"
     },
     "./cli": {
       "types": "./dist/src/cli.d.ts",
-      "import": "./dist/src/cli.js",
-      "require": "./dist/src/cli.cjs"
+      "import": "./dist/src/cli.js"
     },
     "./cli.js": {
       "types": "./dist/src/cli.d.ts",
-      "import": "./dist/src/cli.js",
-      "require": "./dist/src/cli.cjs"
+      "import": "./dist/src/cli.js"
     },
     "./libuild": {
       "types": "./dist/src/libuild.d.ts",
-      "import": "./dist/src/libuild.js",
-      "require": "./dist/src/libuild.cjs"
+      "import": "./dist/src/libuild.js"
     },
     "./libuild.js": {
       "types": "./dist/src/libuild.d.ts",
-      "import": "./dist/src/libuild.js",
-      "require": "./dist/src/libuild.cjs"
+      "import": "./dist/src/libuild.js"
     },
-    "./package.json": "./dist/package.json"
+    "./package.json": "./dist/package.json",
+    "./test": {
+      "types": "./dist/src/test.d.ts",
+      "import": "./dist/src/test.js"
+    },
+    "./test.js": {
+      "types": "./dist/src/test.d.ts",
+      "import": "./dist/src/test.js"
+    },
+    "./test-bun": {
+      "types": "./dist/src/test-bun.d.ts",
+      "import": "./dist/src/test-bun.js"
+    },
+    "./test-bun.js": {
+      "types": "./dist/src/test-bun.d.ts",
+      "import": "./dist/src/test-bun.js"
+    },
+    "./test-node": {
+      "types": "./dist/src/test-node.d.ts",
+      "import": "./dist/src/test-node.js"
+    },
+    "./test-node.js": {
+      "types": "./dist/src/test-node.d.ts",
+      "import": "./dist/src/test-node.js"
+    },
+    "./test-browser": {
+      "types": "./dist/src/test-browser.d.ts",
+      "import": "./dist/src/test-browser.js"
+    },
+    "./test-browser.js": {
+      "types": "./dist/src/test-browser.d.ts",
+      "import": "./dist/src/test-browser.js"
+    }
   },
   "files": [
     "dist/",
