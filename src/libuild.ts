@@ -652,6 +652,10 @@ function fixExportsForDist(obj: any): any {
     if (obj.startsWith("./dist/src/")) {
       return obj.replace("./dist/src/", "./src/");
     }
+    // Fix paths that incorrectly start with ./dist/bin/ -> ./bin/
+    if (obj.startsWith("./dist/bin/")) {
+      return obj.replace("./dist/bin/", "./bin/");
+    }
     // Fix package.json path
     if (obj.includes("/dist/") && obj.endsWith("/package.json")) {
       return "./package.json";

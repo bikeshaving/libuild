@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.24] - 2026-02-21
+
+### Fixed
+- **Bin exports not rewritten for dist** - `fixExportsForDist` now handles `./dist/bin/` → `./bin/` paths, matching the existing `./dist/src/` → `./src/` behavior. Previously, packages with bin exports would publish with broken import paths in the exports map.
+
 ## [0.1.22] - 2025-12-22
 
 ### Fixed
