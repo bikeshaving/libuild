@@ -7,6 +7,11 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Bin exports not rewritten for dist** - `fixExportsForDist` now handles `./dist/bin/` → `./bin/` paths, matching the existing `./dist/src/` → `./src/` behavior. Previously, packages with bin exports would publish with broken import paths in the exports map.
 
+## [0.1.23] - 2026-02-20
+
+### Added
+- **Cross-platform test runner** - Test runner with Bun, Node, and browser support (#3)
+
 ## [0.1.22] - 2025-12-22
 
 ### Fixed
