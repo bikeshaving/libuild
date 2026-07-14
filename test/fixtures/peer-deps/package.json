@@ -1,0 +1,10 @@
+{
+  "name": "peer-deps",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/src/index.cjs",
+  "module": "./dist/src/index.js",
+  "peerDependencies": {
+    "@fictional-scope/peer-lib": "^1.0.0"
+  }
+}

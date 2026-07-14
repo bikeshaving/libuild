@@ -568,3 +568,28 @@ test("shared modules work with both ESM and CJS builds", async () => {
   // Cleanup
   await removeTempDir(testDir);
 });
+test("peer dependencies are externalized in both ESM and CJS", async () => {
+  const testDir = await createTempDir("peer-deps");
+
+  // Fixture imports "@fictional-scope/peer-lib", which is NOT installed.
+  // packages: "external" means esbuild must externalize bare specifiers
+  // without resolving them, so the build should succeed anyway.
+  await copyFixture("peer-deps", testDir);
+
+  await build(testDir);
+
+  const distSrcDir = Path.join(testDir, "dist", "src");
+  expect(await fileExists(Path.join(distSrcDir, "index.js"))).toBe(true);
+  expect(await fileExists(Path.join(distSrcDir, "index.cjs"))).toBe(true);
+
+  const esm = await FS.readFile(Path.join(distSrcDir, "index.js"), "utf-8");
+  const cjs = await FS.readFile(Path.join(distSrcDir, "index.cjs"), "utf-8");
+
+  // ESM keeps the bare import
+  expect(esm).toContain('from "@fictional-scope/peer-lib"');
+
+  // CJS must require it, not inline a second copy of the peer package
+  expect(cjs).toContain('require("@fictional-scope/peer-lib")');
+
+  await removeTempDir(testDir);
+});

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.25] - 2026-07-14
+
+### Fixed
+- **CJS build bundled npm dependencies inline** - The CJS build was missing `packages: "external"`, so it bundled every bare-specifier import — including `peerDependencies` — into the `.cjs` output, while the ESM build correctly externalized them. Consumers of the CJS entry got a second copy of each peer package, and builds failed with `Could not resolve` in CI when a peer's `dist/` wasn't present. Fixes [#8](https://github.com/bikeshaving/libuild/issues/8).
+
 ## [0.1.24] - 2026-02-21
 
 ### Fixed

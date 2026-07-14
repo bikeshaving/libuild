@@ -1263,6 +1263,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
             external: externalDeps,
             platform: "node",
             target: "node18",
+            packages: "external",
             supported: { "import-attributes": true },
             plugins: [
               externalEntrypointsPlugin({
