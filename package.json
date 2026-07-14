@@ -110,6 +110,14 @@
     "./test-browser.js": {
       "types": "./dist/src/test-browser.d.ts",
       "import": "./dist/src/test-browser.js"
+    },
+    "./test-runner": {
+      "types": "./dist/src/test-runner.d.ts",
+      "import": "./dist/src/test-runner.js"
+    },
+    "./test-runner.js": {
+      "types": "./dist/src/test-runner.d.ts",
+      "import": "./dist/src/test-runner.js"
     }
   },
   "files": [
