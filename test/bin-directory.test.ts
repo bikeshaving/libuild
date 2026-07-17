@@ -342,8 +342,7 @@ test("src file referenced in package.json bin gets dual runtime shebang", async 
 
   await build(testDir, false);
 
-  // Flat layout: the real (shebang'd) CLI output lives at dist/cli.js;
-  // dist/src/cli.js is only a re-export compatibility stub.
+  // Flat layout: the (shebang'd) CLI output lives at dist/cli.js
   const cliContent = await FS.readFile(
     Path.join(testDir, "dist/cli.js"),
     "utf-8"
