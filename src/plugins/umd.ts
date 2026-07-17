@@ -1,5 +1,4 @@
 import * as FS from "fs/promises";
-import * as Path from "path";
 
 interface UMDPluginOptions {
   globalName: string;
@@ -12,16 +11,11 @@ export function umdPlugin(options: UMDPluginOptions) {
       build.onEnd(async (result: any) => {
         if (result.errors.length > 0) return;
 
-        // ESBuild doesn't provide outputFiles by default unless write: false
-        // We need to find the generated files in the output directory
-        const outputDir = build.initialOptions.outdir;
-        if (outputDir) {
-          const files = await FS.readdir(outputDir);
-          for (const file of files) {
-            if (file.endsWith(".js") && !file.endsWith(".js.map")) {
-              await wrapWithUMD(Path.join(outputDir, file), options.globalName);
-            }
-          }
+        // Wrap ONLY the UMD output file. Scanning the whole outdir would wrap
+        // (and corrupt) sibling ESM entry files that share the directory.
+        const outfile = build.initialOptions.outfile;
+        if (outfile) {
+          await wrapWithUMD(outfile, options.globalName);
         }
       });
     },

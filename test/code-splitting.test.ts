@@ -51,13 +51,12 @@ export const version = "1.0.0";
   await build(testDir, false);
 
   const distDir = Path.join(testDir, "dist");
-  const distSrcDir = Path.join(distDir, "src");
 
-  // Main entry should exist
-  expect(await fileExists(Path.join(distSrcDir, "index.js"))).toBe(true);
+  // Main entry should exist at dist root
+  expect(await fileExists(Path.join(distDir, "index.js"))).toBe(true);
 
-  // Check for chunk files in dist/src/_chunks/
-  const chunksDir = Path.join(distSrcDir, "_chunks");
+  // Check for chunk files in dist/_chunks/
+  const chunksDir = Path.join(distDir, "_chunks");
   const chunksExist = await FS.stat(chunksDir).then(() => true, () => false);
   expect(chunksExist).toBe(true);
 
@@ -67,7 +66,7 @@ export const version = "1.0.0";
   expect(chunkFiles.length).toBeGreaterThan(0);
 
   // Verify the main file contains import() for the chunk
-  const mainContent = await FS.readFile(Path.join(distSrcDir, "index.js"), "utf-8");
+  const mainContent = await FS.readFile(Path.join(distDir, "index.js"), "utf-8");
   expect(mainContent).toContain("import(");
 
   await removeTempDir(testDir);
@@ -137,9 +136,8 @@ main();
   // CLI should exist
   expect(await fileExists(Path.join(distBinDir, "cli.js"))).toBe(true);
 
-  // Check for chunk files in dist/src/_chunks/
-  const distSrcDir = Path.join(distDir, "src");
-  const chunksDir = Path.join(distSrcDir, "_chunks");
+  // Check for chunk files in dist/_chunks/
+  const chunksDir = Path.join(distDir, "_chunks");
   const chunksExist = await FS.stat(chunksDir).then(() => true, () => false);
   expect(chunksExist).toBe(true);
 
@@ -196,10 +194,9 @@ test("runtime execution with code splitting works", async () => {
   await build(testDir, false);
 
   const distDir = Path.join(testDir, "dist");
-  const distSrcDir = Path.join(distDir, "src");
 
-  // Verify chunk files were created in dist/src/_chunks/
-  const chunksDir = Path.join(distSrcDir, "_chunks");
+  // Verify chunk files were created in dist/_chunks/
+  const chunksDir = Path.join(distDir, "_chunks");
   const chunksExist = await FS.stat(chunksDir).then(() => true, () => false);
   expect(chunksExist).toBe(true);
 
@@ -207,7 +204,7 @@ test("runtime execution with code splitting works", async () => {
   expect(chunkFiles.length).toBeGreaterThan(0);
 
   // Test runtime execution
-  const indexPath = Path.join(distSrcDir, "index.js");
+  const indexPath = Path.join(distDir, "index.js");
   const mod = await import(indexPath);
   const result = await mod.add(2, 3);
   expect(result).toBe(5);
@@ -272,10 +269,9 @@ export async function loadFeatureC() {
   await build(testDir, false);
 
   const distDir = Path.join(testDir, "dist");
-  const distSrcDir = Path.join(distDir, "src");
 
-  // Check for multiple chunk files in dist/src/_chunks/
-  const chunksDir = Path.join(distSrcDir, "_chunks");
+  // Check for multiple chunk files in dist/_chunks/
+  const chunksDir = Path.join(distDir, "_chunks");
   const chunksExist = await FS.stat(chunksDir).then(() => true, () => false);
   expect(chunksExist).toBe(true);
 

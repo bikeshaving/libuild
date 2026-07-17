@@ -17,34 +17,33 @@ test("simple library build", async () => {
   // Build
   await build(testDir);
 
-  // Check outputs exist (structure-preserving: dist/src/)
+  // Check outputs exist (flat: dist/)
   const distDir = Path.join(testDir, "dist");
-  const distSrcDir = Path.join(distDir, "src");
-  expect(await fileExists(Path.join(distSrcDir, "index.js"))).toBe(true);
-  expect(await fileExists(Path.join(distSrcDir, "index.cjs"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "index.js"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "index.cjs"))).toBe(true);
   expect(await fileExists(Path.join(distDir, "package.json"))).toBe(true);
 
   // TypeScript declarations might not be available in test environment
-  const hasDts = await fileExists(Path.join(distSrcDir, "index.d.ts"));
+  const hasDts = await fileExists(Path.join(distDir, "index.d.ts"));
   if (hasDts) {
     console.log("✓ TypeScript declarations generated");
   } else {
     console.log("⚠ TypeScript declarations not available (tsc not found)");
   }
 
-  // Check package.json structure (structure-preserving)
+  // Check package.json structure (flat output)
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
   expect(distPkg.name).toBe("simple-lib");
-  expect(distPkg.main).toBe("src/index.cjs");
-  expect(distPkg.module).toBe("src/index.js");
-  expect(distPkg.types).toBe("src/index.d.ts");
+  expect(distPkg.main).toBe("index.cjs");
+  expect(distPkg.module).toBe("index.js");
+  expect(distPkg.types).toBe("index.d.ts");
   expect(distPkg.scripts).toBeUndefined(); // Scripts should be excluded
 
-  // Check exports (structure-preserving)
+  // Check exports (flat output)
   expect(distPkg.exports["."]).toEqual({
-    types: "./src/index.d.ts",
-    import: "./src/index.js",
-    require: "./src/index.cjs"
+    types: "./index.d.ts",
+    import: "./index.js",
+    require: "./index.cjs"
   });
 
   // Cleanup
@@ -61,26 +60,25 @@ test("multi-entry library build", async () => {
   await build(testDir);
 
   const distDir = Path.join(testDir, "dist");
-  const distSrcDir = Path.join(distDir, "src");
 
-  // Check all entry files exist (structure-preserving)
+  // Check all entry files exist (flat output)
   const entries = ["index", "utils", "api", "cli"];
   for (const entry of entries) {
-    expect(await fileExists(Path.join(distSrcDir, `${entry}.js`))).toBe(true);
-    expect(await fileExists(Path.join(distSrcDir, `${entry}.cjs`))).toBe(true);
+    expect(await fileExists(Path.join(distDir, `${entry}.js`))).toBe(true);
+    expect(await fileExists(Path.join(distDir, `${entry}.cjs`))).toBe(true);
     // Don't require .d.ts files as tsc might not be available
   }
 
-  // Check exports for all entries (structure-preserving)
+  // Check exports for all entries (flat output)
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
   expect(distPkg.exports["./utils"]).toEqual({
-    types: "./src/utils.d.ts",
-    import: "./src/utils.js",
-    require: "./src/utils.cjs"
+    types: "./utils.d.ts",
+    import: "./utils.js",
+    require: "./utils.cjs"
   });
 
-  // Check bin transformation (structure-preserving, npm convention)
-  expect(distPkg.bin.mytool).toBe("src/cli.js"); // src/cli.js → src/cli.js (no ./ prefix)
+  // Check bin transformation (flat output, npm convention)
+  expect(distPkg.bin.mytool).toBe("cli.js"); // src/cli.js → cli.js (no ./ prefix)
 
   // Verify scripts are not copied to dist (they won't work anyway)
   expect(distPkg.scripts).toBeUndefined();
@@ -102,16 +100,16 @@ test("root package.json is updated correctly", async () => {
 
   // Check root package.json was updated (structure-preserving with --save)
   const rootPkg = await readJSON(Path.join(testDir, "package.json"));
-  expect(rootPkg.main).toBe("./dist/src/index.cjs");
-  expect(rootPkg.module).toBe("./dist/src/index.js");
-  expect(rootPkg.types).toBe("./dist/src/index.d.ts");
-  expect(rootPkg.bin.mytool).toBe("./dist/src/cli.js");
+  expect(rootPkg.main).toBe("./dist/index.cjs");
+  expect(rootPkg.module).toBe("./dist/index.js");
+  expect(rootPkg.types).toBe("./dist/index.d.ts");
+  expect(rootPkg.bin.mytool).toBe("./dist/cli.js");
 
-  // Check dist-prefixed exports (structure-preserving)
+  // Check dist-prefixed exports (flat output)
   expect(rootPkg.exports["./utils"]).toEqual({
-    types: "./dist/src/utils.d.ts",
-    import: "./dist/src/utils.js",
-    require: "./dist/src/utils.cjs"
+    types: "./dist/utils.d.ts",
+    import: "./dist/utils.js",
+    require: "./dist/utils.cjs"
   });
 
   // Cleanup
@@ -132,20 +130,19 @@ test("UMD build", async () => {
   await build(testDir);
 
   const distDir = Path.join(testDir, "dist");
-  const distSrcDir = Path.join(distDir, "src");
 
-  // Check UMD file exists (structure-preserving)
-  expect(await fileExists(Path.join(distSrcDir, "umd.js"))).toBe(true);
+  // Check UMD file exists (flat output)
+  expect(await fileExists(Path.join(distDir, "umd.js"))).toBe(true);
 
   // Check UMD content contains wrapper
-  const umdContent = await FS.readFile(Path.join(distSrcDir, "umd.js"), "utf-8");
+  const umdContent = await FS.readFile(Path.join(distDir, "umd.js"), "utf-8");
   expect(umdContent).toContain("typeof define === 'function' && define.amd");
   expect(umdContent).toContain("root.Umdlib = factory()"); // Should use capitalized package name without hyphens
 
-  // Check package.json has UMD export (structure-preserving)
+  // Check package.json has UMD export (flat output)
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
   expect(distPkg.exports["./umd"]).toEqual({
-    require: "./src/umd.js"
+    require: "./umd.js"
   });
 
   // Cleanup
@@ -169,22 +166,21 @@ test("UMD build works with ESM-only mode", async () => {
   await build(testDir);
 
   const distDir = Path.join(testDir, "dist");
-  const distSrcDir = Path.join(distDir, "src");
 
   // Check UMD file exists
-  expect(await fileExists(Path.join(distSrcDir, "umd.js"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "umd.js"))).toBe(true);
 
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
 
   // UMD export should exist
   expect(distPkg.exports["./umd"]).toEqual({
-    require: "./src/umd.js"
+    require: "./umd.js"
   });
 
   // Regular entries should be ESM-only
   expect(distPkg.exports["."]).toEqual({
-    types: "./src/index.d.ts",
-    import: "./src/index.js"
+    types: "./index.d.ts",
+    import: "./index.js"
     // No require condition
   });
 
@@ -213,14 +209,14 @@ test("UMD build works with dual mode", async () => {
 
   // UMD export should exist
   expect(distPkg.exports["./umd"]).toEqual({
-    require: "./src/umd.js"
+    require: "./umd.js"
   });
 
   // Regular entries should be dual format
   expect(distPkg.exports["."]).toEqual({
-    types: "./src/index.d.ts",
-    import: "./src/index.js",
-    require: "./src/index.cjs"
+    types: "./index.d.ts",
+    import: "./index.js",
+    require: "./index.cjs"
   });
 
   // Cleanup
@@ -248,22 +244,21 @@ test("ESM-only build when no main field", async () => {
   await build(testDir);
 
   const distDir = Path.join(testDir, "dist");
-  const distSrcDir = Path.join(distDir, "src");
 
   // Check that only ESM file exists
-  expect(await fileExists(Path.join(distSrcDir, "index.js"))).toBe(true);
-  expect(await fileExists(Path.join(distSrcDir, "index.cjs"))).toBe(false);
+  expect(await fileExists(Path.join(distDir, "index.js"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "index.cjs"))).toBe(false);
 
   // Check package.json structure
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
   expect(distPkg.main).toBeUndefined(); // No main field
-  expect(distPkg.module).toBe("src/index.js");
-  expect(distPkg.types).toBe("src/index.d.ts");
+  expect(distPkg.module).toBe("index.js");
+  expect(distPkg.types).toBe("index.d.ts");
 
   // Check exports structure (ESM-only)
   expect(distPkg.exports["."]).toEqual({
-    types: "./src/index.d.ts",
-    import: "./src/index.js"
+    types: "./index.d.ts",
+    import: "./index.js"
     // No require condition
   });
 
@@ -288,23 +283,22 @@ test("Dual build when main field exists", async () => {
   await build(testDir);
 
   const distDir = Path.join(testDir, "dist");
-  const distSrcDir = Path.join(distDir, "src");
 
   // Check that both ESM and CJS files exist
-  expect(await fileExists(Path.join(distSrcDir, "index.js"))).toBe(true);
-  expect(await fileExists(Path.join(distSrcDir, "index.cjs"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "index.js"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "index.cjs"))).toBe(true);
 
   // Check package.json structure
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
-  expect(distPkg.main).toBe("src/index.cjs");
-  expect(distPkg.module).toBe("src/index.js");
-  expect(distPkg.types).toBe("src/index.d.ts");
+  expect(distPkg.main).toBe("index.cjs");
+  expect(distPkg.module).toBe("index.js");
+  expect(distPkg.types).toBe("index.d.ts");
 
   // Check exports structure (dual format)
   expect(distPkg.exports["."]).toEqual({
-    types: "./src/index.d.ts",
-    import: "./src/index.js",
-    require: "./src/index.cjs"
+    types: "./index.d.ts",
+    import: "./index.js",
+    require: "./index.cjs"
   });
 
   // Cleanup
@@ -342,28 +336,28 @@ test("Export merging preserves user-defined exports", async () => {
 
   // Check that user exports are preserved and expanded
   expect(distPkg.exports["./jsx-runtime"]).toEqual({
-    types: "./src/jsx-runtime.d.ts",
-    import: "./src/jsx-runtime.js",
-    require: "./src/jsx-runtime.cjs"
+    types: "./jsx-runtime.d.ts",
+    import: "./jsx-runtime.js",
+    require: "./jsx-runtime.cjs"
   });
 
   expect(distPkg.exports["./special-alias"]).toEqual({
-    types: "./src/utils.d.ts", // Note: inferred from string path
-    import: "./src/utils.js",
-    require: "./src/utils.cjs"
+    types: "./utils.d.ts", // Note: inferred from string path
+    import: "./utils.js",
+    require: "./utils.cjs"
   });
 
   // Auto-discovered entries should be added
   expect(distPkg.exports["."]).toEqual({
-    types: "./src/index.d.ts",
-    import: "./src/index.js",
-    require: "./src/index.cjs"
+    types: "./index.d.ts",
+    import: "./index.js",
+    require: "./index.cjs"
   });
 
   expect(distPkg.exports["./utils"]).toEqual({
-    types: "./src/utils.d.ts",
-    import: "./src/utils.js",
-    require: "./src/utils.cjs"
+    types: "./utils.d.ts",
+    import: "./utils.js",
+    require: "./utils.cjs"
   });
 
   // Cleanup
@@ -393,38 +387,37 @@ test("ESM-only export merging (no main field)", async () => {
   await build(testDir);
 
   const distDir = Path.join(testDir, "dist");
-  const distSrcDir = Path.join(distDir, "src");
 
   // Check that only ESM files exist
-  expect(await fileExists(Path.join(distSrcDir, "index.js"))).toBe(true);
-  expect(await fileExists(Path.join(distSrcDir, "index.cjs"))).toBe(false);
-  expect(await fileExists(Path.join(distSrcDir, "utils.js"))).toBe(true);
-  expect(await fileExists(Path.join(distSrcDir, "utils.cjs"))).toBe(false);
+  expect(await fileExists(Path.join(distDir, "index.js"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "index.cjs"))).toBe(false);
+  expect(await fileExists(Path.join(distDir, "utils.js"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "utils.cjs"))).toBe(false);
 
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
 
   // Check that user exports are preserved but NOT expanded to dual format
   expect(distPkg.exports["./jsx-runtime"]).toEqual({
-    types: "./src/jsx-runtime.d.ts",
-    import: "./src/jsx-runtime.js"
+    types: "./jsx-runtime.d.ts",
+    import: "./jsx-runtime.js"
     // No require condition
   });
 
   expect(distPkg.exports["./special"]).toEqual({
-    types: "./src/utils.d.ts",
-    import: "./src/utils.js"
+    types: "./utils.d.ts",
+    import: "./utils.js"
     // No require condition
   });
 
   // Auto-discovered entries should be ESM-only
   expect(distPkg.exports["."]).toEqual({
-    types: "./src/index.d.ts",
-    import: "./src/index.js"
+    types: "./index.d.ts",
+    import: "./index.js"
   });
 
   expect(distPkg.exports["./utils"]).toEqual({
-    types: "./src/utils.d.ts",
-    import: "./src/utils.js"
+    types: "./utils.d.ts",
+    import: "./utils.js"
   });
 
   // Cleanup
@@ -452,33 +445,32 @@ test("Custom main entry via exports field", async () => {
   await build(testDir);
 
   const distDir = Path.join(testDir, "dist");
-  const distSrcDir = Path.join(distDir, "src");
 
   // Check that both entries were built
-  expect(await fileExists(Path.join(distSrcDir, "index.js"))).toBe(true);
-  expect(await fileExists(Path.join(distSrcDir, "index.cjs"))).toBe(true);
-  expect(await fileExists(Path.join(distSrcDir, "custom.js"))).toBe(true);
-  expect(await fileExists(Path.join(distSrcDir, "custom.cjs"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "index.js"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "index.cjs"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "custom.js"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "custom.cjs"))).toBe(true);
 
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
 
   // Main should point to custom entry, not index
-  expect(distPkg.main).toBe("src/custom.cjs");
-  expect(distPkg.module).toBe("src/custom.js");
-  expect(distPkg.types).toBe("src/custom.d.ts");
+  expect(distPkg.main).toBe("custom.cjs");
+  expect(distPkg.module).toBe("custom.js");
+  expect(distPkg.types).toBe("custom.d.ts");
 
   // Exports should respect the custom main
   expect(distPkg.exports["."]).toEqual({
-    types: "./src/custom.d.ts",
-    import: "./src/custom.js",
-    require: "./src/custom.cjs"
+    types: "./custom.d.ts",
+    import: "./custom.js",
+    require: "./custom.cjs"
   });
 
   // Index should still be available as separate export
   expect(distPkg.exports["./index"]).toEqual({
-    types: "./src/index.d.ts",
-    import: "./src/index.js",
-    require: "./src/index.cjs"
+    types: "./index.d.ts",
+    import: "./index.js",
+    require: "./index.cjs"
   });
 
   // Cleanup
@@ -500,15 +492,15 @@ test("custom main entry detection", async () => {
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
 
   // Should detect api as main entry (not index)
-  expect(distPkg.main).toBe("src/api.cjs");
-  expect(distPkg.module).toBe("src/api.js");
-  expect(distPkg.types).toBe("src/api.d.ts");
+  expect(distPkg.main).toBe("api.cjs");
+  expect(distPkg.module).toBe("api.js");
+  expect(distPkg.types).toBe("api.d.ts");
 
   // Main export should point to api
   expect(distPkg.exports["."]).toEqual({
-    types: "./src/api.d.ts",
-    import: "./src/api.js",
-    require: "./src/api.cjs"
+    types: "./api.d.ts",
+    import: "./api.js",
+    require: "./api.cjs"
   });
 
   // Should still have all entry exports
@@ -594,9 +586,9 @@ test("validates that exports only reference valid entrypoints", async () => {
 
   // Should expand properly
   expect(distPkg.exports["./helper"]).toEqual({
-    types: "./src/utils.d.ts",
-    import: "./src/utils.js",
-    require: "./src/utils.cjs"
+    types: "./utils.d.ts",
+    import: "./utils.js",
+    require: "./utils.cjs"
   });
 
   // Cleanup
@@ -628,9 +620,9 @@ test("main entry detection: package.json main field", async () => {
   await build(testDir, false);
 
   const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
-  expect(distPkg.main).toBe("src/api.cjs");
-  expect(distPkg.module).toBe("src/api.js");
-  expect(distPkg.types).toBe("src/api.d.ts");
+  expect(distPkg.main).toBe("api.cjs");
+  expect(distPkg.module).toBe("api.js");
+  expect(distPkg.types).toBe("api.d.ts");
 
   // Cleanup
   await removeTempDir(testDir);
@@ -655,8 +647,8 @@ test("main entry detection: single entry becomes main", async () => {
   await build(testDir, false);
 
   const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
-  expect(distPkg.main).toBe("src/single.cjs");
-  expect(distPkg.module).toBe("src/single.js");
+  expect(distPkg.main).toBe("single.cjs");
+  expect(distPkg.module).toBe("single.js");
 
   // Cleanup
   await removeTempDir(testDir);
@@ -682,8 +674,8 @@ test("main entry detection: use package name as entry", async () => {
   await build(testDir, false);
 
   const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
-  expect(distPkg.main).toBe("src/mylib.cjs");
-  expect(distPkg.module).toBe("src/mylib.js");
+  expect(distPkg.main).toBe("mylib.cjs");
+  expect(distPkg.module).toBe("mylib.js");
 
   // Cleanup
   await removeTempDir(testDir);
@@ -709,7 +701,7 @@ test("main entry detection: scoped package name", async () => {
   await build(testDir, false);
 
   const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
-  expect(distPkg.main).toBe("src/mylib.cjs");
+  expect(distPkg.main).toBe("mylib.cjs");
 
   // Cleanup
   await removeTempDir(testDir);
@@ -760,8 +752,8 @@ test("main entry detection: default to first entry alphabetically", async () => 
 
   // Should use "api" as main (first alphabetically)
   const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
-  expect(distPkg.main).toBe("src/api.cjs");
-  expect(distPkg.module).toBe("src/api.js");
+  expect(distPkg.main).toBe("api.cjs");
+  expect(distPkg.module).toBe("api.js");
 
   // Cleanup
   await removeTempDir(testDir);
@@ -788,8 +780,8 @@ test("main entry detection: module field", async () => {
 
   // Should detect custom as main entry (from module field)
   const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
-  expect(distPkg.module).toBe("src/custom.js");
-  expect(distPkg.types).toBe("src/custom.d.ts");
+  expect(distPkg.module).toBe("custom.js");
+  expect(distPkg.types).toBe("custom.d.ts");
 
   // Cleanup
   await removeTempDir(testDir);
@@ -865,8 +857,8 @@ export function add(a: number, b: number): number {
 
   await build(testDir);
 
-  const distSrcDir = Path.join(testDir, "dist", "src");
-  const cliContent = await FS.readFile(Path.join(distSrcDir, "cli.js"), "utf-8");
+  const distDir = Path.join(testDir, "dist");
+  const cliContent = await FS.readFile(Path.join(distDir, "cli.js"), "utf-8");
 
   // Should have dual runtime shebang at the very beginning
   expect(cliContent.startsWith("#\!/usr/bin/env sh")).toBe(true);
@@ -924,8 +916,8 @@ export function process() {
 
   await build(testDir);
 
-  const distSrcDir = Path.join(testDir, "dist", "src");
-  const cliContent = await FS.readFile(Path.join(distSrcDir, "cli.js"), "utf-8");
+  const distDir = Path.join(testDir, "dist");
+  const cliContent = await FS.readFile(Path.join(distDir, "cli.js"), "utf-8");
 
   // Should have dual runtime shebang
   expect(cliContent.startsWith("#\!/usr/bin/env sh")).toBe(true);
@@ -939,8 +931,8 @@ export function process() {
   expect(cliContent).not.toContain('export function process');
 
   // Verify the imported files exist and contain their implementations
-  const versionContent = await FS.readFile(Path.join(distSrcDir, "version.js"), "utf-8");
-  const processContent = await FS.readFile(Path.join(distSrcDir, "process.js"), "utf-8");
+  const versionContent = await FS.readFile(Path.join(distDir, "version.js"), "utf-8");
+  const processContent = await FS.readFile(Path.join(distDir, "process.js"), "utf-8");
 
   expect(versionContent).toContain('export');
   expect(versionContent).toContain('"1.0.0"');
@@ -980,17 +972,16 @@ test("ignores common test file patterns", async () => {
   await build(testDir);
 
   const distDir = Path.join(testDir, "dist");
-  const distSrcDir = Path.join(distDir, "src");
 
   // Check that valid entries were built
-  expect(await fileExists(Path.join(distSrcDir, "index.js"))).toBe(true);
-  expect(await fileExists(Path.join(distSrcDir, "utils.js"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "index.js"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "utils.js"))).toBe(true);
 
   // Check that test files were NOT built
-  expect(await fileExists(Path.join(distSrcDir, "index.test.js"))).toBe(false);
-  expect(await fileExists(Path.join(distSrcDir, "utils.test.js"))).toBe(false);
-  expect(await fileExists(Path.join(distSrcDir, "component.spec.js"))).toBe(false);
-  expect(await fileExists(Path.join(distSrcDir, "api.spec.js"))).toBe(false);
+  expect(await fileExists(Path.join(distDir, "index.test.js"))).toBe(false);
+  expect(await fileExists(Path.join(distDir, "utils.test.js"))).toBe(false);
+  expect(await fileExists(Path.join(distDir, "component.spec.js"))).toBe(false);
+  expect(await fileExists(Path.join(distDir, "api.spec.js"))).toBe(false);
 
   // Check exports - should only include valid entries
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
@@ -1033,15 +1024,14 @@ test("ignores test directories", async () => {
   await build(testDir);
 
   const distDir = Path.join(testDir, "dist");
-  const distSrcDir = Path.join(distDir, "src");
 
   // Check that valid entries were built
-  expect(await fileExists(Path.join(distSrcDir, "index.js"))).toBe(true);
-  expect(await fileExists(Path.join(distSrcDir, "api.js"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "index.js"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "api.js"))).toBe(true);
 
   // Check that test directories were NOT copied/processed
-  expect(await fileExists(Path.join(distSrcDir, "__tests__"))).toBe(false);
-  expect(await fileExists(Path.join(distSrcDir, "test"))).toBe(false);
+  expect(await fileExists(Path.join(distDir, "__tests__"))).toBe(false);
+  expect(await fileExists(Path.join(distDir, "test"))).toBe(false);
 
   // Check exports - should only include valid entries
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
@@ -1081,10 +1071,9 @@ test("test ignoring works with mixed valid and test files", async () => {
   await build(testDir);
 
   const distDir = Path.join(testDir, "dist");
-  const distSrcDir = Path.join(distDir, "src");
 
   // Check that only valid entries were built (3 valid files)
-  const builtFiles = await FS.readdir(distSrcDir);
+  const builtFiles = await FS.readdir(distDir);
   const jsFiles = builtFiles.filter(f => f.endsWith('.js'));
   
   // Should have index.js, utils.js, api.js only

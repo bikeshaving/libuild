@@ -40,12 +40,12 @@ export function main() { return "main"; }`
   await build(testDir, false);
 
   // Check that impl directory exists with .d.ts
-  const implDtsPath = Path.join(testDir, "dist", "src", "impl", "utils.d.ts");
+  const implDtsPath = Path.join(testDir, "dist", "impl", "utils.d.ts");
   const implDtsExists = await FS.stat(implDtsPath).then(() => true, () => false);
   expect(implDtsExists).toBe(true);
 
   // Check index.d.ts references impl
-  const indexDts = await FS.readFile(Path.join(testDir, "dist", "src", "index.d.ts"), "utf-8");
+  const indexDts = await FS.readFile(Path.join(testDir, "dist", "index.d.ts"), "utf-8");
   expect(indexDts).toContain("./impl/utils.js");
 });
 
@@ -86,7 +86,7 @@ declare module "some-external-lib" {
 
   // Check that augmentation is in the generated .d.ts
   const augmentDts = await FS.readFile(
-    Path.join(testDir, "dist", "src", "impl", "augment.d.ts"),
+    Path.join(testDir, "dist", "impl", "augment.d.ts"),
     "utf-8"
   );
   expect(augmentDts).toContain('declare module "some-external-lib"');
@@ -131,10 +131,10 @@ export function levelB() { return "b"; }`
 
   // Check all .d.ts files exist
   const paths = [
-    "dist/src/index.d.ts",
-    "dist/src/a/level-a.d.ts",
-    "dist/src/a/b/level-b.d.ts",
-    "dist/src/a/b/c/level-c.d.ts",
+    "dist/index.d.ts",
+    "dist/a/level-a.d.ts",
+    "dist/a/b/level-b.d.ts",
+    "dist/a/b/c/level-c.d.ts",
   ];
 
   for (const p of paths) {
@@ -180,9 +180,9 @@ export function utils() { return "utils"; }`
   await build(testDir, false);
 
   // Check both entries and shared module have .d.ts
-  const indexDts = await FS.readFile(Path.join(testDir, "dist", "src", "index.d.ts"), "utf-8");
-  const utilsDts = await FS.readFile(Path.join(testDir, "dist", "src", "utils.d.ts"), "utf-8");
-  const sharedDts = await FS.readFile(Path.join(testDir, "dist", "src", "shared", "common.d.ts"), "utf-8");
+  const indexDts = await FS.readFile(Path.join(testDir, "dist", "index.d.ts"), "utf-8");
+  const utilsDts = await FS.readFile(Path.join(testDir, "dist", "utils.d.ts"), "utf-8");
+  const sharedDts = await FS.readFile(Path.join(testDir, "dist", "shared", "common.d.ts"), "utf-8");
 
   expect(indexDts).toContain("./shared/common.js");
   expect(utilsDts).toContain("./shared/common.js");
@@ -224,7 +224,7 @@ declare global {
   await build(testDir, false);
 
   const globalsDts = await FS.readFile(
-    Path.join(testDir, "dist", "src", "impl", "globals.d.ts"),
+    Path.join(testDir, "dist", "impl", "globals.d.ts"),
     "utf-8"
   );
   expect(globalsDts).toContain("declare global");

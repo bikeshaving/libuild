@@ -39,20 +39,19 @@ export const data = config;
   await build(testDir, false);
 
   const distDir = Path.join(testDir, "dist");
-  const distSrcDir = Path.join(distDir, "src");
 
-  // ESM file should exist
-  expect(await fileExists(Path.join(distSrcDir, "index.js"))).toBe(true);
+  // ESM file should exist at dist root
+  expect(await fileExists(Path.join(distDir, "index.js"))).toBe(true);
 
   // CJS file should NOT exist (disabled due to TLA)
-  expect(await fileExists(Path.join(distSrcDir, "index.cjs"))).toBe(false);
+  expect(await fileExists(Path.join(distDir, "index.cjs"))).toBe(false);
 
   // Check package.json was generated without CJS/require fields
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
 
   // Should have ESM export only
   expect(distPkg.exports["."]).toBeDefined();
-  expect(distPkg.exports["."].import).toBe("./src/index.js");
+  expect(distPkg.exports["."].import).toBe("./index.js");
   expect(distPkg.exports["."].require).toBeUndefined(); // No require field
 
   // Should not have main field
@@ -99,17 +98,16 @@ test("TLA in some files disables all CJS generation", async () => {
   await build(testDir, false);
 
   const distDir = Path.join(testDir, "dist");
-  const distSrcDir = Path.join(distDir, "src");
 
-  // ESM files should exist
-  expect(await fileExists(Path.join(distSrcDir, "index.js"))).toBe(true);
-  expect(await fileExists(Path.join(distSrcDir, "utils.js"))).toBe(true);
-  expect(await fileExists(Path.join(distSrcDir, "async-config.js"))).toBe(true);
+  // ESM files should exist at dist root
+  expect(await fileExists(Path.join(distDir, "index.js"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "utils.js"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "async-config.js"))).toBe(true);
 
   // NO CJS files should exist (TLA in one file disables all CJS)
-  expect(await fileExists(Path.join(distSrcDir, "index.cjs"))).toBe(false);
-  expect(await fileExists(Path.join(distSrcDir, "utils.cjs"))).toBe(false);
-  expect(await fileExists(Path.join(distSrcDir, "async-config.cjs"))).toBe(false);
+  expect(await fileExists(Path.join(distDir, "index.cjs"))).toBe(false);
+  expect(await fileExists(Path.join(distDir, "utils.cjs"))).toBe(false);
+  expect(await fileExists(Path.join(distDir, "async-config.cjs"))).toBe(false);
 
   // Check exports don't have require fields
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
@@ -151,8 +149,8 @@ test("TLA with --save doesn't add main field", async () => {
   expect(rootPkg.main).toBeUndefined();
 
   // Should have module and types for ESM
-  expect(rootPkg.module).toBe("./dist/src/index.js");
-  expect(rootPkg.types).toBe("./dist/src/index.d.ts");
+  expect(rootPkg.module).toBe("./dist/index.js");
+  expect(rootPkg.types).toBe("./dist/index.d.ts");
 
   await removeTempDir(testDir);
 });
@@ -183,17 +181,16 @@ test("Non-TLA project still generates CJS normally", async () => {
   await build(testDir, false);
 
   const distDir = Path.join(testDir, "dist");
-  const distSrcDir = Path.join(distDir, "src");
 
-  // Both ESM and CJS should exist
-  expect(await fileExists(Path.join(distSrcDir, "index.js"))).toBe(true);
-  expect(await fileExists(Path.join(distSrcDir, "index.cjs"))).toBe(true);
+  // Both ESM and CJS should exist at dist root
+  expect(await fileExists(Path.join(distDir, "index.js"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "index.cjs"))).toBe(true);
 
   // Check package.json has both import and require
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
-  expect(distPkg.exports["."].import).toBe("./src/index.js");
-  expect(distPkg.exports["."].require).toBe("./src/index.cjs");
-  expect(distPkg.main).toBe("src/index.cjs");
+  expect(distPkg.exports["."].import).toBe("./index.js");
+  expect(distPkg.exports["."].require).toBe("./index.cjs");
+  expect(distPkg.main).toBe("index.cjs");
 
   await removeTempDir(testDir);
 });

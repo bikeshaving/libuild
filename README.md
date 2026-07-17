@@ -41,12 +41,14 @@ libuild publish
 - **UMD builds**: If `src/umd.ts` exists, creates browser-compatible UMD build
 
 ### Output Structure
-- **Structure-preserving**: `src/index.ts` → `dist/src/index.js` (maintains src/ directory)
+- **Flat output**: `src/index.ts` → `dist/index.js` - modules publish at the package root, so direct CDN URLs like `cdn.jsdelivr.net/npm/<pkg>/index.js` just work
+- **Executables**: `bin/cli.ts` → `dist/bin/cli.js` (bin/ stays a subdirectory)
+- **Compatibility stubs**: `dist/src/` contains tiny re-export shims so `<pkg>/src/index.js` paths from packages published with older libuild versions keep resolving
 - **ESM**: `.js` files with ES module syntax
 - **CommonJS**: `.cjs` files for Node.js compatibility
-- **TypeScript**: `.d.ts` declaration files for all modules (when TypeScript is available)
+- **TypeScript**: `.d.ts` declaration files for all modules (when TypeScript is available); internal modules relocate together with their imports intact
 - **Module augmentation**: `declare module` blocks are preserved in .d.ts output
-- **Code splitting**: Dynamic imports create chunks in `dist/src/_chunks/`
+- **Code splitting**: Dynamic imports create chunks in `dist/_chunks/`
 - **Clean package.json**: Optimized for consumers (no dev scripts)
 
 ### Format Control
@@ -61,8 +63,8 @@ libuild publish
 
 ### Package.json Transformations
 - **Development mode** (default): Root package.json unchanged, no git noise
-- **--save mode**: Root package.json updated to point to `./dist/src/*` artifacts for npm link
-- **Dist package.json**: Clean consumer-ready version with relative `src/` paths
+- **--save mode**: Root package.json updated to point to `./dist/*` artifacts for npm link
+- **Dist package.json**: Clean consumer-ready version with root-relative paths
 - **Bin paths**: Automatically transformed from `src/` references to built artifacts
 - **Exports field**: Generated for all entry points with proper types-first ordering
 
@@ -81,13 +83,15 @@ src/
 Produces:
 ```
 dist/
-  src/
-    index.js       # ESM
-    index.cjs      # CommonJS
-    index.d.ts     # TypeScript declarations
-    utils.js
-    utils.cjs
-    utils.d.ts
+  index.js         # ESM
+  index.cjs        # CommonJS
+  index.d.ts       # TypeScript declarations
+  utils.js
+  utils.cjs
+  utils.d.ts
+  src/             # Compatibility stubs (re-export shims for old src/ paths)
+    index.js
+    ...
   package.json     # Clean consumer version
 ```
 
@@ -107,14 +111,14 @@ src/
 Produces:
 ```
 dist/
-  src/
-    index.js
-    index.cjs
-    index.d.ts
-    cli.js         # Compiled CLI
-    cli.cjs
-    cli.d.ts
-  package.json     # bin: { "mytool": "./src/cli.js" }
+  index.js
+  index.cjs
+  index.d.ts
+  cli.js           # Compiled CLI (dual-runtime shebang, executable)
+  cli.cjs
+  cli.d.ts
+  src/             # Compatibility stubs
+  package.json     # bin: { "mytool": "cli.js" }
 ```
 
 ### ESM-Only Library
@@ -125,8 +129,8 @@ To build only ESM (no CommonJS), remove the `main` field:
 // package.json
 {
   "name": "my-lib",
-  "module": "dist/src/index.js",  // ESM entry
-  "types": "dist/src/index.d.ts"
+  "module": "dist/index.js",  // ESM entry
+  "types": "dist/index.d.ts"
   // no "main" field = no CJS
 }
 ```
@@ -134,11 +138,11 @@ To build only ESM (no CommonJS), remove the `main` field:
 Produces:
 ```
 dist/
-  src/
-    index.js       # ESM only
-    index.d.ts
-    utils.js       # ESM only
-    utils.d.ts
+  index.js         # ESM only
+  index.d.ts
+  utils.js         # ESM only
+  utils.d.ts
+  src/             # Compatibility stubs
   package.json     # ESM-only exports
 ```
 
@@ -154,14 +158,14 @@ src/
 Produces:
 ```
 dist/
-  src/
-    index.js
-    index.cjs
-    index.d.ts
-    utils.js
-    utils.cjs
-    utils.d.ts
-    umd.js         # UMD browser build
+  index.js
+  index.cjs
+  index.d.ts
+  utils.js
+  utils.cjs
+  utils.d.ts
+  umd.js           # UMD browser build
+  src/             # Compatibility stubs (src/umd.js is a full UMD copy)
   package.json
 ```
 
@@ -170,24 +174,24 @@ dist/
 **Dual format** (ESM + CommonJS):
 ```json
 {
-  "main": "src/index.cjs",
-  "module": "src/index.js",
-  "types": "src/index.d.ts",
+  "main": "index.cjs",
+  "module": "index.js",
+  "types": "index.d.ts",
   "exports": {
     ".": {
-      "types": "./src/index.d.ts",
-      "import": "./src/index.js",
-      "require": "./src/index.cjs"
+      "types": "./index.d.ts",
+      "import": "./index.js",
+      "require": "./index.cjs"
     },
     "./utils": {
-      "types": "./src/utils.d.ts",
-      "import": "./src/utils.js",
-      "require": "./src/utils.cjs"
+      "types": "./utils.d.ts",
+      "import": "./utils.js",
+      "require": "./utils.cjs"
     },
     "./utils.js": {
-      "types": "./src/utils.d.ts",
-      "import": "./src/utils.js",
-      "require": "./src/utils.cjs"
+      "types": "./utils.d.ts",
+      "import": "./utils.js",
+      "require": "./utils.cjs"
     },
     "./package.json": "./package.json"
   }
@@ -197,21 +201,21 @@ dist/
 **ESM-only** (no `main` field in source):
 ```json
 {
-  "module": "src/index.js",
-  "types": "src/index.d.ts",
+  "module": "index.js",
+  "types": "index.d.ts",
   "type": "module",
   "exports": {
     ".": {
-      "types": "./src/index.d.ts",
-      "import": "./src/index.js"
+      "types": "./index.d.ts",
+      "import": "./index.js"
     },
     "./utils": {
-      "types": "./src/utils.d.ts",
-      "import": "./src/utils.js"
+      "types": "./utils.d.ts",
+      "import": "./utils.js"
     },
     "./utils.js": {
-      "types": "./src/utils.d.ts",
-      "import": "./src/utils.js"
+      "types": "./utils.d.ts",
+      "import": "./utils.js"
     },
     "./package.json": "./package.json"
   }
@@ -221,14 +225,14 @@ dist/
 **Root package.json** (with --save):
 ```json
 {
-  "main": "./dist/src/index.cjs",
-  "module": "./dist/src/index.js",
-  "types": "./dist/src/index.d.ts",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/src/index.d.ts",
-      "import": "./dist/src/index.js",
-      "require": "./dist/src/index.cjs"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
     }
   }
 }

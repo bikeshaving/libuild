@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-07-17
+
+### Changed
+- **Flat output layout** - Modules now publish at the package root (`<pkg>/index.js`) instead of nested under `src/` (`<pkg>/src/index.js`). Direct CDN file URLs (jsDelivr, unpkg) serve literal paths and do not consult the exports map, so the old layout 404'd copy-paste URLs like `cdn.jsdelivr.net/npm/<pkg>/index.js`. Executables stay under `bin/`, code-splitting chunks move to `_chunks/` (was `src/_chunks/`). Fixes [#9](https://github.com/bikeshaving/libuild/issues/9).
+- **Compatibility stubs** - `dist/src/` now contains tiny re-export shims (plus a full UMD copy) so `<pkg>/src/<entry>.js` paths from packages published with older libuild versions keep resolving - old CDN URLs and literal deep imports do not break. Node consumers are unaffected either way: exports-map keys never contained `src/`.
+- **`--save` paths** - Root package.json now points at `./dist/<entry>.*` (was `./dist/src/<entry>.*`). Old saved paths are migrated automatically on the next `--save` run.
+
+### Fixed
+- **UMD build corrupted sibling entries** - The UMD wrapper was applied to every `.js` file in the output directory, silently wrapping (and breaking) other entry modules in packages with a `src/umd.ts`. It now wraps only the UMD output file.
+- **`--save` bin pointed at non-executables** - Bin paths that resolve to a file that exists but is not the built executable are now normalized to the real artifact.
+
+### Notes
+- Deep links to *internal* files of previously published packages (e.g. `<pkg>/src/plugins/x.d.ts`) are not stubbed - only entry points are. Internal paths were never part of the public contract.
+
 ## [0.1.25] - 2026-07-14
 
 ### Fixed

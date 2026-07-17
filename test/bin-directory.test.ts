@@ -44,15 +44,14 @@ test("bin directory detection and build", async () => {
 
   // Check that both src and bin outputs exist
   const distDir = Path.join(testDir, "dist");
-  const distSrcDir = Path.join(distDir, "src");
   const distBinDir = Path.join(distDir, "bin");
 
-  // Src outputs (both ESM and CJS)
-  expect(await fileExists(Path.join(distSrcDir, "index.js"))).toBe(true);
-  expect(await fileExists(Path.join(distSrcDir, "index.cjs"))).toBe(true);
-  
+  // Src outputs land flat at the dist root (both ESM and CJS)
+  expect(await fileExists(Path.join(distDir, "index.js"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "index.cjs"))).toBe(true);
+
   // TypeScript declarations might not be available in test environment
-  const hasSrcDts = await fileExists(Path.join(distSrcDir, "index.d.ts"));
+  const hasSrcDts = await fileExists(Path.join(distDir, "index.d.ts"));
   if (hasSrcDts) {
     console.log("✓ TypeScript declarations generated for src");
   } else {
@@ -76,19 +75,19 @@ test("bin directory detection and build", async () => {
   const isExecutable = (binStat.mode & 0o111) !== 0;
   expect(isExecutable).toBe(true);
 
-  // Verify that bin entry externalizes src imports
+  // Verify that bin entry externalizes src imports (rewritten to flat dist root)
   const binContent = await FS.readFile(Path.join(distBinDir, "cli.js"), "utf-8");
-  expect(binContent).toContain('from "../src/index.js"'); // Should be external, not bundled
+  expect(binContent).toContain('from "../index.js"'); // Should be external, not bundled
   expect(binContent).not.toContain('function greet'); // Should NOT contain the actual greet function
 
   // Check package.json was generated correctly
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
-  
+
   // Should have exports for both src and bin entries
   expect(distPkg.exports["."]).toEqual({
-    types: "./src/index.d.ts",
-    import: "./src/index.js",
-    require: "./src/index.cjs"
+    types: "./index.d.ts",
+    import: "./index.js",
+    require: "./index.cjs"
   });
 
   expect(distPkg.exports["./bin/cli"]).toEqual({
@@ -141,10 +140,10 @@ test("bin directory --save updates package.json correctly", async () => {
     tool: "./dist/bin/tool.js"
   });
 
-  // Check main/module/types fields for src entries
-  expect(rootPkg.main).toBe("./dist/src/utils.cjs");
-  expect(rootPkg.module).toBe("./dist/src/utils.js");
-  expect(rootPkg.types).toBe("./dist/src/utils.d.ts");
+  // Check main/module/types fields for src entries (flat layout)
+  expect(rootPkg.main).toBe("./dist/utils.cjs");
+  expect(rootPkg.module).toBe("./dist/utils.js");
+  expect(rootPkg.types).toBe("./dist/utils.d.ts");
 
   // Cleanup
   await removeTempDir(testDir);
@@ -204,17 +203,17 @@ test("mixed src and bin entries with exports", async () => {
   const distDir = Path.join(testDir, "dist");
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
 
-  // Should have exports for all src entries (with CJS)
+  // Should have exports for all src entries (with CJS), flat at dist root
   expect(distPkg.exports["./utils"]).toEqual({
-    types: "./src/utils.d.ts",
-    import: "./src/utils.js",
-    require: "./src/utils.cjs"
+    types: "./utils.d.ts",
+    import: "./utils.js",
+    require: "./utils.cjs"
   });
 
   expect(distPkg.exports["./api"]).toEqual({
-    types: "./src/api.d.ts", 
-    import: "./src/api.js",
-    require: "./src/api.cjs"
+    types: "./api.d.ts",
+    import: "./api.js",
+    require: "./api.cjs"
   });
 
   // Should have exports for all bin entries (ESM only)
@@ -299,8 +298,9 @@ console.log(helper());`
     "utf-8"
   );
 
-  // Entry point import should be externalized
-  expect(binContent).toContain('from "../src/index.js"');
+  // Entry point import should be externalized (rewritten to flat dist root)
+  expect(binContent).toContain('from "../index.js"');
+  expect(binContent).not.toContain('from "../src/index.js"'); // Old nested path should be gone
   expect(binContent).not.toContain('function greet'); // Should NOT be bundled
 
   // Non-entry import should be bundled
@@ -342,8 +342,10 @@ test("src file referenced in package.json bin gets dual runtime shebang", async 
 
   await build(testDir, false);
 
+  // Flat layout: the real (shebang'd) CLI output lives at dist/cli.js;
+  // dist/src/cli.js is only a re-export compatibility stub.
   const cliContent = await FS.readFile(
-    Path.join(testDir, "dist/src/cli.js"),
+    Path.join(testDir, "dist/cli.js"),
     "utf-8"
   );
 
@@ -353,7 +355,7 @@ test("src file referenced in package.json bin gets dual runtime shebang", async 
   expect(cliContent).toContain("npm_config_user_agent");
 
   // Should be executable
-  const cliStat = await FS.stat(Path.join(testDir, "dist/src/cli.js"));
+  const cliStat = await FS.stat(Path.join(testDir, "dist/cli.js"));
   expect((cliStat.mode & 0o111) !== 0).toBe(true);
 
   await removeTempDir(testDir);
