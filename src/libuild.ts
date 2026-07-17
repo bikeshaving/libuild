@@ -292,9 +292,9 @@ async function generateExports(entries: string[], mainEntry: string | undefined,
       // Regular src entries get both ESM and CJS (if enabled)
       const exportEntry: any = {};
 
-      // Only include types if .d.ts file exists
+      // Only include types if .d.ts file exists (flat layout: dist root)
       if (distDir) {
-        const dtsPath = Path.join(distDir, "src", `${entry}.d.ts`);
+        const dtsPath = Path.join(distDir, `${entry}.d.ts`);
         const exists = await fileExists(dtsPath);
         if (exists) {
           exportEntry.types = `./src/${entry}.d.ts`;
@@ -317,9 +317,10 @@ async function generateExports(entries: string[], mainEntry: string | undefined,
         return existing;
       }
 
-      // Special case for ambient .d.ts files - they're just copied, not built
-      // They can be in ./src/ or ./dist/src/ depending on context (root vs dist package.json)
-      if (existing.endsWith('.d.ts') && (existing.match(/\.\/(?:dist\/)?src\/[^/]+\.d\.ts$/))) {
+      // Special case for ambient .d.ts files - they're just copied, not built.
+      // Accepted forms: ./x.d.ts, ./dist/x.d.ts (flat layout) and the legacy
+      // ./src/x.d.ts, ./dist/src/x.d.ts (round-trips from older saves)
+      if (existing.endsWith('.d.ts') && (existing.match(/^\.\/(?:dist\/)?(?:src\/)?[^/]+\.d\.ts$/))) {
         return existing;
       }
 
@@ -543,10 +544,14 @@ async function validateSingleBinPath(binPath: string, fieldName: string, cwd: st
     return;
   }
   
-  // Check other dist/ patterns that aren't libuild's standard output
+  // Check other dist/ patterns - in the flat layout, ./dist/<entry>.js is
+  // valid libuild output, so accept it when the built file exists
   if (binPath.startsWith("dist/") || binPath.startsWith("./dist/")) {
+    if (await fileExists(Path.join(cwd, binPath))) {
+      return;
+    }
     console.warn(`⚠️  WARNING: ${fieldName} field points to "${binPath}" in dist/ directory.
-   
+
    libuild expects bin entries to point to src/ files. Consider changing to the corresponding src/ path and using --save.`);
     return;
   }
@@ -599,33 +604,21 @@ async function validateSingleBinPath(binPath: string, fieldName: string, cwd: st
 
 function transformBinPaths(value: any): any {
   if (typeof value === "string") {
-    // Transform ./dist/src/ paths to src/ without ./ prefix for npm conventions
-    if (value.startsWith("./dist/src/")) {
-      return value.replace("./dist/", "");
-    }
-    // Transform dist/src/ paths to src/ without ./ prefix for npm conventions  
-    if (value.startsWith("dist/src/")) {
-      return value.replace("dist/", "");
-    }
-    // Transform ./dist/bin/ paths to bin/ without ./ prefix for npm conventions
-    if (value.startsWith("./dist/bin/")) {
-      return value.replace("./dist/", "");
-    }
-    // Transform dist/bin/ paths to bin/ without ./ prefix for npm conventions  
-    if (value.startsWith("dist/bin/")) {
-      return value.replace("dist/", "");
-    }
-    // Transform ./src/ paths (including nested) to src/ without ./ prefix for npm conventions
-    if (value.startsWith("./src/")) {
-      return value.replace("./", "");
-    }
-    // Transform ./bin/ paths to bin/ without ./ prefix for npm conventions
-    if (value.startsWith("./bin/")) {
-      return value.replace("./", "");
-    }
-    // Don't add ./ prefix for src/ or bin/ paths
-    if (value.startsWith("src/") || value === "src" || value.startsWith("bin/") || value === "bin") {
-      return value;
+    // Normalize to the flat dist layout (paths are relative to the dist
+    // package.json, no ./ prefix per npm conventions):
+    //   (./)(dist/)*src/bin/x -> bin/x
+    //   (./)(dist/)*src/x     -> x
+    //   (./)(dist/)*bin/x     -> bin/x
+    //   (./)(dist/)*x         -> x
+    const match = value.match(/^(?:\.\/)?((?:dist\/)+)?(.*)$/);
+    if (match && match[2].length > 0) {
+      let rest = match[2];
+      if (rest.startsWith("src/bin/")) {
+        rest = "bin/" + rest.slice("src/bin/".length);
+      } else if (rest.startsWith("src/") && rest.length > "src/".length) {
+        rest = rest.slice("src/".length);
+      }
+      return rest;
     }
     return value;
   } else if (typeof value === "object" && value !== null) {
@@ -640,25 +633,32 @@ function transformBinPaths(value: any): any {
 
 function fixExportsForDist(obj: any): any {
   if (typeof obj === "string") {
-    // Fix paths that incorrectly have ./dist/dist/dist/... -> ./src/
-    if (obj.includes("/dist/") && obj.includes("/src/")) {
-      // Extract everything after the last /src/
-      const match = obj.match(/.*\/src\/(.*)$/);
-      if (match) {
-        return `./src/${match[1]}`;
-      }
-    }
-    // Fix paths that incorrectly start with ./dist/src/ -> ./src/
-    if (obj.startsWith("./dist/src/")) {
-      return obj.replace("./dist/src/", "./src/");
-    }
-    // Fix paths that incorrectly start with ./dist/bin/ -> ./bin/
-    if (obj.startsWith("./dist/bin/")) {
-      return obj.replace("./dist/bin/", "./bin/");
-    }
     // Fix package.json path
-    if (obj.includes("/dist/") && obj.endsWith("/package.json")) {
+    if (obj.includes("dist/") && obj.endsWith("/package.json")) {
       return "./package.json";
+    }
+    // Relocate paths into the flat dist layout:
+    //   (./)(dist/)*src/bin/x -> (./)bin/x
+    //   (./)(dist/)*src/x     -> (./)x
+    //   (./)(dist/)*bin/x     -> (./)bin/x
+    //   (./)(dist/)*x         -> (./)x
+    // The original "./" prefix (or its absence) is preserved.
+    const match = obj.match(/^(\.\/)?((?:dist\/)+)?(.*)$/);
+    if (match) {
+      const dotSlash = match[1] ?? "";
+      const hadDistPrefix = match[2] !== undefined;
+      let rest = match[3];
+      let changed = hadDistPrefix;
+      if (rest.startsWith("src/bin/")) {
+        rest = "bin/" + rest.slice("src/bin/".length);
+        changed = true;
+      } else if (rest.startsWith("src/") && rest.length > "src/".length) {
+        rest = rest.slice("src/".length);
+        changed = true;
+      }
+      if (changed && rest.length > 0) {
+        return dotSlash + rest;
+      }
     }
     return obj;
   } else if (Array.isArray(obj)) {
@@ -668,8 +668,12 @@ function fixExportsForDist(obj: any): any {
     for (const [key, val] of Object.entries(obj)) {
       // Handle special cases for package.json fields
       if (key === "files" && Array.isArray(val)) {
-        // For files field in dist package.json, remove "dist/" entries since we're already in dist
-        fixed[key] = val.filter((file: string) => file !== "dist/" && file !== "dist").concat(val.includes("dist/") || val.includes("dist") ? ["src/"] : []);
+        // In the flat layout the built modules live at the dist root, which a
+        // files whitelist cannot express as a directory. Drop layout entries;
+        // the caller removes the field entirely if nothing author-specified remains.
+        // Other entries are copied verbatim into dist, so keep them untransformed.
+        fixed[key] = val
+          .filter((file: string) => !["dist", "dist/", "src", "src/"].includes(file));
       } else if (key === "bin") {
         // Don't transform bin field - it's already been processed by transformBinPaths
         fixed[key] = val;
@@ -722,7 +726,8 @@ async function makeFilesExecutable(pkg: PackageJSON, cwd: string, allBinEntries:
   // All files built from bin/ directories
   const binDirFiles = new Set<string>();
   for (const binEntryInfo of allBinEntries) {
-    const baseDir = binEntryInfo.source === 'src' ? "dist/src/bin" : "dist/bin";
+    // Flat layout: both src/bin/ and top-level bin/ entries output to dist/bin/
+    const baseDir = "dist/bin";
     const jsPath = Path.join(cwd, baseDir, `${binEntryInfo.name}.js`);
     const cjsPath = Path.join(cwd, baseDir, `${binEntryInfo.name}.cjs`);
 
@@ -894,9 +899,9 @@ async function cleanPackageJSON(pkg: PackageJSON, mainEntry: string | undefined,
     }
     cleaned.module = `src/${mainEntry}.js`;
 
-    // Only include types field if .d.ts file exists
+    // Only include types field if .d.ts file exists (flat layout: dist root)
     if (distDir) {
-      const dtsPath = Path.join(distDir, "src", `${mainEntry}.d.ts`);
+      const dtsPath = Path.join(distDir, `${mainEntry}.d.ts`);
       const exists = await fileExists(dtsPath);
       if (exists) {
         cleaned.types = `src/${mainEntry}.d.ts`;
@@ -998,14 +1003,19 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   if (pkg.exports && typeof pkg.exports === 'object') {
     // Check if exports contains multiple src/ entry points beyond "."
     // (we handle "." separately via hasCustomMain check)
+    // Entry references come in two shapes: author paths ("./src/utils.js")
+    // and flat saved paths ("./dist/utils.js" or "./utils.js" after --save)
+    const referencesEntry = (v: unknown): boolean =>
+      typeof v === 'string' &&
+      (v.includes('/src/') || /^\.\/(?:dist\/)?[^/]+\.(?:js|cjs|ts|d\.ts)$/.test(v));
     const srcExportKeys = Object.keys(pkg.exports).filter(key => {
       // Skip "." and package.json exports
       if (key === "." || key === "./package.json") return false;
       // Look for exports that reference src/ files (like ./api, ./utils)
       const val = pkg.exports[key];
-      if (typeof val === 'string') return val.includes('/src/');
+      if (typeof val === 'string') return referencesEntry(val);
       if (typeof val === 'object' && val !== null) {
-        return Object.values(val).some(v => typeof v === 'string' && v.includes('/src/'));
+        return Object.values(val).some(referencesEntry);
       }
       return false;
     });
@@ -1158,9 +1168,27 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     await FS.mkdir(distBinDir, {recursive: true});
   }
 
+  // Flat output layout:
+  //   src/<entry>     -> dist/<entry>       (tarball root)
+  //   src/bin/<entry> -> dist/bin/<entry>
+  //   bin/<entry>     -> dist/bin/<entry>
+  // Explicit {in, out} entry points replace outbase-based structure preservation.
+  const flatOut = (entryPath: string): string => {
+    const name = Path.basename(entryPath, Path.extname(entryPath));
+    if (entryPath.startsWith(Path.join(srcDir, "bin") + Path.sep)) {
+      return Path.join("bin", name);
+    }
+    if (entryPath.startsWith(binDir + Path.sep)) {
+      return Path.join("bin", name);
+    }
+    return name;
+  };
+
+  let esmMetafile: ESBuild.Metafile | undefined;
+
   // Build all regular entries with smart dependency resolution
   if (entryPoints.length > 0) {
-    
+
     // ESM build - build src and bin entries separately to different output directories
     console.info(`  Building ${entryPoints.length} entries (ESM)...`);
 
@@ -1176,16 +1204,15 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     });
 
     // Build all ESM entries (src + bin) in a single batch
-    // Using outbase allows ESBuild to preserve src/ and bin/ directory structure
     const allESMEntryPoints = [...srcEntryPoints, ...binEntryPoints];
     const allEntryNames = [...srcEntryNames, ...binEntryNames];
 
     if (allESMEntryPoints.length > 0) {
-      await ESBuild.build({
-        entryPoints: allESMEntryPoints,
+      const esmResult = await ESBuild.build({
+        entryPoints: allESMEntryPoints.map(p => ({in: p, out: flatOut(p)})),
         outdir: distDir,
-        outbase: cwd, // Preserve src/ and bin/ directory structure
-        chunkNames: "src/_chunks/[name]-[hash]", // Put chunks in a subdirectory
+        chunkNames: "_chunks/[name]-[hash]", // Put chunks in a subdirectory
+        metafile: true, // Needed for compat stub generation (default export detection)
         format: "esm",
         outExtension: {".js": ".js"},
         bundle: true,
@@ -1203,8 +1230,10 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
             outputExtension: ".js"
           }),
           // Generate TypeScript declarations for src entries
+          // rootDir: srcDir + outDir: distDir means src/x.ts -> dist/x.d.ts
+          // and src/bin/x.ts -> dist/bin/x.d.ts (flat layout)
           ...(srcEntryPoints.length > 0 ? [dtsPlugin({
-            outDir: distSrcDir,
+            outDir: distDir,
             rootDir: srcDir,
             entryPoints: srcEntryPoints
           })] : []),
@@ -1216,11 +1245,12 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
           })] : [])
         ],
       });
+      esmMetafile = esmResult.metafile;
 
       // Check if code splitting created chunks and warn about CJS incompatibility
       if (options.formats.cjs) {
         // Look for chunk files in the _chunks subdirectory
-        const chunksDir = Path.join(distSrcDir, "_chunks");
+        const chunksDir = Path.join(distDir, "_chunks");
         const chunksExist = await FS.stat(chunksDir).then(() => true, () => false);
         if (chunksExist) {
           const chunkFiles = await FS.readdir(chunksDir);
@@ -1253,8 +1283,8 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       if (srcEntryPoints.length > 0) {
         try {
           await ESBuild.build({
-            entryPoints: srcEntryPoints,
-            outdir: distSrcDir,
+            entryPoints: srcEntryPoints.map(p => ({in: p, out: flatOut(p)})),
+            outdir: distDir,
             format: "cjs",
             outExtension: {".js": ".cjs"},
             bundle: true,
@@ -1310,7 +1340,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
 
     await ESBuild.build({
       entryPoints: [umdPath],
-      outdir: distSrcDir,
+      outfile: Path.join(distDir, "umd.js"),
       format: "cjs",
       bundle: true,
       minify: false,
@@ -1321,6 +1351,90 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       supported: { "import-attributes": true },
       plugins: [umdPlugin({globalName})],
     });
+  }
+
+  // Generate compatibility stubs under dist/src/.
+  // Earlier libuild versions published modules at src/<entry>.js; CDNs serve
+  // literal file paths (no exports-map resolution), so copy-pasted URLs like
+  // cdn.jsdelivr.net/npm/<pkg>/src/<entry>.js exist in the wild. Tiny
+  // forwarding modules keep those paths resolving after the move to the flat
+  // layout. The exports map only ever pointed at these files by value (keys
+  // were always ./<entry>), so Node consumers are unaffected either way.
+  {
+    // Map each entry source file to its ESM export names (via the metafile)
+    // so stubs only re-export `default` when it actually exists.
+    // Paths are realpath-normalized on both sides: esbuild resolves symlinks
+    // (e.g. /var -> /private/var on macOS) while our entry paths may not be.
+    const realpath = async (p: string): Promise<string> => {
+      try {
+        return await FS.realpath(p);
+      } catch {
+        return p;
+      }
+    };
+    const exportNamesByEntry = new Map<string, string[]>();
+    if (esmMetafile) {
+      for (const output of Object.values(esmMetafile.outputs)) {
+        if (output.entryPoint) {
+          exportNamesByEntry.set(await realpath(Path.resolve(output.entryPoint)), output.exports ?? []);
+        }
+      }
+    }
+
+    let stubCount = 0;
+    for (const entryPath of srcEntryPoints) {
+      const out = flatOut(entryPath); // "x" or "bin/x"
+      const realEntryPath = await realpath(Path.resolve(entryPath));
+      const stubPath = Path.join(distSrcDir, `${out}.js`);
+      const up = "../".repeat(out.split(Path.sep).length);
+      const target = `${up}${out.split(Path.sep).join("/")}`;
+
+      await FS.mkdir(Path.dirname(stubPath), {recursive: true});
+
+      // ESM stub (only if the real output exists - TLA fallbacks etc.)
+      if (await fileExists(Path.join(distDir, `${out}.js`))) {
+        const exportNames = exportNamesByEntry.get(realEntryPath) ?? [];
+        let stub = `export * from "${target}.js";\n`;
+        if (exportNames.includes("default")) {
+          stub += `export {default} from "${target}.js";\n`;
+        }
+        await FS.writeFile(stubPath, stub);
+        stubCount++;
+      }
+
+      // CJS stub
+      if (await fileExists(Path.join(distDir, `${out}.cjs`))) {
+        await FS.writeFile(
+          Path.join(distSrcDir, `${out}.cjs`),
+          `module.exports = require("${target}.cjs");\n`
+        );
+        stubCount++;
+      }
+
+      // Type declaration stub (module augmentations in the real .d.ts apply
+      // transitively through the re-export)
+      if (await fileExists(Path.join(distDir, `${out}.d.ts`))) {
+        const exportNames = exportNamesByEntry.get(realEntryPath) ?? [];
+        let stub = `export * from "${target}.js";\n`;
+        if (exportNames.includes("default")) {
+          stub += `export {default} from "${target}.js";\n`;
+        }
+        await FS.writeFile(Path.join(distSrcDir, `${out}.d.ts`), stub);
+        stubCount++;
+      }
+    }
+
+    // UMD is a browser <script> target - a re-export stub wouldn't work, so
+    // the compatibility file is a real copy of the (self-contained) build.
+    if (umdEntries.length > 0 && await fileExists(Path.join(distDir, "umd.js"))) {
+      await FS.mkdir(distSrcDir, {recursive: true});
+      await FS.copyFile(Path.join(distDir, "umd.js"), Path.join(distSrcDir, "umd.js"));
+      stubCount++;
+    }
+
+    if (stubCount > 0) {
+      console.info(`  Generating ${stubCount} src/ compatibility stub(s)...`);
+    }
   }
 
   // TypeScript declarations and triple-slash references are now generated by the TypeScript plugin during ESM build
@@ -1378,6 +1492,23 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   // Apply path fixes to the dist package.json
   const fixedDistPkg = fixExportsForDist(cleanedPkg);
 
+  // In the flat layout the built modules live at the dist root, which a files
+  // whitelist cannot express as a single directory. If nothing author-specified
+  // remains, drop the field (npm then packs the whole directory - which is
+  // exactly the built output). If author extras remain, append patterns
+  // covering the built modules so the whitelist doesn't exclude them.
+  if (fixedDistPkg.files && Array.isArray(fixedDistPkg.files)) {
+    if (fixedDistPkg.files.length === 0) {
+      delete fixedDistPkg.files;
+    } else {
+      for (const pattern of ["*.js", "*.cjs", "*.d.ts", "src/", "bin/", "_chunks/"]) {
+        if (!fixedDistPkg.files.includes(pattern)) {
+          fixedDistPkg.files.push(pattern);
+        }
+      }
+    }
+  }
+
   await FS.writeFile(
     Path.join(distDir, "package.json"),
     JSON.stringify(fixedDistPkg, null, 2) + "\n"
@@ -1395,14 +1526,17 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     }
   }
 
-  // Copy ambient .d.ts files from src/ to dist/src/
-  // These are hand-written type declaration files, not generated by tsc
+  // Copy ambient .d.ts files from src/ to the dist root (flat layout).
+  // These are hand-written type declaration files, not generated by tsc.
+  // A compatibility copy is also placed under dist/src/ so previously
+  // published src/-relative paths keep resolving.
   if (ambientDtsFiles.length > 0) {
     console.info(`  Copying ${ambientDtsFiles.length} ambient .d.ts file(s)...`);
+    await FS.mkdir(distSrcDir, {recursive: true});
     for (const dtsFile of ambientDtsFiles) {
       const srcPath = Path.join(srcDir, dtsFile);
-      const destPath = Path.join(distSrcDir, dtsFile);
-      await FS.copyFile(srcPath, destPath);
+      await FS.copyFile(srcPath, Path.join(distDir, dtsFile));
+      await FS.copyFile(srcPath, Path.join(distSrcDir, dtsFile));
     }
   }
 
@@ -1489,16 +1623,16 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     }
     rootPkg.scripts.prepublishOnly = "echo 'ERROR: Cannot publish from root directory. Use libuild publish instead.' && exit 1";
 
-    // Update main/module/types to point to dist
+    // Update main/module/types to point to dist (flat layout)
     if (options.formats.cjs) {
-      rootPkg.main = `./dist/src/${mainEntry}.cjs`;
+      rootPkg.main = `./dist/${mainEntry}.cjs`;
     }
-    rootPkg.module = `./dist/src/${mainEntry}.js`;
-    
+    rootPkg.module = `./dist/${mainEntry}.js`;
+
     // Only include types field if .d.ts file exists
-    const dtsPath = Path.join(distDir, "src", `${mainEntry}.d.ts`);
+    const dtsPath = Path.join(distDir, `${mainEntry}.d.ts`);
     if (await fileExists(dtsPath)) {
-      rootPkg.types = `./dist/src/${mainEntry}.d.ts`;
+      rootPkg.types = `./dist/${mainEntry}.d.ts`;
     }
 
     if (rootPkg.typings && typeof rootPkg.typings === "string") {
@@ -1541,9 +1675,8 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     if (allBinEntries.length > 0) {
       const generatedBin: any = {};
       for (const binEntryInfo of allBinEntries) {
-        const binPath = binEntryInfo.source === 'src' 
-          ? `./dist/src/bin/${binEntryInfo.name}.js`
-          : `./dist/bin/${binEntryInfo.name}.js`;
+        // Flat layout: both src/bin/ and top-level bin/ entries output to dist/bin/
+        const binPath = `./dist/bin/${binEntryInfo.name}.js`;
         const fullPath = Path.join(cwd, binPath);
         // Only add if the file actually exists
         if (await fileExists(fullPath)) {
@@ -1567,12 +1700,14 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       }
     }
 
-    // Clean up and validate bin paths based on actual built files
+    // Clean up and validate bin paths based on actual built files.
+    // transformBinPaths flattens any src/-shaped path (author "src/cli.js" or
+    // previously saved "./dist/src/cli.js") to its flat dist location first -
+    // otherwise the path would resolve to the src/ compatibility STUB, which
+    // exists but is not the executable.
     if (rootPkg.bin) {
       if (typeof rootPkg.bin === "string") {
-        const distPath = rootPkg.bin.startsWith("./dist/") ? rootPkg.bin : 
-                        rootPkg.bin.startsWith("dist/") ? "./" + rootPkg.bin :
-                        "./" + Path.join("dist", rootPkg.bin);
+        const distPath = "./" + Path.join("dist", transformBinPaths(rootPkg.bin));
         const fullPath = Path.join(cwd, distPath);
         // Only keep if the file actually exists
         if (await fileExists(fullPath)) {
@@ -1584,9 +1719,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
         const cleanedBin: any = {};
         for (const [name, binPath] of Object.entries(rootPkg.bin)) {
           if (typeof binPath === "string") {
-            const distPath = binPath.startsWith("./dist/") ? binPath :
-                            binPath.startsWith("dist/") ? "./" + binPath :
-                            "./" + Path.join("dist", binPath);
+            const distPath = "./" + Path.join("dist", transformBinPaths(binPath));
             const fullPath = Path.join(cwd, distPath);
             // Only include if the file actually exists
             if (await fileExists(fullPath)) {

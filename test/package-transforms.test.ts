@@ -103,8 +103,18 @@ test("handles comprehensive package.json fields", async () => {
   expect(distPkg.sideEffects).toBe(false);
   expect(distPkg.browserslist).toEqual(["> 1%", "last 2 versions"]);
   
-  // Check files field transformation
-  expect(distPkg.files).toEqual(["./src/**/*", "docs/*.md"]);
+  // Check files field transformation: author extras are transformed and the
+  // flat-layout entries are appended (deduped)
+  expect(distPkg.files).toEqual([
+    "./src/**/*",
+    "docs/*.md",
+    "*.js",
+    "*.cjs",
+    "*.d.ts",
+    "src/",
+    "bin/",
+    "_chunks/"
+  ]);
   
   // Check that scripts are excluded
   expect(distPkg.scripts).toBeUndefined();
@@ -253,16 +263,16 @@ test("build with --save updates all package.json fields correctly", async () => 
   
   // Check root package.json transformations
   const rootPkg = await readJSON(Path.join(testDir, "package.json"));
-  expect(rootPkg.main).toBe("./dist/src/index.cjs");
-  expect(rootPkg.module).toBe("./dist/src/index.js");
-  expect(rootPkg.types).toBe("./dist/src/index.d.ts");
-  
+  expect(rootPkg.main).toBe("./dist/index.cjs");
+  expect(rootPkg.module).toBe("./dist/index.js");
+  expect(rootPkg.types).toBe("./dist/index.d.ts");
+
   // Check exports field is generated
   expect(rootPkg.exports).toBeDefined();
   expect(rootPkg.exports["."]).toEqual({
-    types: "./dist/src/index.d.ts",
-    import: "./dist/src/index.js",
-    require: "./dist/src/index.cjs"
+    types: "./dist/index.d.ts",
+    import: "./dist/index.js",
+    require: "./dist/index.cjs"
   });
   
   // Should not create files field if it didn't exist originally
@@ -296,9 +306,9 @@ test("adding new entry point updates exports in subsequent --save builds", async
   // Check that new entry point is in exports
   rootPkg = await readJSON(Path.join(testDir, "package.json"));
   expect(rootPkg.exports["./utils"]).toEqual({
-    types: "./dist/src/utils.d.ts",
-    import: "./dist/src/utils.js", 
-    require: "./dist/src/utils.cjs"
+    types: "./dist/utils.d.ts",
+    import: "./dist/utils.js",
+    require: "./dist/utils.cjs"
   });
   expect(rootPkg.exports["./utils.js"]).toBeDefined();
   
@@ -380,23 +390,22 @@ test("complex bin field transformations", async () => {
   
   const distDir = Path.join(testDir, "dist");
   
-  // Check that all bin entries are built (structure-preserving)
+  // Check that all bin entries are built (flat layout: dist root)
   // Since there's no main field, only ESM should be generated
-  const distSrcDir = Path.join(distDir, "src");
-  expect(await fileExists(Path.join(distSrcDir, "cli.js"))).toBe(true);
-  expect(await fileExists(Path.join(distSrcDir, "cli.cjs"))).toBe(false);
-  
+  expect(await fileExists(Path.join(distDir, "cli.js"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "cli.cjs"))).toBe(false);
+
   // Check dist package.json bin transformations
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
   expect(distPkg.bin).toEqual({
-    mytool: "src/cli.js",              // src/cli.js → src/cli.js (npm convention)
-    processor: "src/tools/processor.js" // preserved but will warn about subdirectory
+    mytool: "cli.js",                // src/cli.js → cli.js (flat layout, npm convention)
+    processor: "tools/processor.js"  // preserved but will warn about subdirectory
   });
-  
+
   // Check root package.json bin transformations
   const rootPkg = await readJSON(Path.join(testDir, "package.json"));
   expect(rootPkg.bin).toEqual({
-    mytool: "./dist/src/cli.js"
+    mytool: "./dist/cli.js" // flattened to the real executable, not the dist/src/ stub
     // processor is removed because src/tools/processor.ts is not detected as an entry
   });
   
@@ -415,11 +424,18 @@ test("files field src transformations", async () => {
   
   const distDir = Path.join(testDir, "dist");
   
-  // Check dist package.json files transformations (structure-preserving)
+  // Check dist package.json files transformations: author extras transformed,
+  // flat-layout entries appended (deduped)
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
   expect(distPkg.files).toEqual([
     "./src/**/*",    // src/**/* → ./src/**/*
-    "docs/*.md"      // docs/*.md stays the same
+    "docs/*.md",     // docs/*.md stays the same
+    "*.js",
+    "*.cjs",
+    "*.d.ts",
+    "src/",
+    "bin/",
+    "_chunks/"
   ]);
   
   // Check that docs files were actually copied
@@ -545,9 +561,9 @@ test("bin field with string value (not object)", async () => {
   
   const distDir = Path.join(testDir, "dist");
   
-  // Check dist package.json bin transformation (structure-preserving)
+  // Check dist package.json bin transformation (flat layout)
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
-  expect(distPkg.bin).toBe("src/cli.js");  // src/cli.js → src/cli.js (npm convention)
+  expect(distPkg.bin).toBe("cli.js");  // src/cli.js → cli.js (flat layout, npm convention)
   
   // Check root package.json bin transformation (no --save)
   const rootPkg = await readJSON(Path.join(testDir, "package.json"));
@@ -574,7 +590,7 @@ export const version = "1.0.0";
     name: "@test-scope/my-package",
     version: "1.0.0",
     type: "module",
-    main: "dist/src/index.cjs",
+    main: "dist/index.cjs",
     private: true
   }));
   
@@ -586,17 +602,17 @@ export const version = "1.0.0";
   // Should preserve scoped name
   expect(distPkg.name).toBe("@test-scope/my-package");
   
-  // Should have proper exports structure
+  // Should have proper exports structure (flat layout)
   expect(distPkg.exports["."]).toEqual({
-    types: "./src/index.d.ts",
-    import: "./src/index.js",
-    require: "./src/index.cjs"
+    types: "./index.d.ts",
+    import: "./index.js",
+    require: "./index.cjs"
   });
-  
-  // Should have proper main/module/types fields
-  expect(distPkg.main).toBe("src/index.cjs");
-  expect(distPkg.module).toBe("src/index.js");
-  expect(distPkg.types).toBe("src/index.d.ts");
+
+  // Should have proper main/module/types fields (flat layout)
+  expect(distPkg.main).toBe("index.cjs");
+  expect(distPkg.module).toBe("index.js");
+  expect(distPkg.types).toBe("index.d.ts");
   
   await removeTempDir(testDir);
 });
@@ -608,46 +624,45 @@ test("comprehensive build verification for multi-entry project", async () => {
   await build(testDir);
   
   const distDir = Path.join(testDir, "dist");
-  const distSrcDir = Path.join(distDir, "src");
-  
-  // Verify all expected files exist
+
+  // Verify all expected files exist (flat layout: dist root)
   const expectedFiles = [
     "cli.js", "cli.cjs",
-    "utils.js", "utils.cjs", 
+    "utils.js", "utils.cjs",
     "api.js", "api.cjs",
     "index.js", "index.cjs"
   ];
-  
+
   for (const file of expectedFiles) {
-    expect(await fileExists(Path.join(distSrcDir, file))).toBe(true);
+    expect(await fileExists(Path.join(distDir, file))).toBe(true);
   }
-  
+
   // Verify package.json structure
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
-  
+
   // Main entry exports
   expect(distPkg.exports["."]).toEqual({
-    types: "./src/index.d.ts",
-    import: "./src/index.js",
-    require: "./src/index.cjs"
+    types: "./index.d.ts",
+    import: "./index.js",
+    require: "./index.cjs"
   });
-  
+
   // Individual entry exports
   expect(distPkg.exports["./cli"]).toEqual({
-    types: "./src/cli.d.ts",
-    import: "./src/cli.js",
-    require: "./src/cli.cjs"
+    types: "./cli.d.ts",
+    import: "./cli.js",
+    require: "./cli.cjs"
   });
-  
+
   expect(distPkg.exports["./utils"]).toEqual({
-    types: "./src/utils.d.ts",
-    import: "./src/utils.js",
-    require: "./src/utils.cjs"
+    types: "./utils.d.ts",
+    import: "./utils.js",
+    require: "./utils.cjs"
   });
-  
+
   // Verify smart dependency resolution (no inlining between entry points)
-  const cliContent = await FS.readFile(Path.join(distSrcDir, "cli.js"), "utf-8");
-  const utilsContent = await FS.readFile(Path.join(distSrcDir, "utils.js"), "utf-8");
+  const cliContent = await FS.readFile(Path.join(distDir, "cli.js"), "utf-8");
+  const utilsContent = await FS.readFile(Path.join(distDir, "utils.js"), "utf-8");
   
   // CLI should import from utils, not bundle it
   expect(cliContent).toContain('from "./utils.js"');
@@ -688,13 +703,13 @@ test("bin paths follow npm conventions (no ./ prefix)", async () => {
   
   const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
   
-  // Dist package.json should have bin path without ./ prefix
+  // Dist package.json should have flat bin path without ./ prefix
   expect(distPkg.bin).toEqual({
-    mytool: "src/cli.js"
+    mytool: "cli.js"
   });
-  
-  // Verify the CLI file actually exists
-  expect(await fileExists(Path.join(testDir, "dist", "src", "cli.js"))).toBe(true);
+
+  // Verify the CLI file actually exists at the dist root
+  expect(await fileExists(Path.join(testDir, "dist", "cli.js"))).toBe(true);
   
   // Cleanup
   await removeTempDir(testDir);
@@ -725,17 +740,17 @@ test("bin paths work correctly in --save mode (no double dist/ prefix)", async (
   // Check root package.json
   const rootPkg = await readJSON(Path.join(testDir, "package.json"));
   
-  // Should NOT have double dist/ prefix
+  // Should NOT have double dist/ prefix; flattened to the real executable at the dist root
   expect(rootPkg.bin).toEqual({
-    mytool: "./dist/src/cli.js"
+    mytool: "./dist/cli.js"
   });
-  
+
   // Check dist package.json
   const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
-  
-  // Should have correct relative path without ./ prefix
+
+  // Should have correct flat relative path without ./ prefix
   expect(distPkg.bin).toEqual({
-    mytool: "src/cli.js"
+    mytool: "cli.js"
   });
   
   // Cleanup
@@ -768,15 +783,15 @@ test("bin paths with multiple binaries work correctly", async () => {
   
   const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
   
-  // All bin paths should be correct
+  // All bin paths should be correct (flat layout)
   expect(distPkg.bin).toEqual({
-    tool1: "src/cli1.js",
-    tool2: "src/cli2.js"
+    tool1: "cli1.js",
+    tool2: "cli2.js"
   });
-  
-  // Verify all CLI files exist
-  expect(await fileExists(Path.join(testDir, "dist", "src", "cli1.js"))).toBe(true);
-  expect(await fileExists(Path.join(testDir, "dist", "src", "cli2.js"))).toBe(true);
+
+  // Verify all CLI files exist at the dist root
+  expect(await fileExists(Path.join(testDir, "dist", "cli1.js"))).toBe(true);
+  expect(await fileExists(Path.join(testDir, "dist", "cli2.js"))).toBe(true);
   
   // Cleanup
   await removeTempDir(testDir);
@@ -804,8 +819,8 @@ test("bin paths handle string format (single binary)", async () => {
   
   const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
   
-  // String bin should be transformed correctly
-  expect(distPkg.bin).toBe("src/cli.js");
+  // String bin should be transformed correctly (flat layout)
+  expect(distPkg.bin).toBe("cli.js");
   
   // Cleanup
   await removeTempDir(testDir);
@@ -833,11 +848,11 @@ test("bin paths work in --save mode with string format", async () => {
   
   // Check root package.json
   const rootPkg = await readJSON(Path.join(testDir, "package.json"));
-  expect(rootPkg.bin).toBe("./dist/src/cli.js");
-  
+  expect(rootPkg.bin).toBe("./dist/cli.js"); // flattened to the real executable, not the dist/src/ stub
+
   // Check dist package.json
   const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
-  expect(distPkg.bin).toBe("src/cli.js");
+  expect(distPkg.bin).toBe("cli.js");
   
   // Cleanup
   await removeTempDir(testDir);

@@ -13,7 +13,7 @@ afterEach(async () => {
   await FS.rm(testDir, {recursive: true, force: true});
 });
 
-test("copies ambient .d.ts files from src to dist/src", async () => {
+test("copies ambient .d.ts files from src to dist root", async () => {
   // Create package.json
   await FS.writeFile(
     Path.join(testDir, "package.json"),
@@ -45,8 +45,8 @@ export {};
   // Build the project
   await build(testDir, false);
 
-  // Verify ambient .d.ts was copied to dist/src
-  const distDtsPath = Path.join(testDir, "dist", "src", "global.d.ts");
+  // Verify ambient .d.ts was copied to dist root
+  const distDtsPath = Path.join(testDir, "dist", "global.d.ts");
   const distDtsExists = await FS.stat(distDtsPath).then(() => true, () => false);
   expect(distDtsExists).toBe(true);
 
@@ -86,8 +86,8 @@ test("copies multiple ambient .d.ts files", async () => {
   await build(testDir, false);
 
   // Verify both ambient .d.ts files were copied
-  const assetsDtsPath = Path.join(testDir, "dist", "src", "assets.d.ts");
-  const envDtsPath = Path.join(testDir, "dist", "src", "env.d.ts");
+  const assetsDtsPath = Path.join(testDir, "dist", "assets.d.ts");
+  const envDtsPath = Path.join(testDir, "dist", "env.d.ts");
 
   const assetsExists = await FS.stat(assetsDtsPath).then(() => true, () => false);
   const envExists = await FS.stat(envDtsPath).then(() => true, () => false);
@@ -119,7 +119,7 @@ test("works correctly when no ambient .d.ts files exist", async () => {
   await build(testDir, false);
 
   // Verify dist was created and has the generated .d.ts (not ambient)
-  const distIndexDts = Path.join(testDir, "dist", "src", "index.d.ts");
+  const distIndexDts = Path.join(testDir, "dist", "index.d.ts");
   const exists = await FS.stat(distIndexDts).then(() => true, () => false);
   expect(exists).toBe(true);
 });
@@ -214,7 +214,7 @@ declare global {
   await build(testDir, false);
 
   // Verify ambient .d.ts was copied with exact content
-  const distDtsPath = Path.join(testDir, "dist", "src", "types.d.ts");
+  const distDtsPath = Path.join(testDir, "dist", "types.d.ts");
   const copiedContent = await FS.readFile(distDtsPath, "utf-8");
   expect(copiedContent).toBe(complexAmbient);
 });
@@ -253,13 +253,13 @@ test("adds ambient .d.ts files to exports map with --save", async () => {
   const distPkg = JSON.parse(distPkgContent);
 
   // Verify exports in root package.json point to dist
-  expect(rootPkg.exports["./globals.d.ts"]).toBe("./dist/src/globals.d.ts");
+  expect(rootPkg.exports["./globals.d.ts"]).toBe("./dist/globals.d.ts");
 
-  // Verify exports in dist package.json point to src (relative to dist/)
-  expect(distPkg.exports["./globals.d.ts"]).toBe("./src/globals.d.ts");
+  // Verify exports in dist package.json point to dist root (relative to dist/)
+  expect(distPkg.exports["./globals.d.ts"]).toBe("./globals.d.ts");
 
   // Verify the file actually exists
-  const globalsDtsPath = Path.join(testDir, "dist", "src", "globals.d.ts");
+  const globalsDtsPath = Path.join(testDir, "dist", "globals.d.ts");
   const exists = await FS.stat(globalsDtsPath).then(() => true, () => false);
   expect(exists).toBe(true);
 

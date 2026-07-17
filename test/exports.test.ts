@@ -23,22 +23,22 @@ test("exports field generation for multi-entry library", async () => {
 
   // Should have main export
   expect(distPkg.exports["."]).toEqual({
-    types: "./src/index.d.ts",
-    import: "./src/index.js",
-    require: "./src/index.cjs"
+    types: "./index.d.ts",
+    import: "./index.js",
+    require: "./index.cjs"
   });
 
   // Should have individual entry exports
   expect(distPkg.exports["./api"]).toEqual({
-    types: "./src/api.d.ts",
-    import: "./src/api.js",
-    require: "./src/api.cjs"
+    types: "./api.d.ts",
+    import: "./api.js",
+    require: "./api.cjs"
   });
 
   expect(distPkg.exports["./utils"]).toEqual({
-    types: "./src/utils.d.ts",
-    import: "./src/utils.js",
-    require: "./src/utils.cjs"
+    types: "./utils.d.ts",
+    import: "./utils.js",
+    require: "./utils.cjs"
   });
 
   // Should have .js extension variants
@@ -67,24 +67,24 @@ test("exports field generation with --save mode", async () => {
   const rootPkg = await readJSON(Path.join(testDir, "package.json"));
 
   expect(rootPkg.exports["."]).toEqual({
-    types: "./dist/src/index.d.ts",
-    import: "./dist/src/index.js",
-    require: "./dist/src/index.cjs"
+    types: "./dist/index.d.ts",
+    import: "./dist/index.js",
+    require: "./dist/index.cjs"
   });
 
   expect(rootPkg.exports["./api"]).toEqual({
-    types: "./dist/src/api.d.ts",
-    import: "./dist/src/api.js",
-    require: "./dist/src/api.cjs"
+    types: "./dist/api.d.ts",
+    import: "./dist/api.js",
+    require: "./dist/api.cjs"
   });
 
   // Check dist package.json exports (should be relative)
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
 
   expect(distPkg.exports["."]).toEqual({
-    types: "./src/index.d.ts",
-    import: "./src/index.js",
-    require: "./src/index.cjs"
+    types: "./index.d.ts",
+    import: "./index.js",
+    require: "./index.cjs"
   });
 
   // Cleanup
@@ -415,18 +415,16 @@ test("path mapping fixes for dist package.json exports", async () => {
   const distDir = Path.join(testDir, "dist");
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
 
-  // All exports should use ./src/ paths, not ./dist/src/
+  // All exports should use flat dist-root paths, never ./dist/ or ./src/ prefixes
   for (const [key, value] of Object.entries(distPkg.exports)) {
     if (typeof value === "string") {
-      if (value.includes("/src/")) {
-        expect(value).toMatch(/^\.\/src\//);
-        expect(value).not.toContain("./dist/src/");
-      }
+      expect(value).not.toContain("./dist/");
+      expect(value).not.toContain("./src/");
     } else if (typeof value === "object" && value !== null) {
       for (const [subKey, subValue] of Object.entries(value)) {
-        if (typeof subValue === "string" && subValue.includes("/src/")) {
-          expect(subValue).toMatch(/^\.\/src\//);
-          expect(subValue).not.toContain("./dist/src/");
+        if (typeof subValue === "string") {
+          expect(subValue).not.toContain("./dist/");
+          expect(subValue).not.toContain("./src/");
         }
       }
     }
@@ -434,15 +432,15 @@ test("path mapping fixes for dist package.json exports", async () => {
 
   // Specific exports should be correct
   expect(distPkg.exports["."]).toEqual({
-    types: "./src/index.d.ts",
-    import: "./src/index.js",
-    require: "./src/index.cjs"
+    types: "./index.d.ts",
+    import: "./index.js",
+    require: "./index.cjs"
   });
 
   expect(distPkg.exports["./cli"]).toEqual({
-    types: "./src/cli.d.ts",
-    import: "./src/cli.js",
-    require: "./src/cli.cjs"
+    types: "./cli.d.ts",
+    import: "./cli.js",
+    require: "./cli.cjs"
   });
 
   await removeTempDir(testDir);
@@ -461,13 +459,13 @@ test("no path mapping regressions in dist package.json", async () => {
   expect(jsonString).not.toContain("./dist/src/");
   expect(jsonString).not.toContain("dist/src/");
 
-  // But should contain proper ./src/ paths
-  expect(jsonString).toContain("./src/");
+  // Flat layout: no ./src/ paths in dist package.json either
+  expect(jsonString).not.toContain("./src/");
 
   // Verify specific problematic patterns are fixed
-  expect(distPkg.main).toBe("src/index.cjs");
-  expect(distPkg.module).toBe("src/index.js");
-  expect(distPkg.types).toBe("src/index.d.ts");
+  expect(distPkg.main).toBe("index.cjs");
+  expect(distPkg.module).toBe("index.js");
+  expect(distPkg.types).toBe("index.d.ts");
 
   await removeTempDir(testDir);
 });
@@ -481,16 +479,16 @@ test("root package.json path mapping with --save", async () => {
   // Check root package.json has proper dist paths
   const rootPkg = await readJSON(Path.join(testDir, "package.json"));
 
-  // Main fields should point to dist
-  expect(rootPkg.main).toBe("./dist/src/index.cjs");
-  expect(rootPkg.module).toBe("./dist/src/index.js");
-  expect(rootPkg.types).toBe("./dist/src/index.d.ts");
+  // Main fields should point to dist (flat layout)
+  expect(rootPkg.main).toBe("./dist/index.cjs");
+  expect(rootPkg.module).toBe("./dist/index.js");
+  expect(rootPkg.types).toBe("./dist/index.d.ts");
 
   // Exports should point to dist
   expect(rootPkg.exports["."]).toEqual({
-    types: "./dist/src/index.d.ts",
-    import: "./dist/src/index.js",
-    require: "./dist/src/index.cjs"
+    types: "./dist/index.d.ts",
+    import: "./dist/index.js",
+    require: "./dist/index.cjs"
   });
 
   // Should be marked as private
