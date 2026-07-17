@@ -111,7 +111,6 @@ test("handles comprehensive package.json fields", async () => {
     "*.js",
     "*.cjs",
     "*.d.ts",
-    "src/",
     "bin/",
     "_chunks/"
   ]);
@@ -405,7 +404,7 @@ test("complex bin field transformations", async () => {
   // Check root package.json bin transformations
   const rootPkg = await readJSON(Path.join(testDir, "package.json"));
   expect(rootPkg.bin).toEqual({
-    mytool: "./dist/cli.js" // flattened to the real executable, not the dist/src/ stub
+    mytool: "./dist/cli.js" // flattened to the flat-layout executable
     // processor is removed because src/tools/processor.ts is not detected as an entry
   });
   
@@ -433,7 +432,6 @@ test("files field src transformations", async () => {
     "*.js",
     "*.cjs",
     "*.d.ts",
-    "src/",
     "bin/",
     "_chunks/"
   ]);
@@ -848,7 +846,7 @@ test("bin paths work in --save mode with string format", async () => {
   
   // Check root package.json
   const rootPkg = await readJSON(Path.join(testDir, "package.json"));
-  expect(rootPkg.bin).toBe("./dist/cli.js"); // flattened to the real executable, not the dist/src/ stub
+  expect(rootPkg.bin).toBe("./dist/cli.js"); // flattened to the flat-layout executable
 
   // Check dist package.json
   const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));

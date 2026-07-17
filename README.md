@@ -43,7 +43,6 @@ libuild publish
 ### Output Structure
 - **Flat output**: `src/index.ts` → `dist/index.js` - modules publish at the package root, so direct CDN URLs like `cdn.jsdelivr.net/npm/<pkg>/index.js` just work
 - **Executables**: `bin/cli.ts` → `dist/bin/cli.js` (bin/ stays a subdirectory)
-- **Compatibility stubs**: `dist/src/` contains tiny re-export shims so `<pkg>/src/index.js` paths from packages published with older libuild versions keep resolving
 - **ESM**: `.js` files with ES module syntax
 - **CommonJS**: `.cjs` files for Node.js compatibility
 - **TypeScript**: `.d.ts` declaration files for all modules (when TypeScript is available); internal modules relocate together with their imports intact
@@ -89,9 +88,6 @@ dist/
   utils.js
   utils.cjs
   utils.d.ts
-  src/             # Compatibility stubs (re-export shims for old src/ paths)
-    index.js
-    ...
   package.json     # Clean consumer version
 ```
 
@@ -117,7 +113,6 @@ dist/
   cli.js           # Compiled CLI (dual-runtime shebang, executable)
   cli.cjs
   cli.d.ts
-  src/             # Compatibility stubs
   package.json     # bin: { "mytool": "cli.js" }
 ```
 
@@ -142,7 +137,6 @@ dist/
   index.d.ts
   utils.js         # ESM only
   utils.d.ts
-  src/             # Compatibility stubs
   package.json     # ESM-only exports
 ```
 
@@ -165,7 +159,6 @@ dist/
   utils.cjs
   utils.d.ts
   umd.js           # UMD browser build
-  src/             # Compatibility stubs (src/umd.js is a full UMD copy)
   package.json
 ```
 

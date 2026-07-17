@@ -950,7 +950,6 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
 
   const srcDir = Path.join(cwd, "src");
   const distDir = Path.join(cwd, "dist");
-  const distSrcDir = Path.join(distDir, "src");
 
   // Check src directory exists
   if (!await fileExists(srcDir)) {
@@ -1184,8 +1183,6 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     return name;
   };
 
-  let esmMetafile: ESBuild.Metafile | undefined;
-
   // Build all regular entries with smart dependency resolution
   if (entryPoints.length > 0) {
 
@@ -1208,11 +1205,10 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     const allEntryNames = [...srcEntryNames, ...binEntryNames];
 
     if (allESMEntryPoints.length > 0) {
-      const esmResult = await ESBuild.build({
+      await ESBuild.build({
         entryPoints: allESMEntryPoints.map(p => ({in: p, out: flatOut(p)})),
         outdir: distDir,
         chunkNames: "_chunks/[name]-[hash]", // Put chunks in a subdirectory
-        metafile: true, // Needed for compat stub generation (default export detection)
         format: "esm",
         outExtension: {".js": ".js"},
         bundle: true,
@@ -1245,7 +1241,6 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
           })] : [])
         ],
       });
-      esmMetafile = esmResult.metafile;
 
       // Check if code splitting created chunks and warn about CJS incompatibility
       if (options.formats.cjs) {
@@ -1353,90 +1348,6 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     });
   }
 
-  // Generate compatibility stubs under dist/src/.
-  // Earlier libuild versions published modules at src/<entry>.js; CDNs serve
-  // literal file paths (no exports-map resolution), so copy-pasted URLs like
-  // cdn.jsdelivr.net/npm/<pkg>/src/<entry>.js exist in the wild. Tiny
-  // forwarding modules keep those paths resolving after the move to the flat
-  // layout. The exports map only ever pointed at these files by value (keys
-  // were always ./<entry>), so Node consumers are unaffected either way.
-  {
-    // Map each entry source file to its ESM export names (via the metafile)
-    // so stubs only re-export `default` when it actually exists.
-    // Paths are realpath-normalized on both sides: esbuild resolves symlinks
-    // (e.g. /var -> /private/var on macOS) while our entry paths may not be.
-    const realpath = async (p: string): Promise<string> => {
-      try {
-        return await FS.realpath(p);
-      } catch {
-        return p;
-      }
-    };
-    const exportNamesByEntry = new Map<string, string[]>();
-    if (esmMetafile) {
-      for (const output of Object.values(esmMetafile.outputs)) {
-        if (output.entryPoint) {
-          exportNamesByEntry.set(await realpath(Path.resolve(output.entryPoint)), output.exports ?? []);
-        }
-      }
-    }
-
-    let stubCount = 0;
-    for (const entryPath of srcEntryPoints) {
-      const out = flatOut(entryPath); // "x" or "bin/x"
-      const realEntryPath = await realpath(Path.resolve(entryPath));
-      const stubPath = Path.join(distSrcDir, `${out}.js`);
-      const up = "../".repeat(out.split(Path.sep).length);
-      const target = `${up}${out.split(Path.sep).join("/")}`;
-
-      await FS.mkdir(Path.dirname(stubPath), {recursive: true});
-
-      // ESM stub (only if the real output exists - TLA fallbacks etc.)
-      if (await fileExists(Path.join(distDir, `${out}.js`))) {
-        const exportNames = exportNamesByEntry.get(realEntryPath) ?? [];
-        let stub = `export * from "${target}.js";\n`;
-        if (exportNames.includes("default")) {
-          stub += `export {default} from "${target}.js";\n`;
-        }
-        await FS.writeFile(stubPath, stub);
-        stubCount++;
-      }
-
-      // CJS stub
-      if (await fileExists(Path.join(distDir, `${out}.cjs`))) {
-        await FS.writeFile(
-          Path.join(distSrcDir, `${out}.cjs`),
-          `module.exports = require("${target}.cjs");\n`
-        );
-        stubCount++;
-      }
-
-      // Type declaration stub (module augmentations in the real .d.ts apply
-      // transitively through the re-export)
-      if (await fileExists(Path.join(distDir, `${out}.d.ts`))) {
-        const exportNames = exportNamesByEntry.get(realEntryPath) ?? [];
-        let stub = `export * from "${target}.js";\n`;
-        if (exportNames.includes("default")) {
-          stub += `export {default} from "${target}.js";\n`;
-        }
-        await FS.writeFile(Path.join(distSrcDir, `${out}.d.ts`), stub);
-        stubCount++;
-      }
-    }
-
-    // UMD is a browser <script> target - a re-export stub wouldn't work, so
-    // the compatibility file is a real copy of the (self-contained) build.
-    if (umdEntries.length > 0 && await fileExists(Path.join(distDir, "umd.js"))) {
-      await FS.mkdir(distSrcDir, {recursive: true});
-      await FS.copyFile(Path.join(distDir, "umd.js"), Path.join(distSrcDir, "umd.js"));
-      stubCount++;
-    }
-
-    if (stubCount > 0) {
-      console.info(`  Generating ${stubCount} src/ compatibility stub(s)...`);
-    }
-  }
-
   // TypeScript declarations and triple-slash references are now generated by the TypeScript plugin during ESM build
 
   // Initialize auto-discovered files tracking
@@ -1501,7 +1412,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     if (fixedDistPkg.files.length === 0) {
       delete fixedDistPkg.files;
     } else {
-      for (const pattern of ["*.js", "*.cjs", "*.d.ts", "src/", "bin/", "_chunks/"]) {
+      for (const pattern of ["*.js", "*.cjs", "*.d.ts", "bin/", "_chunks/"]) {
         if (!fixedDistPkg.files.includes(pattern)) {
           fixedDistPkg.files.push(pattern);
         }
@@ -1528,15 +1439,11 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
 
   // Copy ambient .d.ts files from src/ to the dist root (flat layout).
   // These are hand-written type declaration files, not generated by tsc.
-  // A compatibility copy is also placed under dist/src/ so previously
-  // published src/-relative paths keep resolving.
   if (ambientDtsFiles.length > 0) {
     console.info(`  Copying ${ambientDtsFiles.length} ambient .d.ts file(s)...`);
-    await FS.mkdir(distSrcDir, {recursive: true});
     for (const dtsFile of ambientDtsFiles) {
       const srcPath = Path.join(srcDir, dtsFile);
       await FS.copyFile(srcPath, Path.join(distDir, dtsFile));
-      await FS.copyFile(srcPath, Path.join(distSrcDir, dtsFile));
     }
   }
 
@@ -1703,8 +1610,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     // Clean up and validate bin paths based on actual built files.
     // transformBinPaths flattens any src/-shaped path (author "src/cli.js" or
     // previously saved "./dist/src/cli.js") to its flat dist location first -
-    // otherwise the path would resolve to the src/ compatibility STUB, which
-    // exists but is not the executable.
+    // the nested path no longer exists in the flat layout.
     if (rootPkg.bin) {
       if (typeof rootPkg.bin === "string") {
         const distPath = "./" + Path.join("dist", transformBinPaths(rootPkg.bin));
