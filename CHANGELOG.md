@@ -9,9 +9,18 @@ All notable changes to this project will be documented in this file.
 - **Old `src/` paths break on republish** - This is a clean break: no compatibility layer ships. Literal deep URLs into previously published packages (`cdn.jsdelivr.net/npm/<pkg>/src/index.js`) 404 once the package republishes with 0.2.0. Node consumers are unaffected: exports-map keys never contained `src/`, and bare specifiers resolve through the regenerated map.
 - **`--save` paths** - Root package.json now points at `./dist/<entry>.*` (was `./dist/src/<entry>.*`). Old saved paths are migrated automatically on the next `--save` run.
 
+### Added
+- **`.tsx` entry points** - Top-level `.tsx` files in `src/` are now discovered as entry points. esbuild and the declaration generator honor the project's tsconfig `jsx`/`jsxImportSource` settings (or `/** @jsx */` pragmas); declarations fall back to `jsx: preserve`. Fixes [#6](https://github.com/bikeshaving/libuild/issues/6).
+
 ### Fixed
 - **UMD build corrupted sibling entries** - The UMD wrapper was applied to every `.js` file in the output directory, silently wrapping (and breaking) other entry modules in packages with a `src/umd.ts`. It now wraps only the UMD output file.
 - **`--save` bin pointed at stale nested paths** - Saved bin paths are normalized to the flat artifact locations.
+- **`--save` dropped the `import` condition from the `.` export** - A types-only `"."` export passed through without its `import` (and `require`) conditions, breaking bundler resolution of symlinked packages. Missing conditions are now filled in from the main entry. Fixes [#7](https://github.com/bikeshaving/libuild/issues/7).
+- **npm flag filtering restored on `libuild publish`** - The flag whitelist from the original security hardening was silently dropped in the commander CLI rewrite; unknown or unsafe npm flags are again warned about and stripped instead of being forwarded (or hard-crashing the publish).
+
+### Maintenance
+- **esbuild `^0.19` → `^0.28`**, commander 15, dependency patch bumps.
+- Removed dead code paths (unreachable `src/bin` entry flavor, unused parameters).
 
 ## [0.1.25] - 2026-07-14
 

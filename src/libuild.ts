@@ -52,7 +52,7 @@ async function processJavaScriptExecutable(filePath: string, runtimeBanner: stri
     if (modified) {
       await FS.writeFile(filePath, lines.join('\n'));
     }
-  } catch (error) {
+  } catch (error: any) {
     console.warn(`⚠️  WARNING: Could not process executable ${filePath}: ${error.message}`);
   }
 }
@@ -82,7 +82,7 @@ interface BuildOptions {
 }
 
 function isValidEntrypoint(filename: string): boolean {
-  if (!filename.endsWith(".ts") && !filename.endsWith(".js")) return false;
+  if (!filename.endsWith(".ts") && !filename.endsWith(".tsx") && !filename.endsWith(".js")) return false;
   if (filename.endsWith(".d.ts")) return false; // Ignore TypeScript declaration files
   if (filename.startsWith("_")) return false;
   if (filename.startsWith(".")) return false;
@@ -106,6 +106,8 @@ async function findEntrypoints(srcDir: string): Promise<string[]> {
       return isValidEntrypoint(dirent.name);
     })
     .map(dirent => Path.basename(dirent.name, Path.extname(dirent.name)))
+    // Dedupe basenames (e.g. x.ts + x.tsx); entry resolution picks by extension order
+    .filter((name, i, names) => names.indexOf(name) === i)
     .sort();
 }
 
@@ -121,7 +123,7 @@ async function findBinEntrypoints(binDir: string): Promise<string[]> {
       })
       .map(dirent => Path.basename(dirent.name, Path.extname(dirent.name)))
       .sort();
-  } catch (error) {
+  } catch (error: any) {
     // If bin directory doesn't exist, return empty array
     if (error.code === 'ENOENT') {
       return [];
@@ -267,7 +269,7 @@ function checkIfExportIsStale(exportKey: string, exportValue: any, entries: stri
   return entryName ? !entries.includes(entryName) : false;
 }
 
-async function generateExports(entries: string[], mainEntry: string | undefined, options: BuildOptions, existingExports: any = {}, distDir?: string, allBinEntries: Array<{name: string, source: string}> = []): Promise<{exports: any, staleExports: string[]}> {
+async function generateExports(entries: string[], mainEntry: string | undefined, options: BuildOptions, existingExports: any = {}, distDir?: string): Promise<{exports: any, staleExports: string[]}> {
   const exports: any = {};
   const staleExports: string[] = [];
 
@@ -387,6 +389,20 @@ async function generateExports(entries: string[], mainEntry: string | undefined,
 
         throw new Error(`Export import path '${existing.import}' must point to a valid entrypoint in src/ (e.g., './src/utils.js'). Nested directories and internal files are not allowed.`);
       }
+      // Fill in any missing conditions from the entry (#7: a types-only "."
+      // export must still get its import - and require when CJS is enabled -
+      // or bundlers can't resolve the package at all)
+      if (entryFromPath) {
+        const filled: any = {
+          types: existing.types || `./src/${entryFromPath}.d.ts`,
+          import: existing.import || `./src/${entryFromPath}.js`,
+          ...existing,
+        };
+        if (options.formats.cjs && !filled.require) {
+          filled.require = `./src/${entryFromPath}.cjs`;
+        }
+        return filled;
+      }
       return {
         types: existing.types || `./src/${entryFromPath}.d.ts`,
         ...existing,
@@ -504,23 +520,17 @@ async function validateSingleBinPath(binPath: string, fieldName: string, cwd: st
     
     // Extract the corresponding src/ or bin/ path to suggest
     let srcPath: string;
-    let sourceDir: string;
-    
+
     if (binPath.startsWith("./dist/src/")) {
       srcPath = binPath.replace("./dist/src/", "src/");
-      sourceDir = "src";
     } else if (binPath.startsWith("dist/src/")) {
       srcPath = binPath.replace("dist/src/", "src/");
-      sourceDir = "src";
     } else if (binPath.startsWith("./dist/bin/")) {
       srcPath = binPath.replace("./dist/bin/", "bin/");
-      sourceDir = "bin";
     } else if (binPath.startsWith("dist/bin/")) {
       srcPath = binPath.replace("dist/bin/", "bin/");
-      sourceDir = "bin";
     } else {
       srcPath = binPath;
-      sourceDir = "src";
     }
       
     // Check if source file exists
@@ -689,7 +699,7 @@ function fixExportsForDist(obj: any): any {
 async function setExecutablePermissions(filePath: string): Promise<void> {
   try {
     await FS.chmod(filePath, 0o755);
-  } catch (error) {
+  } catch (error: any) {
     console.warn(`⚠️  WARNING: Could not set executable permissions for ${filePath}: ${error.message}`);
   }
 }
@@ -823,7 +833,7 @@ async function resolveWorkspaceVersion(packageName: string, workspaceSpec: strin
     }
     
     return workspaceSpec;
-  } catch (error) {
+  } catch (error: any) {
     console.warn(`⚠️  WARNING: Error resolving workspace dependency "${packageName}": ${error.message}`);
     return workspaceSpec;
   }
@@ -1078,7 +1088,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   }
 
   // Clean dist directory atomically using a temporary directory
-  const tempDistDir = `${distDir}.tmp.${Date.now()}.${Math.random().toString(36).substr(2, 9)}`;
+  const tempDistDir = `${distDir}.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 11)}`;
   
   try {
     // Create temporary directory
@@ -1115,37 +1125,23 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   const umdEntries: string[] = [];
 
   for (const entry of entries) {
-    let entryPath: string;
-    let jsEntryPath: string;
-    let sourceDir: string;
-    
-    if (entry.startsWith("bin/")) {
-      // Handle bin/ entries - need to determine if from top-level bin/ or src/bin/
-      const binEntryName = entry.replace("bin/", "");
-      const binEntryInfo = allBinEntries.find(binEntry => binEntry.name === binEntryName);
-      
-      if (binEntryInfo?.source === 'src') {
-        // This is a src/bin/ entry
-        entryPath = Path.join(srcDir, "bin", `${binEntryName}.ts`);
-        jsEntryPath = Path.join(srcDir, "bin", `${binEntryName}.js`);
-        sourceDir = "src/bin/";
-      } else {
-        // This is a top-level bin/ entry
-        entryPath = Path.join(binDir, `${binEntryName}.ts`);
-        jsEntryPath = Path.join(binDir, `${binEntryName}.js`);
-        sourceDir = "bin/";
-      }
-    } else {
-      // Handle src/ entries (existing logic)
-      entryPath = Path.join(srcDir, `${entry}.ts`);
-      jsEntryPath = Path.join(srcDir, `${entry}.js`);
-      sourceDir = "src/";
-    }
-    
-    const actualPath = await fileExists(entryPath) ? entryPath : jsEntryPath;
+    // Resolve the entry source file, trying extensions in order
+    const isBin = entry.startsWith("bin/");
+    const baseName = entry.replace("bin/", "");
+    const baseDir = isBin ? binDir : srcDir;
+    const sourceDir = isBin ? "bin/" : "src/";
 
-    if (!await fileExists(actualPath)) {
-      throw new Error(`Entry point file not found: ${actualPath}. Expected ${entry.replace("bin/", "")}.ts or ${entry.replace("bin/", "")}.js in ${sourceDir} directory.`);
+    let actualPath: string | undefined;
+    for (const ext of [".ts", ".tsx", ".js"]) {
+      const candidate = Path.join(baseDir, `${baseName}${ext}`);
+      if (await fileExists(candidate)) {
+        actualPath = candidate;
+        break;
+      }
+    }
+
+    if (!actualPath) {
+      throw new Error(`Entry point file not found for "${entry}". Expected ${baseName}.ts, ${baseName}.tsx, or ${baseName}.js in ${sourceDir} directory.`);
     }
 
     if (entry === "umd") {
@@ -1363,7 +1359,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   // Generate package.json
   console.info("  Generating package.json...");
   const cleanedPkg = await cleanPackageJSON(pkg, mainEntry, options, cwd, distDir);
-  const exportsResult = await generateExports(entries, mainEntry, options, pkg.exports, distDir, allBinEntries);
+  const exportsResult = await generateExports(entries, mainEntry, options, pkg.exports, distDir);
 
   // Add ambient .d.ts files to exports BEFORE fixExportsForDist
   for (const dtsFile of ambientDtsFiles) {

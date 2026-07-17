@@ -52,7 +52,7 @@ export function dtsPlugin(options: TypeScriptPluginOptions): ESBuild.Plugin {
         // This includes internal modules so their .d.ts files are generated
         // Filter to only files within rootDir to prevent emitting .d.ts to wrong locations
         const tsFiles = entryFiles
-          .filter(file => file.endsWith('.ts') && !file.endsWith('.d.ts'))
+          .filter(file => (file.endsWith('.ts') || file.endsWith('.tsx')) && !file.endsWith('.d.ts'))
           .map(f => fs.realpathSync(f))
           .filter(f => f.startsWith(resolvedRootDir + Path.sep));
 
@@ -74,6 +74,25 @@ export function dtsPlugin(options: TypeScriptPluginOptions): ESBuild.Plugin {
             module: TS.ModuleKind.ESNext,
             moduleResolution: TS.ModuleResolutionKind.Bundler,
           };
+
+          // .tsx entries need a jsx setting to parse. Honor the project's
+          // tsconfig (jsx/jsxImportSource/jsxFactory) like esbuild does;
+          // fall back to preserve, which needs no runtime resolution.
+          if (tsFiles.some(f => f.endsWith('.tsx'))) {
+            compilerOptions.jsx = TS.JsxEmit.Preserve;
+            const configPath = TS.findConfigFile(resolvedRootDir, TS.sys.fileExists);
+            if (configPath) {
+              const configFile = TS.readConfigFile(configPath, TS.sys.readFile);
+              if (!configFile.error) {
+                const parsed = TS.parseJsonConfigFileContent(configFile.config, TS.sys, Path.dirname(configPath));
+                for (const key of ["jsx", "jsxImportSource", "jsxFactory", "jsxFragmentFactory"] as const) {
+                  if (parsed.options[key] !== undefined) {
+                    (compilerOptions as any)[key] = parsed.options[key];
+                  }
+                }
+              }
+            }
+          }
 
           // Create program with explicit config to avoid tsconfig.json interference
           const program = TS.createProgram(resolvedTsFiles, compilerOptions);

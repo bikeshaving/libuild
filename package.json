@@ -14,10 +14,10 @@
     "test": "bun test"
   },
   "dependencies": {
-    "commander": "^14.0.2",
-    "esbuild": "^0.19.0",
-    "expect": "^30.2.0",
-    "glob": "^13.0.0"
+    "commander": "^15.0.0",
+    "esbuild": "^0.28.1",
+    "expect": "^30.4.1",
+    "glob": "^13.0.6"
   },
   "peerDependencies": {
     "typescript": "^5.0.0",

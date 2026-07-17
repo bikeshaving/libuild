@@ -496,3 +496,33 @@ test("root package.json path mapping with --save", async () => {
 
   await removeTempDir(testDir);
 });
+
+test("'.' export gets import field even when author declared types-only (#7)", async () => {
+  const testDir = await createTempDir("dot-import-field");
+
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "crank-editable.ts"), "export function editable() { return 1; }");
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "crank-editable",
+    version: "0.1.0",
+    type: "module",
+    module: "./dist/crank-editable.js",
+    private: true,
+    // types-only "." export - previously passed through without import,
+    // breaking bundler resolution of symlinked packages
+    exports: {
+      ".": {types: "./dist/crank-editable.d.ts"}
+    }
+  }, null, 2));
+
+  await build(testDir, true); // --save
+
+  const rootPkg = await readJSON(Path.join(testDir, "package.json"));
+  expect(rootPkg.exports["."].import).toBe("./dist/crank-editable.js");
+  expect(rootPkg.exports["."].types).toBe("./dist/crank-editable.d.ts");
+
+  const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
+  expect(distPkg.exports["."].import).toBe("./crank-editable.js");
+
+  await removeTempDir(testDir);
+});
