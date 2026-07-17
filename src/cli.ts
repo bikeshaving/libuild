@@ -1,8 +1,92 @@
 #!/usr/bin/env node
 import { Command } from "commander";
+import * as FS from "fs/promises";
 import * as Path from "path";
 import { build, publish } from "./libuild.ts";
 import { runTests, type Platform } from "./test-runner.ts";
+
+// =============================================================================
+// Publish argument validation
+// =============================================================================
+// The publish command forwards flags to `npm publish`, so its arguments are
+// validated against a strict whitelist to prevent command injection and
+// unsafe npm behavior (e.g. --ignore-scripts, --script-shell, --unsafe-perm).
+// Unknown flags and unexpected positional arguments are dropped with a
+// warning instead of being forwarded to npm.
+
+const ALLOWED_NPM_FLAGS = new Set([
+  "--dry-run", "--tag", "--access", "--registry", "--otp", "--provenance",
+  "--workspace", "--workspaces", "--include-workspace-root",
+]);
+
+// Allowed flags that consume a following value (when not written as --flag=value)
+const NPM_VALUE_FLAGS = new Set([
+  "--tag", "--access", "--registry", "--otp", "--workspace",
+]);
+
+async function isDirectory(path: string): Promise<boolean> {
+  try {
+    const stat = await FS.stat(path);
+    return stat.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+async function runPublish(argv: string[]): Promise<void> {
+  // Remove the "publish" command token (first occurrence only)
+  const args = [...argv];
+  args.splice(args.indexOf("publish"), 1);
+
+  let save = true;
+  let directory: string | undefined;
+  const extraArgs: string[] = [];
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+
+    // libuild-level flags (not forwarded to npm)
+    if (arg === "--save") {
+      save = true;
+      continue;
+    }
+    if (arg === "--no-save") {
+      save = false;
+      continue;
+    }
+
+    if (arg.startsWith("-")) {
+      const flagName = arg.split("=")[0]; // Handle --flag=value format
+      if (ALLOWED_NPM_FLAGS.has(flagName)) {
+        extraArgs.push(arg);
+        // If this flag expects a value and it's not --flag=value, consume the next argument
+        if (!arg.includes("=") && NPM_VALUE_FLAGS.has(flagName) &&
+            i + 1 < args.length && !args[i + 1].startsWith("-")) {
+          extraArgs.push(args[i + 1]);
+          i++;
+        }
+      } else {
+        console.warn(`Warning: Ignoring unknown/unsafe npm flag: ${arg}`);
+      }
+      continue;
+    }
+
+    // Non-flag argument: either the target directory or unexpected
+    if (directory === undefined && await isDirectory(Path.resolve(arg))) {
+      directory = arg;
+    } else {
+      console.warn(`Warning: Ignoring unexpected argument: ${arg}`);
+    }
+  }
+
+  const cwd = Path.resolve(directory ?? ".");
+  try {
+    await publish(cwd, save, extraArgs);
+  } catch (error: any) {
+    console.error("Error:", error?.message ?? error);
+    process.exit(1);
+  }
+}
 
 const program = new Command();
 
@@ -32,20 +116,12 @@ program
   .option("--registry <url>", "Use a specific registry")
   .option("--otp <code>", "One-time password for 2FA")
   .option("--provenance", "Generate provenance statement")
-  .action(async (directory: string, options: Record<string, any>) => {
-    const cwd = Path.resolve(directory);
-    const shouldSave = options.save !== false;
-
-    // Build npm publish args from options
-    const npmArgs: string[] = [];
-    if (options.dryRun) npmArgs.push("--dry-run");
-    if (options.tag) npmArgs.push("--tag", options.tag);
-    if (options.access) npmArgs.push("--access", options.access);
-    if (options.registry) npmArgs.push("--registry", options.registry);
-    if (options.otp) npmArgs.push("--otp", options.otp);
-    if (options.provenance) npmArgs.push("--provenance");
-
-    await publish(cwd, shouldSave, npmArgs);
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .action(async () => {
+    // Publish uses whitelist-validated manual parsing (see runPublish) so
+    // unknown/unsafe npm flags are filtered with warnings instead of erroring.
+    await runPublish(process.argv.slice(2));
   });
 
 program
@@ -88,4 +164,18 @@ program
     process.exit(success ? 0 : 1);
   });
 
-program.parse();
+// Dispatch: the publish command bypasses commander's strict parsing so that
+// unknown/unsafe npm flags, stray arguments, and libuild flags in any position
+// (e.g. `libuild --save publish ...`) are handled by the whitelist validation
+// in runPublish. Everything else (build, test, help, version) uses commander.
+const cliArgs = process.argv.slice(2);
+const commandToken = cliArgs.find((arg) => !arg.startsWith("-"));
+
+if (commandToken === "publish" && !cliArgs.includes("--help") && !cliArgs.includes("-h")) {
+  runPublish(cliArgs).catch((error: any) => {
+    console.error("Error:", error?.message ?? error);
+    process.exit(1);
+  });
+} else {
+  program.parse();
+}

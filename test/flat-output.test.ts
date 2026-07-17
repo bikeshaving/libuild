@@ -151,3 +151,49 @@ test("flat layout: npm pack ships root modules, no src/ paths", async () => {
 
   await removeTempDir(testDir);
 });
+
+test(".tsx entry points are discovered and built (#6)", async () => {
+  const testDir = await createTempDir("tsx-entry");
+
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "tsx-lib",
+    version: "1.0.0",
+    type: "module",
+    module: "./dist/index.js",
+    private: true
+  }, null, 2));
+  // hermetic JSX via pragma - no external jsx runtime needed
+  await FS.writeFile(Path.join(testDir, "src", "h.ts"),
+    "export function h(tag: any, props: any, ...children: any[]) { return {tag, props, children}; }");
+  await FS.writeFile(Path.join(testDir, "src", "widget.tsx"),
+    '/** @jsx h */\nimport {h} from "./h.js";\nexport function widget(name: string) { return <div title={name}>hi</div>; }');
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"),
+    'export {widget} from "./widget.js";');
+
+  await build(testDir);
+
+  const distDir = Path.join(testDir, "dist");
+
+  // .tsx entry built to root as .js
+  expect(await fileExists(Path.join(distDir, "widget.js"))).toBe(true);
+  const js = await FS.readFile(Path.join(distDir, "widget.js"), "utf-8");
+  expect(js).not.toContain("<div"); // JSX compiled away
+
+  // runtime works
+  const mod = await import(Path.join(distDir, "widget.js"));
+  const node = mod.widget("x");
+  expect(node.tag).toBe("div");
+  expect(node.props.title).toBe("x");
+
+  // exports map includes the tsx entry
+  const distPkg = await readJSON(Path.join(distDir, "package.json"));
+  expect(distPkg.exports["./widget"].import).toBe("./widget.js");
+
+  // declarations (if tsc available)
+  if (await fileExists(Path.join(distDir, "index.d.ts"))) {
+    expect(await fileExists(Path.join(distDir, "widget.d.ts"))).toBe(true);
+  }
+
+  await removeTempDir(testDir);
+});
