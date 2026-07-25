@@ -322,6 +322,33 @@ async function generateExports(entries: string[], mainEntry: string | undefined,
     return undefined;
   }
 
+  // Merge fabricated conditions into a user-authored export object without
+  // disturbing the author's relative order - condition order is
+  // spec-significant (Node matches top to bottom, first wins), so a custom
+  // condition the author placed before import/require (browser, node,
+  // development, ...) must stay before it. Fabricated keys slot in around
+  // the author's: types first, default last, everything else appended
+  // after the author's conditions (before default).
+  function mergeConditions(existing: any, fills: Record<string, string | undefined>) {
+    const merged: any = {};
+    if (fills.types !== undefined && existing.types === undefined) {
+      merged.types = fills.types;
+    }
+    for (const [key, value] of Object.entries(existing)) {
+      if (key === "default") continue;
+      merged[key] = value;
+    }
+    for (const [key, value] of Object.entries(fills)) {
+      if (value !== undefined && merged[key] === undefined) {
+        merged[key] = value;
+      }
+    }
+    if (existing.default !== undefined) {
+      merged.default = existing.default;
+    }
+    return merged;
+  }
+
   async function expandExistingExport(existing: any, entryFromPath?: string) {
     if (typeof existing === "string") {
       // Special case for system exports (package.json, etc.)
@@ -381,24 +408,18 @@ async function generateExports(entries: string[], mainEntry: string | undefined,
           }
           const entry = Path.basename(filename, Path.extname(filename));
 
-          const expanded: any = {
-            ...existing,
+          return mergeConditions(existing, {
+            types: await typesFor(entry),
             require: `./src/${entry}.cjs`,
-          };
-          const types = existing.types || await typesFor(entry);
-          if (types) expanded.types = types;
-          return expanded;
+          });
         }
 
         // If we have entryFromPath, use it
         if (entryFromPath) {
-          const expanded: any = {
-            ...existing,
+          return mergeConditions(existing, {
+            types: await typesFor(entryFromPath),
             require: `./src/${entryFromPath}.cjs`,
-          };
-          const types = existing.types || await typesFor(entryFromPath);
-          if (types) expanded.types = types;
-          return expanded;
+          });
         }
 
         throw new Error(`Export import path '${existing.import}' must point to a valid entrypoint in src/ (e.g., './src/utils.js'). Nested directories and internal files are not allowed.`);
@@ -407,16 +428,14 @@ async function generateExports(entries: string[], mainEntry: string | undefined,
       // export must still get its import - and require when CJS is enabled -
       // or bundlers can't resolve the package at all)
       if (entryFromPath) {
-        const types = existing.types || await typesFor(entryFromPath);
-        const filled: any = {
-          ...(types ? {types} : {}),
-          import: existing.import || `./src/${entryFromPath}.js`,
-          ...existing,
+        const fills: Record<string, string | undefined> = {
+          types: await typesFor(entryFromPath),
+          import: `./src/${entryFromPath}.js`,
         };
-        if (options.formats.cjs && !filled.require) {
-          filled.require = `./src/${entryFromPath}.cjs`;
+        if (options.formats.cjs) {
+          fills.require = `./src/${entryFromPath}.cjs`;
         }
-        return filled;
+        return mergeConditions(existing, fills);
       }
       // No entry to fill from (e.g. a UMD-only subpath like
       // {"require": "./dist/umd.js"}) - pass through untouched rather than

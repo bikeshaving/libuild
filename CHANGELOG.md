@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.3] - 2026-07-25
+
+### Fixed
+- **User-authored export condition order not preserved** - Condition order is spec-significant (Node and bundlers match conditions top to bottom, first wins), but the exports generator reordered merged export objects: a custom condition the author placed before `import`/`require` (e.g. `browser`) came out after `import`, making it dead code for ESM bundlers. Expanding/filling an existing export now preserves the author's relative order; fabricated conditions slot in around it (`types` first, `default` kept last).
+
 ## [0.2.2] - 2026-07-25
 
 ### Fixed

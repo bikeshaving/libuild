@@ -556,3 +556,54 @@ test("UMD-only subpath export never fabricates a types path (0.2.1 hotfix)", asy
 
   await removeTempDir(testDir);
 });
+
+test("author-specified condition order is preserved - browser stays before import (0.2.3)", async () => {
+  const testDir = await createTempDir("condition-order");
+
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "crank.ts"), "export const core = () => 1;");
+  await FS.writeFile(Path.join(testDir, "src", "standalone.ts"), "export const jsx = () => 1;");
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "crank-order",
+    version: "0.1.0",
+    type: "module",
+    main: "./dist/crank.cjs",
+    module: "./dist/crank.js",
+    private: true,
+    // Condition order is spec-significant: browser BEFORE import means
+    // browser bundlers get standalone. Reordering it after import makes
+    // the browser condition dead code
+    exports: {
+      ".": {
+        types: "./dist/crank.d.ts",
+        browser: {
+          types: "./dist/standalone.d.ts",
+          import: "./dist/standalone.js",
+          require: "./dist/standalone.cjs"
+        },
+        import: "./dist/crank.js",
+        require: "./dist/crank.cjs"
+      }
+    }
+  }, null, 2));
+
+  await build(testDir);
+
+  const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
+  const dot = distPkg.exports["."];
+  const keys = Object.keys(dot);
+  expect(keys.indexOf("browser")).toBeGreaterThan(-1);
+  expect(keys.indexOf("browser")).toBeLessThan(keys.indexOf("import"));
+  expect(keys.indexOf("types")).toBe(0);
+
+  // The nested browser conditions survive untouched (order and all),
+  // with paths flattened for dist
+  expect(dot.browser).toEqual({
+    types: "./standalone.d.ts",
+    import: "./standalone.js",
+    require: "./standalone.cjs"
+  });
+  expect(Object.keys(dot.browser)).toEqual(["types", "import", "require"]);
+
+  await removeTempDir(testDir);
+});
