@@ -254,7 +254,7 @@ Builds and publishes to npm:
 
 ## Requirements
 
-- **Node.js 16+** or **Bun 1.0+** (for running libuild)
+- **Node.js 20.10+** or **Bun 1.0+** (for running libuild)
 - **TypeScript** (optional, for .d.ts generation)
 - No runtime requirements for library consumers
 

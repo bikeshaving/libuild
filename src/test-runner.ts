@@ -140,7 +140,7 @@ const require = createRequire(import.meta.url);
     format: "esm",
     outfile: outPath,
     platform: isBrowser ? "browser" : "node",
-    target: isBrowser ? "es2020" : "node18",
+    target: isBrowser ? "es2020" : "node20",
     // Replace @b9g/libuild/test with platform-specific shim
     alias: {
       "@b9g/libuild/test": shimPath,

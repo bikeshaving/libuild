@@ -44,7 +44,7 @@
     "typescript"
   ],
   "engines": {
-    "node": ">=18.20.0",
+    "node": ">=20.10.0",
     "bun": ">=1.0.0"
   },
   "repository": {

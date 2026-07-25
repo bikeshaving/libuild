@@ -1213,7 +1213,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
         sourcemap: false,
         external: externalDeps,
         platform: "node",
-        target: "node18",
+        target: "node20",
         packages: "external",
         supported: { "import-attributes": true },
         plugins: [
@@ -1283,7 +1283,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
             sourcemap: false,
             external: externalDeps,
             platform: "node",
-            target: "node18",
+            target: "node20",
             packages: "external",
             supported: { "import-attributes": true },
             plugins: [
@@ -1338,7 +1338,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       sourcemap: false,
       external: externalDeps,
       platform: "node",
-      target: "node18",
+      target: "node20",
       supported: { "import-attributes": true },
       plugins: [umdPlugin({globalName})],
     });
