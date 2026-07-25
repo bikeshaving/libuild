@@ -312,7 +312,17 @@ async function generateExports(entries: string[], mainEntry: string | undefined,
     }
   }
 
-  function expandExistingExport(existing: any, entryFromPath?: string) {
+  // Fabricated types conditions mirror the fileExists guard in
+  // createExportEntry: only point at a .d.ts that was actually emitted
+  // (UMD and JS-only entries have none)
+  async function typesFor(entry: string): Promise<string | undefined> {
+    if (distDir && await fileExists(Path.join(distDir, `${entry}.d.ts`))) {
+      return `./src/${entry}.d.ts`;
+    }
+    return undefined;
+  }
+
+  async function expandExistingExport(existing: any, entryFromPath?: string) {
     if (typeof existing === "string") {
       // Special case for system exports (package.json, etc.)
       if (existing === "./package.json" || existing.endsWith("/package.json")) {
@@ -336,26 +346,26 @@ async function generateExports(entries: string[], mainEntry: string | undefined,
         const entry = Path.basename(filename, Path.extname(filename));
 
         // Convert string export to conditional export
-        return options.formats.cjs ? {
-          types: `./src/${entry}.d.ts`,
-          import: existing,
-          require: `./src/${entry}.cjs`,
-        } : {
-          types: `./src/${entry}.d.ts`,
-          import: existing,
-        };
+        const expanded: any = {};
+        const types = await typesFor(entry);
+        if (types) expanded.types = types;
+        expanded.import = existing;
+        if (options.formats.cjs) {
+          expanded.require = `./src/${entry}.cjs`;
+        }
+        return expanded;
       }
 
       // If we have entryFromPath, use it (this is for auto-discovered entries)
       if (entryFromPath) {
-        return options.formats.cjs ? {
-          types: `./src/${entryFromPath}.d.ts`,
-          import: existing,
-          require: `./src/${entryFromPath}.cjs`,
-        } : {
-          types: `./src/${entryFromPath}.d.ts`,
-          import: existing,
-        };
+        const expanded: any = {};
+        const types = await typesFor(entryFromPath);
+        if (types) expanded.types = types;
+        expanded.import = existing;
+        if (options.formats.cjs) {
+          expanded.require = `./src/${entryFromPath}.cjs`;
+        }
+        return expanded;
       }
 
       throw new Error(`Export path '${existing}' must point to a valid entrypoint in src/ (e.g., './src/utils.js'). Nested directories and internal files (starting with '_' or '.') are not allowed.`);
@@ -371,20 +381,24 @@ async function generateExports(entries: string[], mainEntry: string | undefined,
           }
           const entry = Path.basename(filename, Path.extname(filename));
 
-          return {
+          const expanded: any = {
             ...existing,
-            types: existing.types || `./src/${entry}.d.ts`,
             require: `./src/${entry}.cjs`,
           };
+          const types = existing.types || await typesFor(entry);
+          if (types) expanded.types = types;
+          return expanded;
         }
 
         // If we have entryFromPath, use it
         if (entryFromPath) {
-          return {
+          const expanded: any = {
             ...existing,
-            types: existing.types || `./src/${entryFromPath}.d.ts`,
             require: `./src/${entryFromPath}.cjs`,
           };
+          const types = existing.types || await typesFor(entryFromPath);
+          if (types) expanded.types = types;
+          return expanded;
         }
 
         throw new Error(`Export import path '${existing.import}' must point to a valid entrypoint in src/ (e.g., './src/utils.js'). Nested directories and internal files are not allowed.`);
@@ -393,8 +407,9 @@ async function generateExports(entries: string[], mainEntry: string | undefined,
       // export must still get its import - and require when CJS is enabled -
       // or bundlers can't resolve the package at all)
       if (entryFromPath) {
+        const types = existing.types || await typesFor(entryFromPath);
         const filled: any = {
-          types: existing.types || `./src/${entryFromPath}.d.ts`,
+          ...(types ? {types} : {}),
           import: existing.import || `./src/${entryFromPath}.js`,
           ...existing,
         };
@@ -403,10 +418,10 @@ async function generateExports(entries: string[], mainEntry: string | undefined,
         }
         return filled;
       }
-      return {
-        types: existing.types || `./src/${entryFromPath}.d.ts`,
-        ...existing,
-      };
+      // No entry to fill from (e.g. a UMD-only subpath like
+      // {"require": "./dist/umd.js"}) - pass through untouched rather than
+      // fabricating a types path to a .d.ts that doesn't exist
+      return existing;
     }
     return existing;
   }
@@ -419,7 +434,7 @@ async function generateExports(entries: string[], mainEntry: string | undefined,
     if (isStale) {
       staleExports.push(key);
     } else {
-      exports[key] = expandExistingExport(value);
+      exports[key] = await expandExistingExport(value);
     }
   }
 
@@ -429,7 +444,7 @@ async function generateExports(entries: string[], mainEntry: string | undefined,
     if (!exports["."]) {
       exports["."] = await createExportEntry(mainEntry);
     } else {
-      exports["."] = expandExistingExport(exports["."], mainEntry);
+      exports["."] = await expandExistingExport(exports["."], mainEntry);
     }
   }
 
@@ -443,7 +458,7 @@ async function generateExports(entries: string[], mainEntry: string | undefined,
     if (!exports[key]) {
       exports[key] = await createExportEntry(entry);
     } else {
-      exports[key] = expandExistingExport(exports[key], entry);
+      exports[key] = await expandExistingExport(exports[key], entry);
     }
 
     // Legacy .js extension support (only if not user-specified)

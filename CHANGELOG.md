@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] - 2026-07-25
+
+### Fixed
+- **Broken types path for typeless export subpaths** - An exports entry with no types and no matching entry (e.g. a UMD-only subpath like `"./umd": {"require": "./dist/umd.js"}`) came out of the build as `{"types": "./undefined.d.ts", ...}`, pointing at a nonexistent file. Fabricated `types` conditions are now only emitted when the corresponding `.d.ts` actually exists, and exports with no entry to fill from pass through untouched.
+
 ## [0.2.0] - 2026-07-17
 
 ### Changed (BREAKING)

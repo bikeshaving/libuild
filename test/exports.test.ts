@@ -526,3 +526,33 @@ test("'.' export gets import field even when author declared types-only (#7)", a
 
   await removeTempDir(testDir);
 });
+
+test("UMD-only subpath export never fabricates a types path (0.2.1 hotfix)", async () => {
+  const testDir = await createTempDir("umd-subpath-types");
+
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), "export const x = 1;");
+  await FS.writeFile(Path.join(testDir, "src", "umd.ts"), "export const x = 1;");
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "umd-subpath",
+    version: "0.1.0",
+    type: "module",
+    module: "./dist/index.js",
+    private: true,
+    // UMD emits no .d.ts, so this export legitimately has no types
+    // condition - it must NOT come out as {types: "./undefined.d.ts", ...}
+    exports: {
+      "./umd": {require: "./dist/umd.js"},
+      "./umd.js": {require: "./dist/umd.js"}
+    }
+  }, null, 2));
+
+  await build(testDir);
+
+  const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
+  expect(distPkg.exports["./umd"]).toEqual({require: "./umd.js"});
+  expect(distPkg.exports["./umd.js"]).toEqual({require: "./umd.js"});
+  expect(JSON.stringify(distPkg)).not.toContain("undefined");
+
+  await removeTempDir(testDir);
+});
