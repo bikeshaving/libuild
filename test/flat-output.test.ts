@@ -197,3 +197,34 @@ test(".tsx entry points are discovered and built (#6)", async () => {
 
   await removeTempDir(testDir);
 });
+
+test("UMD bundle works via require() and as a browser global (0.2.2)", async () => {
+  const testDir = await createTempDir("umd-modes");
+  await copyFixture("with-umd", testDir);
+
+  await build(testDir);
+
+  const umdCode = await FS.readFile(Path.join(testDir, "dist", "umd.js"), "utf-8");
+
+  // (a) CJS: a real require() must yield the exports. The factory body is
+  // esbuild cjs output whose internal `module.exports = ...` used to write
+  // to the REAL module and then return undefined, so the wrapper clobbered
+  // exports with `module.exports = factory()` -> undefined
+  const cjsPath = Path.join(testDir, "umd-require-check.cjs");
+  await FS.writeFile(cjsPath, umdCode);
+  const {createRequire} = await import("module");
+  const cjsExports = createRequire(import.meta.url)(cjsPath);
+  expect(typeof cjsExports.createWidget).toBe("function");
+  expect(cjsExports.createWidget("w").name).toBe("w");
+
+  // (b) Browser <script>: no `module` in scope at all. The bare
+  // `module.exports =` in the factory used to throw ReferenceError before
+  // the global was ever assigned
+  const fakeRoot: any = {};
+  new Function("self", "module", "define", umdCode)(fakeRoot, undefined, undefined);
+  expect(typeof fakeRoot.Umdlib).toBe("object");
+  expect(typeof fakeRoot.Umdlib.createWidget).toBe("function");
+  expect(fakeRoot.Umdlib.createWidget("w").name).toBe("w");
+
+  await removeTempDir(testDir);
+});

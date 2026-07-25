@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.2] - 2026-07-25
+
+### Fixed
+- **UMD bundle broken in both browser and require modes** - The UMD wrapper enclosed esbuild's CJS output without neutralizing its internal `module.exports =` assignment or capturing a return value. In a browser `<script>` the bare `module.exports` threw `ReferenceError: module is not defined` before the global was ever assigned; under `require()` the factory wrote to the real module then returned `undefined`, which the wrapper assigned back over the exports. The factory now gets its own CommonJS shim (`var module = { exports: {} }`) and returns `module.exports`, so AMD, CJS, and browser-global modes all work.
+
 ## [0.2.1] - 2026-07-25
 
 ### Fixed

@@ -25,10 +25,12 @@ export function umdPlugin(options: UMDPluginOptions) {
 async function wrapWithUMD(filePath: string, globalName: string) {
   const code = await FS.readFile(filePath, "utf-8");
 
-  // Replace module.exports with return
-  let modifiedCode = code.replace(/\nmodule\.exports\s*=\s*([^;]+);?\s*$/, '\nreturn $1;');
-
-  // UMD wrapper
+  // The factory body is esbuild format:"cjs" output, which assigns to
+  // module.exports internally (module.exports = __toCommonJS(...)) and
+  // returns nothing. Give the factory its own CommonJS shim and return it:
+  // in the browser there is no `module` global to clobber (or throw on),
+  // and in CJS the wrapper's `module.exports = factory()` gets the real
+  // exports instead of undefined.
   const umdHeader = `(function (root, factory) {
   if (typeof define === 'function' && define.amd) {
     // AMD
@@ -41,13 +43,14 @@ async function wrapWithUMD(filePath: string, globalName: string) {
     root.${globalName} = factory();
   }
 }(typeof self !== 'undefined' ? self : this, function () {
+'use strict';
+var module = { exports: {} };
+var exports = module.exports;
 `;
 
   const umdFooter = `
+return module.exports;
 }));`;
 
-  // Wrap with UMD
-  const result = umdHeader + modifiedCode + umdFooter;
-
-  await FS.writeFile(filePath, result);
+  await FS.writeFile(filePath, umdHeader + code + umdFooter);
 }
