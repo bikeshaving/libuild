@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.4] - 2026-07-25
+
+### Fixed
+- **`--save` silently dropped author-added export conditions from root package.json** - The root write-back only handled one level of string values when rewriting exports to `./dist/` paths, so a nested condition object (e.g. a hand-authored `browser: { types, import, require }`) was discarded without warning. The rewrite now recurses through nested conditions (and fallback arrays), preserving custom conditions and their order across the `--save` round-trip.
+
 ## [0.2.3] - 2026-07-25
 
 ### Fixed

@@ -1576,34 +1576,47 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       rootPkg.typings = rootPkg.typings.startsWith("./dist/") ? rootPkg.typings : "./" + Path.join("dist", rootPkg.typings);
     }
 
-    // Clean up and regenerate exports based on actual built files
-    const rootExports: any = {};
-    for (const [key, value] of Object.entries(cleanedPkg.exports)) {
+    // Clean up and regenerate exports based on actual built files.
+    // Conditions nest arbitrarily (browser: {import: ...}) and author-added
+    // conditions must survive the --save round-trip, so recurse - flattening
+    // only one level of strings silently dropped nested condition objects.
+    async function toRootExport(value: any): Promise<any> {
       if (typeof value === "string") {
         const distPath = value.startsWith("./dist/") ? value : `./dist${value.startsWith('.') ? value.slice(1) : value}`;
-        const fullPath = Path.join(cwd, distPath);
         // Only include if the file actually exists
-        if (await fileExists(fullPath)) {
-          rootExports[key] = distPath;
+        return (await fileExists(Path.join(cwd, distPath))) ? distPath : undefined;
+      }
+      if (Array.isArray(value)) {
+        const cleaned: any[] = [];
+        for (const item of value) {
+          const cleanedItem = await toRootExport(item);
+          if (cleanedItem !== undefined) {
+            cleaned.push(cleanedItem);
+          }
         }
-      } else if (typeof value === "object" && value !== null) {
-        const cleanedValue: any = {};
+        return cleaned.length > 0 ? cleaned : undefined;
+      }
+      if (typeof value === "object" && value !== null) {
+        const cleaned: any = {};
         let hasValidPaths = false;
         for (const [subKey, subValue] of Object.entries(value)) {
-          if (typeof subValue === "string") {
-            const distPath = subValue.startsWith("./dist/") ? subValue : `./dist${subValue.startsWith('.') ? subValue.slice(1) : subValue}`;
-            const fullPath = Path.join(cwd, distPath);
-            // Only include if the file actually exists
-            if (await fileExists(fullPath)) {
-              cleanedValue[subKey] = distPath;
-              hasValidPaths = true;
-            }
+          const cleanedSub = await toRootExport(subValue);
+          if (cleanedSub !== undefined) {
+            cleaned[subKey] = cleanedSub;
+            hasValidPaths = true;
           }
         }
         // Only include the export if it has at least one valid path
-        if (hasValidPaths) {
-          rootExports[key] = cleanedValue;
-        }
+        return hasValidPaths ? cleaned : undefined;
+      }
+      return undefined;
+    }
+
+    const rootExports: any = {};
+    for (const [key, value] of Object.entries(cleanedPkg.exports)) {
+      const cleanedValue = await toRootExport(value);
+      if (cleanedValue !== undefined) {
+        rootExports[key] = cleanedValue;
       }
     }
     rootPkg.exports = rootExports;

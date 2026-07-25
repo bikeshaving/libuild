@@ -607,3 +607,59 @@ test("author-specified condition order is preserved - browser stays before impor
 
   await removeTempDir(testDir);
 });
+
+test("--save preserves author-added conditions in root exports (0.2.4)", async () => {
+  const testDir = await createTempDir("save-custom-conditions");
+
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "crank.ts"), "export const core = () => 1;");
+  await FS.writeFile(Path.join(testDir, "src", "standalone.ts"), "export const jsx = () => 1;");
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "crank-save-order",
+    version: "0.1.0",
+    type: "module",
+    main: "./dist/crank.cjs",
+    module: "./dist/crank.js",
+    private: true,
+    exports: {
+      ".": {
+        types: "./dist/crank.d.ts",
+        browser: {
+          types: "./dist/standalone.d.ts",
+          import: "./dist/standalone.js",
+          require: "./dist/standalone.cjs"
+        },
+        import: "./dist/crank.js",
+        require: "./dist/crank.cjs"
+      }
+    }
+  }, null, 2));
+
+  await build(testDir, true); // --save
+
+  // The hand-authored browser condition survives the root write-back
+  // (it used to be silently dropped) and keeps its spec-significant
+  // position before import
+  const rootPkg = await readJSON(Path.join(testDir, "package.json"));
+  const dot = rootPkg.exports["."];
+  expect(dot.browser).toEqual({
+    types: "./dist/standalone.d.ts",
+    import: "./dist/standalone.js",
+    require: "./dist/standalone.cjs"
+  });
+  const keys = Object.keys(dot);
+  expect(keys.indexOf("browser")).toBeLessThan(keys.indexOf("import"));
+  expect(keys.indexOf("types")).toBe(0);
+
+  // dist keeps it too
+  const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
+  const distKeys = Object.keys(distPkg.exports["."]);
+  expect(distKeys.indexOf("browser")).toBeLessThan(distKeys.indexOf("import"));
+
+  // Round-trip is idempotent: a second --save changes nothing
+  await build(testDir, true);
+  const rootPkg2 = await readJSON(Path.join(testDir, "package.json"));
+  expect(rootPkg2.exports["."]).toEqual(dot);
+
+  await removeTempDir(testDir);
+});
