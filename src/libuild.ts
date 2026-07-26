@@ -675,6 +675,34 @@ function transformBinPaths(value: any): any {
   return value;
 }
 
+// Top-level dist subdirectories holding relocated .d.ts files (#11). The
+// declaration shadow tree mirrors src/ subdirectories, which the flat
+// *.d.ts files pattern can't match, so callers whitelist each directory.
+// bin/ and _chunks/ are already covered by their own patterns.
+async function dtsSubdirectories(distDir: string): Promise<string[]> {
+  async function containsDts(dir: string): Promise<boolean> {
+    const entries = await FS.readdir(dir, {withFileTypes: true});
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (await containsDts(Path.join(dir, entry.name))) return true;
+      } else if (entry.name.endsWith(".d.ts")) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  const found: string[] = [];
+  for (const entry of await FS.readdir(distDir, {withFileTypes: true})) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name === "bin" || entry.name === "_chunks") continue;
+    if (await containsDts(Path.join(distDir, entry.name))) {
+      found.push(entry.name);
+    }
+  }
+  return found.sort();
+}
+
 function fixExportsForDist(obj: any): any {
   if (typeof obj === "string") {
     // Fix package.json path
@@ -1442,7 +1470,15 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     if (fixedDistPkg.files.length === 0) {
       delete fixedDistPkg.files;
     } else {
-      for (const pattern of ["*.js", "*.cjs", "*.d.ts", "bin/", "_chunks/"]) {
+      // Relocated declaration trees (dist/<subdir>/*.d.ts) aren't matched by
+      // the flat *.d.ts pattern, so each subdirectory that received
+      // declarations must be whitelisted too - otherwise npm pack excludes
+      // them while index.d.ts still imports them (#11)
+      const patterns = ["*.js", "*.cjs", "*.d.ts", "bin/", "_chunks/"];
+      for (const dir of await dtsSubdirectories(distDir)) {
+        patterns.push(`${dir}/`);
+      }
+      for (const pattern of patterns) {
         if (!fixedDistPkg.files.includes(pattern)) {
           fixedDistPkg.files.push(pattern);
         }

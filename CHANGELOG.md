@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.5] - 2026-07-26
+
+### Fixed
+- **Relocated subdirectory declarations excluded from the published package** - When the author kept a `files` field, the generated dist whitelist only matched flat output (`*.d.ts` etc.), so declaration trees relocated from src/ subdirectories (`dist/internal/*.d.ts`) were silently excluded by `npm pack` while `index.d.ts` still imported them - consumers got a package whose types failed to resolve. Each dist subdirectory holding relocated declarations is now whitelisted. Fixes [#11](https://github.com/bikeshaving/libuild/issues/11).
+
 ## [0.2.4] - 2026-07-25
 
 ### Fixed

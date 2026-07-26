@@ -228,3 +228,50 @@ test("UMD bundle works via require() and as a browser global (0.2.2)", async () 
 
   await removeTempDir(testDir);
 });
+
+test("relocated subdirectory declarations ship in the tarball (#11)", async () => {
+  const testDir = await createTempDir("nested-dts-pack");
+
+  await FS.mkdir(Path.join(testDir, "src", "internal"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"),
+    'export {helper} from "./internal/helper.js";');
+  await FS.writeFile(Path.join(testDir, "src", "internal", "helper.ts"),
+    "export function helper(): number { return 1; }");
+  await FS.writeFile(Path.join(testDir, "extra.txt"), "author extra\n");
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "nested-dts-lib",
+    version: "1.0.0",
+    type: "module",
+    module: "./dist/index.js",
+    // An author files field survives into dist, which switches the dist
+    // package.json onto the whitelist path - the case where nested .d.ts
+    // got excluded from the tarball
+    files: ["extra.txt"]
+  }, null, 2));
+
+  await build(testDir);
+
+  const distDir = Path.join(testDir, "dist");
+
+  // TypeScript may be unavailable in some environments - skip like other tests do
+  if (!await fileExists(Path.join(distDir, "index.d.ts"))) {
+    console.log("⚠ TypeScript declarations not available (tsc not found)");
+    await removeTempDir(testDir);
+    return;
+  }
+
+  const distPkg = await readJSON(Path.join(distDir, "package.json"));
+  expect(distPkg.files).toContain("internal/");
+
+  const proc = Bun.spawn(["npm", "pack", "--dry-run", "--json"], {cwd: distDir, stdout: "pipe", stderr: "pipe"});
+  const out = await new Response(proc.stdout).text();
+  await proc.exited;
+  const packed = JSON.parse(out)[0].files.map((f: any) => f.path);
+
+  // The relocated declaration referenced by index.d.ts actually ships
+  expect(packed).toContain("internal/helper.d.ts");
+  expect(packed).toContain("index.d.ts");
+  expect(packed).toContain("extra.txt");
+
+  await removeTempDir(testDir);
+});
