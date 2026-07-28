@@ -1,7 +1,7 @@
 import {test, expect} from "bun:test";
 import * as FS from "fs/promises";
 import * as Path from "path";
-import {bundleTests, collectTests, parseTapOutput} from "../src/test-runner.ts";
+import {bundleTests, collectTests, parseTapOutput, runCompleted, runTests} from "../src/test-runner.ts";
 import {createTempDir, removeTempDir} from "./test-utils.ts";
 
 // A bundle-hostile CJS package that resolves a sibling file at load time,
@@ -185,4 +185,45 @@ test("parseTapOutput: directive-aware fallback tally when summary lines absent (
   expect(r.todo).toBe(1);
   expect(r.skipped).toBe(1);
   expect(r.errors.map(e => e.name)).toContain("real failure");
+});
+
+test("runCompleted: killed or summary-less runs are not successes (#16)", () => {
+  // Clean, completed run
+  expect(runCompleted(true, null)).toBe(true);
+  // Killed by a signal (timeout/OOM) - NOT a success even if a summary parsed
+  expect(runCompleted(true, "SIGTERM")).toBe(false);
+  expect(runCompleted(true, "SIGKILL")).toBe(false);
+  // No summary produced (crashed before finishing) - NOT a success
+  expect(runCompleted(false, null)).toBe(false);
+});
+
+test("parseTapOutput.completed distinguishes a real run from a killed one (#16)", () => {
+  expect(parseTapOutput(NODE_TAP).completed).toBe(true);
+  // Empty / summary-less output (killed before any result) -> not completed
+  expect(parseTapOutput("").completed).toBe(false);
+  expect(parseTapOutput("TAP version 13\n# Subtest: x\n").completed).toBe(false);
+  // A clean zero-test run still emits "# tests 0" -> completed
+  expect(parseTapOutput("TAP version 13\n1..0\n# tests 0\n# pass 0\n# fail 0\n").completed).toBe(true);
+});
+
+test("a killed (timed-out) test run is reported as failure, not a false green (#16)", async () => {
+  const testDir = await createTempDir("runner-killed");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+  // Top-level await that never resolves: the child hangs at module load and is
+  // killed by the spawn timeout, producing no result summary.
+  await FS.writeFile(Path.join(projDir, "test", "hang.test.ts"),
+    "await new Promise(() => {});\nexport {};\n");
+
+  const ok = await runTests({
+    cwd: projDir,
+    platforms: ["node"],
+    patterns: ["**/test/**/*.ts"],
+    timeout: 3000,
+  });
+
+  // Before #16 this returned true (0 passed, 0 failed -> false green)
+  expect(ok).toBe(false);
+
+  await removeTempDir(testDir);
 });

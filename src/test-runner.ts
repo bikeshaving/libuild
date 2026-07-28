@@ -239,7 +239,7 @@ const TAP_DIRECTIVE = /(?<!\\)#\s*(TODO|SKIP)\b/i;
  * the counts; fall back to a directive-aware per-test tally if they're absent.
  * Exported for unit testing.
  */
-export function parseTapOutput(output: string): { passed: number; failed: number; errors: Array<{ name: string; error: string }>; skipped: number; todo: number } {
+export function parseTapOutput(output: string): { passed: number; failed: number; errors: Array<{ name: string; error: string }>; skipped: number; todo: number; completed: boolean } {
   const errors: Array<{ name: string; error: string }> = [];
   const lines = output.split("\n");
 
@@ -287,13 +287,29 @@ export function parseTapOutput(output: string): { passed: number; failed: number
     return m ? parseInt(m[1], 10) : null;
   };
 
+  // "completed" means the child actually ran to a result summary. A run that
+  // was killed or crashed before finishing produces neither a `# tests` line
+  // nor any `type: 'test'` line - it must not be mistaken for a clean 0/0 pass.
+  const completed = summary("tests") !== null
+    || (tallyPassed + tallyFailed + tallySkipped + tallyTodo) > 0;
+
   return {
     passed: summary("pass") ?? tallyPassed,
     failed: summary("fail") ?? tallyFailed,
     skipped: summary("skipped") ?? tallySkipped,
     todo: summary("todo") ?? tallyTodo,
     errors,
+    completed,
   };
+}
+
+/**
+ * A test run only counts as successfully completed if the child produced a
+ * result summary AND was not killed by a signal (timeout / OOM). Otherwise it
+ * must be treated as a failure, never a false green (issue #16).
+ */
+export function runCompleted(completed: boolean, signal: NodeJS.Signals | null): boolean {
+  return completed && signal == null;
 }
 
 /**
@@ -355,16 +371,23 @@ async function runNodeTests(bundlePath: string, timeout: number): Promise<TestRe
       process.stderr.write(data);
     });
 
-    child.on("close", () => {
-      const { passed, failed, errors, skipped, todo } = parseTapOutput(stdout);
-      resolve({
-        platform: "node",
-        passed,
-        failed,
-        errors,
-        skipped,
-        todo,
-      });
+    child.on("close", (code, signal) => {
+      const { passed, failed, errors, skipped, todo, completed } = parseTapOutput(stdout);
+      if (!runCompleted(completed, signal)) {
+        // Killed (timeout/OOM) or crashed before producing a summary: this is a
+        // failure, not a clean 0/0 pass (issue #16).
+        const reason = signal != null ? `killed (${signal})` : `exited ${code ?? "?"} without completing`;
+        resolve({
+          platform: "node",
+          passed,
+          failed: Math.max(failed, 1),
+          errors: [...errors, { name: `node test process ${reason}`, error: "test run did not complete (timeout, crash, or OOM)" }],
+          skipped,
+          todo,
+        });
+        return;
+      }
+      resolve({ platform: "node", passed, failed, errors, skipped, todo });
     });
 
     child.on("error", (err) => {
@@ -382,7 +405,7 @@ async function runNodeTests(bundlePath: string, timeout: number): Promise<TestRe
  * Parse Bun test output to extract test results
  * Format: "N pass", "N fail"
  */
-function parseBunOutput(output: string): { passed: number; failed: number; errors: Array<{ name: string; error: string }> } {
+function parseBunOutput(output: string): { passed: number; failed: number; errors: Array<{ name: string; error: string }>; completed: boolean } {
   let passed = 0;
   let failed = 0;
   const errors: Array<{ name: string; error: string }> = [];
@@ -394,7 +417,11 @@ function parseBunOutput(output: string): { passed: number; failed: number; error
   if (passMatch) passed = parseInt(passMatch[1], 10);
   if (failMatch) failed = parseInt(failMatch[1], 10);
 
-  return { passed, failed, errors };
+  // Bun always prints a "N pass"/"N fail" summary on a completed run; its
+  // absence means the child was killed or crashed before finishing.
+  const completed = passMatch !== null || failMatch !== null;
+
+  return { passed, failed, errors, completed };
 }
 
 /**
@@ -424,14 +451,21 @@ async function runBunTests(bundlePath: string, timeout: number): Promise<TestRes
       process.stderr.write(data);
     });
 
-    child.on("close", () => {
-      const { passed, failed, errors } = parseBunOutput(stdout + stderr);
-      resolve({
-        platform: "bun",
-        passed,
-        failed,
-        errors,
-      });
+    child.on("close", (code, signal) => {
+      const { passed, failed, errors, completed } = parseBunOutput(stdout + stderr);
+      if (!runCompleted(completed, signal)) {
+        // Killed (timeout/OOM) or crashed before producing a summary: this is a
+        // failure, not a clean 0/0 pass (issue #16).
+        const reason = signal != null ? `killed (${signal})` : `exited ${code ?? "?"} without completing`;
+        resolve({
+          platform: "bun",
+          passed,
+          failed: Math.max(failed, 1),
+          errors: [...errors, { name: `bun test process ${reason}`, error: "test run did not complete (timeout, crash, or OOM)" }],
+        });
+        return;
+      }
+      resolve({ platform: "bun", passed, failed, errors });
     });
 
     child.on("error", (err) => {

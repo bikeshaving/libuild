@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.9] - 2026-07-28
+
+### Fixed
+- **A killed or crashed test child was reported as a green pass** - `runNodeTests`/`runBunTests` ignored the child's exit code and signal, and the parsers returned `0 passed, 0 failed` when a run was killed (spawn timeout / OOM) or crashed before printing a summary — which `printResults` then treated as success (exit 0). A run in which zero tests completed could report green. The runners now require a parsed result summary AND no kill signal to count as success; a killed/incomplete child is a failure naming the reason. Groundwork for per-file process isolation ([#16](https://github.com/bikeshaving/libuild/issues/16)), where a killed shard must count as a failure.
+
 ## [0.2.8] - 2026-07-28
 
 ### Fixed
