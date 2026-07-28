@@ -80,15 +80,63 @@ async function findTestFiles(cwd: string, patterns: string[]): Promise<string[]>
 }
 
 /**
- * Generate entry point that imports all test files
+ * Locate the optional setup file: test/test-setup.{ts,tsx,js,jsx} at the root
+ * of the test directory. A single global preload imported before all tests on
+ * every platform (register beforeEach/afterEach, install polyfills, etc.);
+ * switch behavior per-runtime inside it (`if (typeof Bun !== "undefined")`).
+ * The `test-` prefix keeps it from colliding with a real test named setup.*,
+ * since the runner's test-directory glob collects every .ts file under test/.
  */
-function generateTestEntry(testFiles: string[], platform: string): string {
-  const imports = testFiles
-    .map((file, i) => `import "${file.replace(/\\/g, "/")}";`)
-    .join("\n");
+async function findSetupFile(cwd: string): Promise<string | null> {
+  for (const ext of ["ts", "tsx", "js", "jsx"]) {
+    const candidate = Path.join(cwd, "test", `test-setup.${ext}`);
+    try {
+      await FS.access(candidate);
+      return candidate;
+    } catch {
+      // not present, try next extension
+    }
+  }
+  return null;
+}
+
+/**
+ * Discover the test files and the optional setup file, excluding the setup
+ * file from the test set (it's caught by the test-directory glob but is a
+ * preload, not a test). Exported so discovery/exclusion is testable without
+ * spawning.
+ */
+export async function collectTests(
+  cwd: string,
+  patterns: string[]
+): Promise<{ testFiles: string[]; setupFile: string | null }> {
+  const foundFiles = await findTestFiles(cwd, patterns);
+  const setupFile = await findSetupFile(cwd);
+  const resolvedSetup = setupFile ? await FS.realpath(setupFile) : null;
+
+  const testFiles: string[] = [];
+  for (const file of foundFiles) {
+    if (resolvedSetup && (await FS.realpath(file)) === resolvedSetup) continue;
+    testFiles.push(file);
+  }
+
+  return { testFiles, setupFile };
+}
+
+/**
+ * Generate entry point that imports the setup file (if any) then all test files
+ */
+function generateTestEntry(testFiles: string[], platform: string, setupFile: string | null): string {
+  const toImport = (file: string) => `import "${file.replace(/\\/g, "/")}";`;
+  const lines: string[] = [];
+  if (setupFile) {
+    lines.push("// Setup file - runs before all tests");
+    lines.push(toImport(setupFile));
+  }
+  lines.push(...testFiles.map(toImport));
 
   return `// Auto-generated test entry for ${platform}
-${imports}
+${lines.join("\n")}
 `;
 }
 
@@ -109,7 +157,8 @@ export async function bundleTests(
   outDir: string,
   cwd: string
 ): Promise<string> {
-  const entryContent = generateTestEntry(testFiles, platform);
+  const setupFile = await findSetupFile(cwd);
+  const entryContent = generateTestEntry(testFiles, platform, setupFile);
   const entryPath = Path.join(outDir, `entry-${platform}.ts`);
   const outPath = Path.join(outDir, `bundle-${platform}.js`);
 
@@ -516,7 +565,7 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
   };
 
   console.log("Finding test files...");
-  const testFiles = await findTestFiles(opts.cwd, opts.patterns);
+  const { testFiles, setupFile } = await collectTests(opts.cwd, opts.patterns);
 
   if (testFiles.length === 0) {
     console.log("No test files found.");
@@ -524,6 +573,9 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
   }
 
   console.log(`Found ${testFiles.length} test file(s)`);
+  if (setupFile) {
+    console.log(`Using setup file: ${Path.relative(opts.cwd, setupFile)}`);
+  }
 
   // Create temp directory for bundles
   const tempDir = Path.join(opts.cwd, ".libuild-test");

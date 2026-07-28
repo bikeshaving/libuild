@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.7] - 2026-07-28
+
+### Added
+- **Test setup/preload file** - If `test/test-setup.{ts,tsx,js,jsx}` exists, it is imported once at the top of the generated test entry, before any test files, on every platform (bun, node, browsers). Use it to register global `beforeEach`/`afterEach` hooks, install polyfills, or do environment setup that must run ahead of the suite. There is no config or flag - it's a single conventional file, discovered like the tests themselves and excluded from the run so it isn't executed as a test. Platform-specific behavior lives inside the one file via runtime detection (e.g. `if (typeof Bun !== "undefined") { ... }`), since all tests share a single bundle per platform. Resolves [#13](https://github.com/bikeshaving/libuild/issues/13).
+
 ## [0.2.6] - 2026-07-28
 
 ### Fixed
