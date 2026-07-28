@@ -6,6 +6,7 @@
 
 import * as FS from "fs/promises";
 import * as Path from "path";
+import * as OS from "os";
 import { createServer, type Server } from "http";
 import * as ESBuild from "esbuild";
 import { fileURLToPath } from "url";
@@ -37,6 +38,12 @@ export interface TestResult {
   errors: Array<{ name: string; error: string }>;
   skipped?: number;
   todo?: number;
+}
+
+// One per-file shard's result plus its captured output (dumped on failure).
+interface ShardRun {
+  result: TestResult;
+  output: string;
 }
 
 const DEFAULT_PATTERNS = [
@@ -157,12 +164,15 @@ export async function bundleTests(
   testFiles: string[],
   platform: Platform,
   outDir: string,
-  cwd: string
+  cwd: string,
+  id: string = ""
 ): Promise<string> {
   const setupFile = await findSetupFile(cwd);
   const entryContent = generateTestEntry(testFiles, platform, setupFile);
-  const entryPath = Path.join(outDir, `entry-${platform}.ts`);
-  const outPath = Path.join(outDir, `bundle-${platform}.js`);
+  // A per-shard id keeps concurrent per-file bundles from clobbering each other.
+  const suffix = id ? `-${id}` : "";
+  const entryPath = Path.join(outDir, `entry-${platform}${suffix}.ts`);
+  const outPath = Path.join(outDir, `bundle-${platform}${suffix}.js`);
 
   await FS.writeFile(entryPath, entryContent);
 
@@ -315,7 +325,7 @@ export function runCompleted(completed: boolean, signal: NodeJS.Signals | null):
 /**
  * Run tests in Node.js using node:test
  */
-async function runNodeTests(bundlePath: string, timeout: number): Promise<TestResult> {
+async function runNodeTests(bundlePath: string, timeout: number): Promise<ShardRun> {
   const { spawn } = await import("child_process");
 
   return new Promise((resolve) => {
@@ -326,50 +336,10 @@ async function runNodeTests(bundlePath: string, timeout: number): Promise<TestRe
 
     let stdout = "";
     let stderr = "";
-    // Track pending test results for streaming output
-    let pendingTest: { name: string; passed: boolean } | null = null;
-    const printedTests = new Set<string>();
-
-    child.stdout?.on("data", (data) => {
-      const text = data.toString();
-      stdout += text;
-
-      // Stream output to console, converting TAP to readable format
-      for (const line of text.split("\n")) {
-        // Capture test result
-        const okMatch = line.match(/^\s*ok \d+ - (.+)/);
-        const notOkMatch = line.match(/^\s*not ok \d+ - (.+)/);
-
-        if (okMatch) {
-          pendingTest = { name: okMatch[1], passed: true };
-        } else if (notOkMatch) {
-          pendingTest = { name: notOkMatch[1], passed: false };
-        }
-
-        // When we see type: 'test', print the pending test
-        if ((line.includes("type: 'test'") || line.includes('type: "test"')) && pendingTest) {
-          const key = `${pendingTest.name}-${pendingTest.passed}`;
-          if (!printedTests.has(key)) {
-            printedTests.add(key);
-            // A todo/skip directive isn't a failure - print it neutrally so a
-            // green run doesn't stream false red ✗ marks.
-            if (TAP_DIRECTIVE.test(pendingTest.name)) {
-              console.log(`○ ${pendingTest.name}`);
-            } else if (pendingTest.passed) {
-              console.log(`✓ ${pendingTest.name}`);
-            } else {
-              console.log(`✗ ${pendingTest.name}`);
-            }
-          }
-          pendingTest = null;
-        }
-      }
-    });
-
-    child.stderr?.on("data", (data) => {
-      stderr += data.toString();
-      process.stderr.write(data);
-    });
+    // Capture only - the per-file orchestrator prints a grouped line and dumps
+    // this output on failure (streaming live would interleave across shards).
+    child.stdout?.on("data", (data) => { stdout += data.toString(); });
+    child.stderr?.on("data", (data) => { stderr += data.toString(); });
 
     child.on("close", (code, signal) => {
       const { passed, failed, errors, skipped, todo, completed } = parseTapOutput(stdout);
@@ -378,24 +348,25 @@ async function runNodeTests(bundlePath: string, timeout: number): Promise<TestRe
         // failure, not a clean 0/0 pass (issue #16).
         const reason = signal != null ? `killed (${signal})` : `exited ${code ?? "?"} without completing`;
         resolve({
-          platform: "node",
-          passed,
-          failed: Math.max(failed, 1),
-          errors: [...errors, { name: `node test process ${reason}`, error: "test run did not complete (timeout, crash, or OOM)" }],
-          skipped,
-          todo,
+          result: {
+            platform: "node",
+            passed,
+            failed: Math.max(failed, 1),
+            errors: [...errors, { name: `node test process ${reason}`, error: "test run did not complete (timeout, crash, or OOM)" }],
+            skipped,
+            todo,
+          },
+          output: stdout + stderr,
         });
         return;
       }
-      resolve({ platform: "node", passed, failed, errors, skipped, todo });
+      resolve({ result: { platform: "node", passed, failed, errors, skipped, todo }, output: stdout + stderr });
     });
 
     child.on("error", (err) => {
       resolve({
-        platform: "node",
-        passed: 0,
-        failed: 1,
-        errors: [{ name: "spawn error", error: err.message }],
+        result: { platform: "node", passed: 0, failed: 1, errors: [{ name: "spawn error", error: err.message }], skipped: 0, todo: 0 },
+        output: err.message,
       });
     });
   });
@@ -427,7 +398,7 @@ function parseBunOutput(output: string): { passed: number; failed: number; error
 /**
  * Run tests in Bun
  */
-async function runBunTests(bundlePath: string, timeout: number): Promise<TestResult> {
+async function runBunTests(bundlePath: string, timeout: number): Promise<ShardRun> {
   const { spawn } = await import("child_process");
 
   return new Promise((resolve) => {
@@ -439,17 +410,10 @@ async function runBunTests(bundlePath: string, timeout: number): Promise<TestRes
     let stdout = "";
     let stderr = "";
 
-    child.stdout?.on("data", (data) => {
-      const text = data.toString();
-      stdout += text;
-      process.stdout.write(data);
-    });
-
-    child.stderr?.on("data", (data) => {
-      const text = data.toString();
-      stderr += text;
-      process.stderr.write(data);
-    });
+    // Capture only - the per-file orchestrator prints a grouped line and dumps
+    // this output on failure (streaming live would interleave across shards).
+    child.stdout?.on("data", (data) => { stdout += data.toString(); });
+    child.stderr?.on("data", (data) => { stderr += data.toString(); });
 
     child.on("close", (code, signal) => {
       const { passed, failed, errors, completed } = parseBunOutput(stdout + stderr);
@@ -458,25 +422,87 @@ async function runBunTests(bundlePath: string, timeout: number): Promise<TestRes
         // failure, not a clean 0/0 pass (issue #16).
         const reason = signal != null ? `killed (${signal})` : `exited ${code ?? "?"} without completing`;
         resolve({
-          platform: "bun",
-          passed,
-          failed: Math.max(failed, 1),
-          errors: [...errors, { name: `bun test process ${reason}`, error: "test run did not complete (timeout, crash, or OOM)" }],
+          result: {
+            platform: "bun",
+            passed,
+            failed: Math.max(failed, 1),
+            errors: [...errors, { name: `bun test process ${reason}`, error: "test run did not complete (timeout, crash, or OOM)" }],
+          },
+          output: stdout + stderr,
         });
         return;
       }
-      resolve({ platform: "bun", passed, failed, errors });
+      resolve({ result: { platform: "bun", passed, failed, errors }, output: stdout + stderr });
     });
 
     child.on("error", (err) => {
       resolve({
-        platform: "bun",
-        passed: 0,
-        failed: 1,
-        errors: [{ name: "spawn error", error: err.message }],
+        result: { platform: "bun", passed: 0, failed: 1, errors: [{ name: "spawn error", error: err.message }] },
+        output: err.message,
       });
     });
   });
+}
+
+/**
+ * Run every test file in its OWN process (per-file isolation is the default),
+ * with bounded concurrency, and aggregate the shard results. Isolation frees
+ * each file's native/off-heap memory at process exit - which bun/JSC never
+ * returns within a single long-lived process, so a large jsdom-backed suite
+ * would otherwise thrash and never finish - and lets independent files run in
+ * parallel. A killed/crashed shard counts as a failure (see runCompleted).
+ */
+async function runShardedPlatform(
+  platform: Platform,
+  files: string[],
+  tempDir: string,
+  cwd: string,
+  timeout: number
+): Promise<TestResult> {
+  const runShard = platform === "bun" ? runBunTests : runNodeTests;
+  const concurrency = Math.max(1, Math.min((OS.cpus().length || 2) - 1, files.length));
+
+  const agg: TestResult = { platform, passed: 0, failed: 0, errors: [], skipped: 0, todo: 0 };
+  let next = 0;
+
+  async function worker() {
+    while (true) {
+      const i = next++;
+      if (i >= files.length) return;
+      const file = files[i];
+      const rel = Path.relative(cwd, file);
+
+      let shard: ShardRun;
+      try {
+        const bundle = await bundleTests([file], platform, tempDir, cwd, String(i));
+        shard = await runShard(bundle, timeout);
+      } catch (error: any) {
+        shard = {
+          result: { platform, passed: 0, failed: 1, errors: [{ name: rel, error: error?.message ?? String(error) }], skipped: 0, todo: 0 },
+          output: "",
+        };
+      }
+
+      const r = shard.result;
+      const failed = r.failed > 0;
+      // Build the whole per-file report as one string so concurrent shards
+      // don't interleave (a single console.log call is atomic).
+      let line = `${failed ? "✗" : "✓"} ${rel}: ${r.passed} passed, ${r.failed} failed`;
+      if (r.todo) line += `, ${r.todo} todo`;
+      if (r.skipped) line += `, ${r.skipped} skipped`;
+      if (failed && shard.output.trim()) line += "\n" + shard.output.trimEnd();
+      console.log(line);
+
+      agg.passed += r.passed;
+      agg.failed += r.failed;
+      agg.skipped = (agg.skipped ?? 0) + (r.skipped ?? 0);
+      agg.todo = (agg.todo ?? 0) + (r.todo ?? 0);
+      for (const e of r.errors) agg.errors.push({ name: `${rel} > ${e.name}`, error: e.error });
+    }
+  }
+
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  return agg;
 }
 
 /**
@@ -658,18 +684,18 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
 
   try {
     for (const platform of opts.platforms) {
-      console.log(`\nBuilding tests for ${platform}...`);
-      const bundlePath = await bundleTests(testFiles, platform, tempDir, opts.cwd);
-
-      console.log(`Running tests on ${platform}...`);
-
       let result: TestResult;
-      if (platform === "bun") {
-        result = await runBunTests(bundlePath, opts.timeout);
-      } else if (platform === "node") {
-        result = await runNodeTests(bundlePath, opts.timeout);
+      if (platform === "bun" || platform === "node") {
+        // Per-file process isolation is the default: each file runs in its own
+        // process (frees native memory between files, runs them in parallel).
+        console.log(`\nRunning ${testFiles.length} file(s) on ${platform} (per-file isolation)...`);
+        result = await runShardedPlatform(platform, testFiles, tempDir, opts.cwd, opts.timeout);
       } else {
-        // Browser platforms: chromium, firefox, webkit
+        // Browser runs the combined bundle in a Playwright page (its own
+        // isolation model - a separate browser process).
+        console.log(`\nBuilding tests for ${platform}...`);
+        const bundlePath = await bundleTests(testFiles, platform, tempDir, opts.cwd);
+        console.log(`Running tests on ${platform}...`);
         result = await runBrowserTests(bundlePath, platform, opts.timeout, opts.debug, opts.cwd);
       }
 

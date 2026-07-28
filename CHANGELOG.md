@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.10] - 2026-07-28
+
+### Changed
+- **`libuild test` runs each test file in its own process (per-file isolation, now the default).** Previously every file was bundled into one process per platform. For runtimes that don't return native/off-heap memory to the OS mid-process (bun/JSC), a large jsdom-backed suite grew until it thrashed and never finished; node (V8) reclaimed and passed the same bundle. Each file now bundles and runs in its own process (reusing the setup-file injection and externalization), so native memory is freed between files; independent files run in parallel bounded to ~`cpus-1`. Results aggregate across files into the per-platform summary, and per-file lines report as each finishes. No flag — this is just how the runner works. Browser keeps its single-page Playwright execution. Resolves [#16](https://github.com/bikeshaving/libuild/issues/16).
+
 ## [0.2.9] - 2026-07-28
 
 ### Fixed

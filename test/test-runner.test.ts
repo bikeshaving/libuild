@@ -227,3 +227,55 @@ test("a killed (timed-out) test run is reported as failure, not a false green (#
 
   await removeTempDir(testDir);
 });
+
+test("each test file runs in its own process — default isolation (#16)", async () => {
+  const testDir = await createTempDir("runner-isolation");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+
+  // Two files that each set a global and assert the OTHER's global is absent.
+  // In a single shared process (the old model) whichever runs second sees the
+  // first's global and fails — order-independently. With per-file isolation,
+  // each runs in a fresh process and both pass. (Uses node:test directly so the
+  // hermetic temp dir needs no @b9g/libuild/test / expect resolution.)
+  await FS.writeFile(Path.join(projDir, "test", "a.test.ts"),
+    'import {test} from "node:test";\nimport assert from "node:assert";\n' +
+    'test("a", () => { assert.strictEqual(globalThis.__B__, undefined); globalThis.__A__ = true; });\n');
+  await FS.writeFile(Path.join(projDir, "test", "b.test.ts"),
+    'import {test} from "node:test";\nimport assert from "node:assert";\n' +
+    'test("b", () => { assert.strictEqual(globalThis.__A__, undefined); globalThis.__B__ = true; });\n');
+
+  const ok = await runTests({
+    cwd: projDir,
+    platforms: ["node"],
+    patterns: ["**/test/**/*.ts"],
+    timeout: 30000,
+  });
+
+  // Passes only if a and b ran in separate processes.
+  expect(ok).toBe(true);
+
+  await removeTempDir(testDir);
+});
+
+test("one failing file makes the whole run fail; counts aggregate across files (#16)", async () => {
+  const testDir = await createTempDir("runner-aggregate");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+
+  await FS.writeFile(Path.join(projDir, "test", "pass.test.ts"),
+    'import {test} from "node:test";\ntest("p", () => {});\n');
+  await FS.writeFile(Path.join(projDir, "test", "fail.test.ts"),
+    'import {test} from "node:test";\nimport assert from "node:assert";\ntest("f", () => { assert.strictEqual(1, 2); });\n');
+
+  const ok = await runTests({
+    cwd: projDir,
+    platforms: ["node"],
+    patterns: ["**/test/**/*.ts"],
+    timeout: 30000,
+  });
+
+  expect(ok).toBe(false);
+
+  await removeTempDir(testDir);
+});
