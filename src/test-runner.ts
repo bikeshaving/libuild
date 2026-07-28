@@ -35,6 +35,8 @@ export interface TestResult {
   passed: number;
   failed: number;
   errors: Array<{ name: string; error: string }>;
+  skipped?: number;
+  todo?: number;
 }
 
 const DEFAULT_PATTERNS = [
@@ -222,46 +224,76 @@ const require = createRequire(import.meta.url);
   return outPath;
 }
 
+// A trailing TAP directive marks a test as todo or skipped, e.g.
+// "not ok 5 - name # TODO" or "ok 3 - name # SKIP". These are NOT failures.
+// The lookbehind ignores an escaped "\#", which node uses for a literal "#"
+// inside a test description (so a test literally named "... # TODO" isn't
+// mistaken for a directive).
+const TAP_DIRECTIVE = /(?<!\\)#\s*(TODO|SKIP)\b/i;
+
 /**
- * Parse TAP output to extract test results
- * Node TAP output uses "type: 'test'" for actual tests vs "type: 'suite'" for describe blocks
+ * Parse TAP output to extract test results.
+ * Node TAP output uses "type: 'test'" for actual tests vs "type: 'suite'" for
+ * describe blocks, and marks todo/skip tests with a trailing directive. Prefer
+ * node's authoritative summary lines (# pass / # fail / # todo / # skipped) for
+ * the counts; fall back to a directive-aware per-test tally if they're absent.
+ * Exported for unit testing.
  */
-function parseTapOutput(output: string): { passed: number; failed: number; errors: Array<{ name: string; error: string }> } {
-  let passed = 0;
-  let failed = 0;
+export function parseTapOutput(output: string): { passed: number; failed: number; errors: Array<{ name: string; error: string }>; skipped: number; todo: number } {
   const errors: Array<{ name: string; error: string }> = [];
-
   const lines = output.split("\n");
+
   let lastTestName = "";
-  let lastTestPassed = true;
+  let lastTestNotOk = false;
+  let tallyPassed = 0;
+  let tallyFailed = 0;
+  let tallySkipped = 0;
+  let tallyTodo = 0;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
+  for (const line of lines) {
     // TAP format: "ok 1 - test name" or "not ok 1 - test name"
     const okMatch = line.match(/^\s*ok \d+ - (.+)/);
     const notOkMatch = line.match(/^\s*not ok \d+ - (.+)/);
 
     if (okMatch) {
       lastTestName = okMatch[1];
-      lastTestPassed = true;
+      lastTestNotOk = false;
     } else if (notOkMatch) {
       lastTestName = notOkMatch[1];
-      lastTestPassed = false;
+      lastTestNotOk = true;
     }
 
-    // Check if this is a test (not a suite) by looking for type: 'test'
+    // Only tally on "type: 'test'" lines (skip describe-block "type: 'suite'")
     if (line.includes("type: 'test'") || line.includes('type: "test"')) {
-      if (lastTestPassed) {
-        passed++;
-      } else {
-        failed++;
+      const directive = lastTestName.match(TAP_DIRECTIVE);
+      const kind = directive ? directive[1].toUpperCase() : null;
+      if (kind === "SKIP") {
+        tallySkipped++;
+      } else if (kind === "TODO") {
+        tallyTodo++;
+      } else if (lastTestNotOk) {
+        tallyFailed++;
         errors.push({ name: lastTestName, error: "Test failed" });
+      } else {
+        tallyPassed++;
       }
     }
   }
 
-  return { passed, failed, errors };
+  // Node's TAP reporter emits an authoritative summary; trust it for the counts
+  // when present (the hand tally above still supplies failing-test names).
+  const summary = (label: string): number | null => {
+    const m = output.match(new RegExp(`^#\\s*${label}\\s+(\\d+)`, "m"));
+    return m ? parseInt(m[1], 10) : null;
+  };
+
+  return {
+    passed: summary("pass") ?? tallyPassed,
+    failed: summary("fail") ?? tallyFailed,
+    skipped: summary("skipped") ?? tallySkipped,
+    todo: summary("todo") ?? tallyTodo,
+    errors,
+  };
 }
 
 /**
@@ -303,7 +335,11 @@ async function runNodeTests(bundlePath: string, timeout: number): Promise<TestRe
           const key = `${pendingTest.name}-${pendingTest.passed}`;
           if (!printedTests.has(key)) {
             printedTests.add(key);
-            if (pendingTest.passed) {
+            // A todo/skip directive isn't a failure - print it neutrally so a
+            // green run doesn't stream false red ✗ marks.
+            if (TAP_DIRECTIVE.test(pendingTest.name)) {
+              console.log(`○ ${pendingTest.name}`);
+            } else if (pendingTest.passed) {
               console.log(`✓ ${pendingTest.name}`);
             } else {
               console.log(`✗ ${pendingTest.name}`);
@@ -320,12 +356,14 @@ async function runNodeTests(bundlePath: string, timeout: number): Promise<TestRe
     });
 
     child.on("close", () => {
-      const { passed, failed, errors } = parseTapOutput(stdout);
+      const { passed, failed, errors, skipped, todo } = parseTapOutput(stdout);
       resolve({
         platform: "node",
         passed,
         failed,
         errors,
+        skipped,
+        todo,
       });
     });
 
@@ -533,9 +571,10 @@ function printResults(results: TestResult[]): boolean {
     const color = result.failed === 0 ? "\x1b[32m" : "\x1b[31m";
     const reset = "\x1b[0m";
 
-    console.log(
-      `${color}${status}${reset} ${result.platform}: ${result.passed} passed, ${result.failed} failed`
-    );
+    let summaryLine = `${color}${status}${reset} ${result.platform}: ${result.passed} passed, ${result.failed} failed`;
+    if (result.todo) summaryLine += `, ${result.todo} todo`;
+    if (result.skipped) summaryLine += `, ${result.skipped} skipped`;
+    console.log(summaryLine);
 
     if (result.failed > 0) {
       allPassed = false;

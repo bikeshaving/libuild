@@ -1,7 +1,7 @@
 import {test, expect} from "bun:test";
 import * as FS from "fs/promises";
 import * as Path from "path";
-import {bundleTests, collectTests} from "../src/test-runner.ts";
+import {bundleTests, collectTests, parseTapOutput} from "../src/test-runner.ts";
 import {createTempDir, removeTempDir} from "./test-utils.ts";
 
 // A bundle-hostile CJS package that resolves a sibling file at load time,
@@ -114,4 +114,75 @@ test("setup file extension precedence: .ts wins over .js (#13)", async () => {
   expect(Path.basename(setupFile!)).toBe("test-setup.ts");
 
   await removeTempDir(testDir);
+});
+
+// A node --test TAP transcript with: one pass, one todo (not ok # TODO),
+// one skip (ok # SKIP), one real failure, and one real failure whose NAME
+// contains an escaped "\# TODO" (must NOT be read as a directive).
+const NODE_TAP = `TAP version 13
+# Subtest: passes
+ok 1 - passes
+  ---
+  duration_ms: 1
+  type: 'test'
+  ...
+# Subtest: a todo
+not ok 2 - a todo # TODO
+  ---
+  duration_ms: 1
+  type: 'test'
+  ...
+# Subtest: a skip
+ok 3 - a skip # SKIP
+  ---
+  duration_ms: 0
+  type: 'test'
+  ...
+# Subtest: real failure
+not ok 4 - real failure
+  ---
+  duration_ms: 2
+  type: 'test'
+  ...
+# Subtest: handles \\# TODO in name
+not ok 5 - handles \\# TODO in name
+  ---
+  duration_ms: 1
+  type: 'test'
+  ...
+1..5
+# tests 5
+# suites 0
+# pass 1
+# fail 2
+# cancelled 0
+# skipped 1
+# todo 1
+# duration_ms 6
+`;
+
+test("parseTapOutput: todo/skip are not failures; summary lines authoritative (#15)", () => {
+  const r = parseTapOutput(NODE_TAP);
+  expect(r.passed).toBe(1);
+  expect(r.failed).toBe(2);   // the two real failures only, NOT the todo
+  expect(r.todo).toBe(1);
+  expect(r.skipped).toBe(1);
+
+  // Only the genuine failures are named; todo/skip are excluded
+  const names = r.errors.map(e => e.name);
+  expect(names).toContain("real failure");
+  expect(names.some(n => n.includes("# TODO in name"))).toBe(true); // escaped # is a real failure
+  expect(names.some(n => n === "a todo # TODO")).toBe(false);
+  expect(names.some(n => n.includes("a skip"))).toBe(false);
+});
+
+test("parseTapOutput: directive-aware fallback tally when summary lines absent (#15)", () => {
+  // Strip node's "# pass/# fail/..." summary so the per-test tally is exercised
+  const noSummary = NODE_TAP.split("\n").filter(l => !/^#\s*(tests|suites|pass|fail|cancelled|skipped|todo|duration_ms)\b/.test(l)).join("\n");
+  const r = parseTapOutput(noSummary);
+  expect(r.passed).toBe(1);
+  expect(r.failed).toBe(2);
+  expect(r.todo).toBe(1);
+  expect(r.skipped).toBe(1);
+  expect(r.errors.map(e => e.name)).toContain("real failure");
 });

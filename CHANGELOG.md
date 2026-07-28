@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.8] - 2026-07-28
+
+### Fixed
+- **`libuild test` reported node `test.todo`/skipped tests as failures** - `parseTapOutput` counted every TAP `not ok` line as a failure, ignoring the trailing directive. Node emits `test.todo` as `not ok N - name # TODO` and skipped tests as `# SKIP`, so a run node itself reports as green (`# fail 0`) printed a false red (e.g. "466 passed, 26 failed" for a suite with 25 todo + 1 skip). The parser now honors `# TODO`/`# SKIP` directives (ignoring an escaped `\#` inside a test name), prefers node's authoritative `# pass`/`# fail`/`# todo`/`# skipped` summary lines for the counts, and lists only genuine failures. Todo/skip counts are surfaced in the summary and no longer stream as `✗`. Bun's path was already correct. Fixes [#15](https://github.com/bikeshaving/libuild/issues/15).
+
 ## [0.2.7] - 2026-07-28
 
 ### Added
