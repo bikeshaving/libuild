@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.6] - 2026-07-28
+
+### Fixed
+- **`libuild test` bundled all dependencies for node/bun, breaking bundle-hostile packages** - The test runner inlined every `node_modules` dependency into the test bundle. For the `node` and `bun` platforms this both broke un-bundleable deps (jsdom spawns a worker thread from `xhr-sync-worker.js` via `require.resolve`, which no longer resolves once inlined) and was unnecessary, since those runtimes resolve deps from `node_modules` directly. Node/bun bundles now externalize `node_modules` (`packages: "external"`, matching the library build); only the browser platform still bundles, since it has no `node_modules` at runtime. Fixes [#12](https://github.com/bikeshaving/libuild/issues/12).
+
+### Changed
+- **Test bundles for node/bun now use the runtime's module interop, not esbuild's.** Because deps are external, Node's stricter ESM/CJS interop applies in test code just as it does for consumers of the built package - so a default-only CJS export must be imported as a default (`import Terminal from "@xterm/headless"`), not via named imports. This surfaces interop mismatches in tests instead of hiding them behind esbuild's looser bundled interop. A corollary: a test that imports the package under test *by its own name* now resolves it from `node_modules` at runtime, so the package must be built/linked (previously it could be pulled from source by the bundler).
+
 ## [0.2.5] - 2026-07-26
 
 ### Fixed

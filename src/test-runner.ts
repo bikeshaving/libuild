@@ -100,9 +100,10 @@ function isBrowserPlatform(platform: Platform): platform is "chromium" | "firefo
 }
 
 /**
- * Bundle tests for a specific platform
+ * Bundle tests for a specific platform.
+ * Exported for tests that assert externalization behavior.
  */
-async function bundleTests(
+export async function bundleTests(
   testFiles: string[],
   platform: Platform,
   outDir: string,
@@ -145,6 +146,17 @@ const require = createRequire(import.meta.url);
     alias: {
       "@b9g/libuild/test": shimPath,
     },
+    // node/bun resolve node_modules deps at runtime, so externalize them
+    // instead of inlining. Bundling deps into the test harness is both
+    // pointless (the runtime can require them) and actively broken for
+    // bundle-hostile packages like jsdom (spawns a worker from a real
+    // file, reads __dirname). It also matches how the *built* package runs
+    // - packages: "external" is what the library build uses - so tests
+    // exercise the same module graph and interop consumers get, instead of
+    // esbuild's looser bundled interop. Browsers have no node_modules at
+    // runtime, so they still need everything inlined. The @b9g/libuild/test
+    // alias resolves to an absolute path and stays bundled regardless.
+    ...(isBrowser ? {} : { packages: "external" as const }),
     // External runtime-specific modules
     external: platform === "bun" ? ["bun:test"] : [],
     // Inject require shim for node/bun to handle CJS deps like expect/chalk
