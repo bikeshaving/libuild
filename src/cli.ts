@@ -3,7 +3,7 @@ import { Command } from "commander";
 import * as FS from "fs/promises";
 import * as Path from "path";
 import { build, publish } from "./libuild.ts";
-import { runTests, type Platform } from "./test-runner.ts";
+import { runTests, type Platform } from "./_test-runner.ts";
 
 // =============================================================================
 // Publish argument validation
@@ -130,12 +130,10 @@ program
   .argument("[directory]", "Directory containing tests", ".")
   .option("-p, --platform <platforms...>", "Platforms to test on (bun, node, chromium, firefox, webkit)")
   .option("--debug", "Keep browser open for debugging")
-  .option("-w, --watch", "Watch mode - re-run tests on file changes")
-  .option("--timeout <ms>", "Test timeout in milliseconds", "60000")
+  .option("--timeout <ms>", "Per-file test timeout in milliseconds", "60000")
   .action(async (directory: string, options: {
     platform?: string[];
     debug?: boolean;
-    watch?: boolean;
     timeout?: string;
   }) => {
     const cwd = Path.resolve(directory);
@@ -157,7 +155,6 @@ program
       cwd,
       platforms,
       debug: options.debug || false,
-      watch: options.watch || false,
       timeout: parseInt(options.timeout || "60000", 10),
     });
 

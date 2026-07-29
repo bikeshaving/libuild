@@ -1,7 +1,7 @@
 import {test, expect} from "bun:test";
 import * as FS from "fs/promises";
 import * as Path from "path";
-import {bundleTests, collectTests, parseTapOutput, runCompleted, runTests} from "../src/test-runner.ts";
+import {bundleTests, collectTests, parseTapOutput, runCompleted, runTests} from "../src/_test-runner.ts";
 import {createTempDir, removeTempDir} from "./test-utils.ts";
 
 // A bundle-hostile CJS package that resolves a sibling file at load time,
@@ -308,6 +308,24 @@ test("test-setup.test.* is found wherever tests live — co-located in src/ (#13
   const bundle = await FS.readFile(
     await bundleTests(testFiles, "node", outDir, projDir, "", setupFile), "utf-8");
   expect(bundle.indexOf("__SETUP_MARKER__")).toBeLessThan(bundle.indexOf("__TEST_MARKER__"));
+
+  await removeTempDir(testDir);
+});
+
+test("setup file is recognized for the .spec convention too, not just .test (#audit)", async () => {
+  const testDir = await createTempDir("runner-spec-setup");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "src"), {recursive: true});
+
+  // A .spec-convention project: setup named test-setup.spec.ts must be found
+  // by the .spec glob and recognized (previously only .test was recognized).
+  await FS.writeFile(Path.join(projDir, "src", "test-setup.spec.ts"), "globalThis.__S__ = 1;\n");
+  await FS.writeFile(Path.join(projDir, "src", "thing.spec.ts"), "export {};\n");
+
+  const {testFiles, setupFile} = await collectTests(projDir, ["**/*.spec.ts"]);
+  expect(setupFile).not.toBeNull();
+  expect(Path.basename(setupFile!)).toBe("test-setup.spec.ts");
+  expect(testFiles.map(f => Path.basename(f))).toEqual(["thing.spec.ts"]);
 
   await removeTempDir(testDir);
 });

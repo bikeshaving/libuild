@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.12] - 2026-07-28
+
+### Changed (BREAKING)
+- **The test runner is now internal — `@b9g/libuild/test-runner` is no longer a public export.** It exposed the runner machinery plus a pile of helpers only meant for libuild's own unit tests (`bundleTests`, `collectTests`, `parseTapOutput`, etc.) and a dead `detectPlatforms()`. Every public export is a liability; the runner was never a deliberate consumer contract. The public test surface remains `@b9g/libuild/test` (the `describe`/`test`/`expect` API). `detectPlatforms()` is removed.
+
+### Fixed
+- **Setup file now recognized for the `.spec.` convention, not just `.test.`.** Test discovery accepts both `*.test.*` and `*.spec.*`, but setup recognition only matched `test-setup.test.*` — so a `.spec.`-convention project's `test-setup.spec.ts` was silently run as an ordinary (test-less) shard and set up nothing for the other files. Both `test-setup.test.*` and `test-setup.spec.*` are now recognized.
+
+### Removed
+- **`libuild test --watch`** — the flag was wired up but never did anything (a no-op). Removed rather than left advertising behavior it doesn't have.
+
+### Notes
+- `--timeout` is **per file** (each file runs in its own process as of 0.2.10), not a whole-suite budget. Browser, which still runs a combined bundle, applies it per run.
+
 ## [0.2.11] - 2026-07-28
 
 ### Changed (BREAKING)

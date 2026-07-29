@@ -25,10 +25,8 @@ export interface TestRunnerOptions {
   platforms: Platform[];
   /** Enable debug mode (keeps browser open) */
   debug: boolean;
-  /** Test timeout in ms */
+  /** Per-file test timeout in ms (each file runs in its own process) */
   timeout: number;
-  /** Watch mode */
-  watch: boolean;
 }
 
 export interface TestResult {
@@ -94,16 +92,17 @@ async function findTestFiles(cwd: string, patterns: string[]): Promise<string[]>
  * beforeEach/afterEach, install polyfills, etc.); switch behavior per-runtime
  * inside it (`if (typeof Bun !== "undefined")`).
  *
- * The `.test.` infix is deliberate: the file is a `*.test.*` match, so it's
- * discovered by the SAME test globs as everything else - found wherever your
- * tests live, with no separate discovery mechanism. It is then recognized by
- * name, pulled out of the run (see collectTests), and imported first instead of
+ * The `.test.`/`.spec.` infix is deliberate: the file is a `*.test.*`/`*.spec.*`
+ * match, so it's discovered by the SAME test globs as everything else - found
+ * wherever your tests live, matching whichever suffix convention your suite
+ * uses, with no separate discovery mechanism. It is then recognized by name,
+ * pulled out of the run (see collectTests), and imported first instead of
  * executed as a test. The `test-` prefix keeps it from colliding with a real
  * test named setup.*. One global setup is the model, so more than one is an
  * error rather than a silent guess.
  */
 export function isSetupFile(file: string): boolean {
-  return /(?:^|[\\/])test-setup\.test\.(?:ts|tsx|js|jsx)$/.test(file);
+  return /(?:^|[\\/])test-setup\.(?:test|spec)\.(?:ts|tsx|js|jsx)$/.test(file);
 }
 
 /**
@@ -124,7 +123,7 @@ export async function collectTests(
   const setupMatches = foundFiles.filter(isSetupFile);
   if (setupMatches.length > 1) {
     throw new Error(
-      `Multiple test-setup.test.* files found; libuild supports one global setup file:\n` +
+      `Multiple test-setup.{test,spec}.* files found; libuild supports one global setup file:\n` +
       setupMatches.map((f) => `  ${Path.relative(cwd, f)}`).join("\n")
     );
   }
@@ -663,7 +662,6 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
     platforms: options.platforms || ["bun"],
     debug: options.debug || false,
     timeout: options.timeout || 60000,
-    watch: options.watch || false,
   };
 
   console.log("Finding test files...");
@@ -712,33 +710,4 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
       await FS.rm(tempDir, { recursive: true, force: true }).catch(() => {});
     }
   }
-}
-
-/**
- * Detect available platforms
- */
-export async function detectPlatforms(): Promise<("bun" | "node" | "browser")[]> {
-  const platforms: ("bun" | "node" | "browser")[] = [];
-
-  // Check for Bun
-  const { spawn } = await import("child_process");
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn("bun", ["--version"], { stdio: "ignore" });
-      child.on("close", (code) => (code === 0 ? resolve() : reject()));
-      child.on("error", reject);
-    });
-    platforms.push("bun");
-  } catch {}
-
-  // Node is always available (we're running in it)
-  platforms.push("node");
-
-  // Check for Playwright
-  try {
-    await import("playwright");
-    platforms.push("browser");
-  } catch {}
-
-  return platforms;
 }
