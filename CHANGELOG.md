@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.11] - 2026-07-28
+
+### Changed (BREAKING)
+- **Test setup file renamed to `test-setup.test.{ts,tsx,js,jsx}`, discovered anywhere your tests are.** The `test/test-setup.*` convention from 0.2.7 was inconsistent: test files are discovered by glob (`*.test.*` co-located anywhere, or under `test/`), but the setup file was pinned to a hardcoded `test/` location — so a project that co-locates tests in `src/` had nowhere to put one. The setup file now carries the `.test.` infix, so it's a `*.test.*` match found by the **same** discovery as every other test file — wherever your tests live — then recognized by name, excluded from the run, and imported first. One discovery mechanism, not two. More than one `test-setup.test.*` is now an error (one global setup is the model). **Migration:** rename `test/test-setup.ts` → `test/test-setup.test.ts` (or place it beside your tests anywhere).
+
 ## [0.2.10] - 2026-07-28
 
 ### Changed

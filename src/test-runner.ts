@@ -89,24 +89,21 @@ async function findTestFiles(cwd: string, patterns: string[]): Promise<string[]>
 }
 
 /**
- * Locate the optional setup file: test/test-setup.{ts,tsx,js,jsx} at the root
- * of the test directory. A single global preload imported before all tests on
- * every platform (register beforeEach/afterEach, install polyfills, etc.);
- * switch behavior per-runtime inside it (`if (typeof Bun !== "undefined")`).
- * The `test-` prefix keeps it from colliding with a real test named setup.*,
- * since the runner's test-directory glob collects every .ts file under test/.
+ * Locate the optional setup file: `test-setup.test.{ts,tsx,js,jsx}`. A single
+ * global preload imported before all tests on every platform (register
+ * beforeEach/afterEach, install polyfills, etc.); switch behavior per-runtime
+ * inside it (`if (typeof Bun !== "undefined")`).
+ *
+ * The `.test.` infix is deliberate: the file is a `*.test.*` match, so it's
+ * discovered by the SAME test globs as everything else - found wherever your
+ * tests live, with no separate discovery mechanism. It is then recognized by
+ * name, pulled out of the run (see collectTests), and imported first instead of
+ * executed as a test. The `test-` prefix keeps it from colliding with a real
+ * test named setup.*. One global setup is the model, so more than one is an
+ * error rather than a silent guess.
  */
-async function findSetupFile(cwd: string): Promise<string | null> {
-  for (const ext of ["ts", "tsx", "js", "jsx"]) {
-    const candidate = Path.join(cwd, "test", `test-setup.${ext}`);
-    try {
-      await FS.access(candidate);
-      return candidate;
-    } catch {
-      // not present, try next extension
-    }
-  }
-  return null;
+export function isSetupFile(file: string): boolean {
+  return /(?:^|[\\/])test-setup\.test\.(?:ts|tsx|js|jsx)$/.test(file);
 }
 
 /**
@@ -120,14 +117,19 @@ export async function collectTests(
   patterns: string[]
 ): Promise<{ testFiles: string[]; setupFile: string | null }> {
   const foundFiles = await findTestFiles(cwd, patterns);
-  const setupFile = await findSetupFile(cwd);
-  const resolvedSetup = setupFile ? await FS.realpath(setupFile) : null;
 
-  const testFiles: string[] = [];
-  for (const file of foundFiles) {
-    if (resolvedSetup && (await FS.realpath(file)) === resolvedSetup) continue;
-    testFiles.push(file);
+  // The setup file is itself a *.test.* match (see isSetupFile), so it's
+  // already in foundFiles - recognize it, pull it out of the run, and hand it
+  // back to be imported first. One global setup is the model; error on more.
+  const setupMatches = foundFiles.filter(isSetupFile);
+  if (setupMatches.length > 1) {
+    throw new Error(
+      `Multiple test-setup.test.* files found; libuild supports one global setup file:\n` +
+      setupMatches.map((f) => `  ${Path.relative(cwd, f)}`).join("\n")
+    );
   }
+  const setupFile = setupMatches[0] ?? null;
+  const testFiles = foundFiles.filter((f) => !isSetupFile(f));
 
   return { testFiles, setupFile };
 }
@@ -165,9 +167,9 @@ export async function bundleTests(
   platform: Platform,
   outDir: string,
   cwd: string,
-  id: string = ""
+  id: string = "",
+  setupFile: string | null = null
 ): Promise<string> {
-  const setupFile = await findSetupFile(cwd);
   const entryContent = generateTestEntry(testFiles, platform, setupFile);
   // A per-shard id keeps concurrent per-file bundles from clobbering each other.
   const suffix = id ? `-${id}` : "";
@@ -457,7 +459,8 @@ async function runShardedPlatform(
   files: string[],
   tempDir: string,
   cwd: string,
-  timeout: number
+  timeout: number,
+  setupFile: string | null
 ): Promise<TestResult> {
   const runShard = platform === "bun" ? runBunTests : runNodeTests;
   const concurrency = Math.max(1, Math.min((OS.cpus().length || 2) - 1, files.length));
@@ -474,7 +477,7 @@ async function runShardedPlatform(
 
       let shard: ShardRun;
       try {
-        const bundle = await bundleTests([file], platform, tempDir, cwd, String(i));
+        const bundle = await bundleTests([file], platform, tempDir, cwd, String(i), setupFile);
         shard = await runShard(bundle, timeout);
       } catch (error: any) {
         shard = {
@@ -689,12 +692,12 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
         // Per-file process isolation is the default: each file runs in its own
         // process (frees native memory between files, runs them in parallel).
         console.log(`\nRunning ${testFiles.length} file(s) on ${platform} (per-file isolation)...`);
-        result = await runShardedPlatform(platform, testFiles, tempDir, opts.cwd, opts.timeout);
+        result = await runShardedPlatform(platform, testFiles, tempDir, opts.cwd, opts.timeout, setupFile);
       } else {
         // Browser runs the combined bundle in a Playwright page (its own
         // isolation model - a separate browser process).
         console.log(`\nBuilding tests for ${platform}...`);
-        const bundlePath = await bundleTests(testFiles, platform, tempDir, opts.cwd);
+        const bundlePath = await bundleTests(testFiles, platform, tempDir, opts.cwd, "", setupFile);
         console.log(`Running tests on ${platform}...`);
         result = await runBrowserTests(bundlePath, platform, opts.timeout, opts.debug, opts.cwd);
       }

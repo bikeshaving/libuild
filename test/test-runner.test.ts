@@ -47,34 +47,31 @@ test("node bundle externalizes node_modules deps; browser inlines them (#12)", a
   await removeTempDir(testDir);
 });
 
-test("setup file (test/test-setup.*) is discovered, loaded first, and excluded from tests (#13)", async () => {
+test("test-setup.test.* is discovered by the ordinary test glob, excluded, and loaded first (#13)", async () => {
   const testDir = await createTempDir("runner-setup");
   const projDir = Path.join(testDir, "proj");
   const outDir = Path.join(testDir, "out");
   await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
   await FS.mkdir(outDir, {recursive: true});
 
-  // Setup file and a test file, both under test/. The **/test/** glob catches
-  // both; the setup file must be pulled out of the test set and imported first.
-  const setupPath = Path.join(projDir, "test", "test-setup.ts");
+  // The setup file is a *.test.* match, so it's found by the SAME glob as the
+  // test files - then recognized by name, pulled out of the run, imported first.
+  const setupPath = Path.join(projDir, "test", "test-setup.test.ts");
   const testPath = Path.join(projDir, "test", "sample.test.ts");
   // Side-effect assignments (not consts) so esbuild can't tree-shake the markers
   await FS.writeFile(setupPath, 'globalThis.__SETUP_MARKER__ = true;\n');
   await FS.writeFile(testPath, 'globalThis.__TEST_MARKER__ = true;\n');
 
-  // Discovery + exclusion: setup found, and NOT counted as a test file
-  const {testFiles, setupFile} = await collectTests(projDir, [
-    "**/*.test.ts",
-    "**/test/**/*.ts",
-  ]);
+  // Discovery + exclusion: setup found via the plain *.test.ts glob, and NOT
+  // counted as a test file
+  const {testFiles, setupFile} = await collectTests(projDir, ["**/*.test.ts"]);
   expect(setupFile).not.toBeNull();
   expect(await FS.realpath(setupFile!)).toBe(await FS.realpath(setupPath));
-  expect(testFiles.map(f => Path.basename(f))).toContain("sample.test.ts");
-  expect(testFiles.map(f => Path.basename(f))).not.toContain("test-setup.ts");
+  expect(testFiles.map(f => Path.basename(f))).toEqual(["sample.test.ts"]);
 
   // Ordering: the generated bundle imports the setup before the test
   const bundle = await FS.readFile(
-    await bundleTests(testFiles, "node", outDir, projDir), "utf-8");
+    await bundleTests(testFiles, "node", outDir, projDir, "", setupFile), "utf-8");
   expect(bundle).toContain("__SETUP_MARKER__");
   expect(bundle).toContain("__TEST_MARKER__");
   expect(bundle.indexOf("__SETUP_MARKER__")).toBeLessThan(bundle.indexOf("__TEST_MARKER__"));
@@ -102,16 +99,25 @@ test("no setup file present -> no setup import, no error (#13)", async () => {
   await removeTempDir(testDir);
 });
 
-test("setup file extension precedence: .ts wins over .js (#13)", async () => {
-  const testDir = await createTempDir("runner-setup-ext");
+test("more than one test-setup.test.* file is an error (#13)", async () => {
+  const testDir = await createTempDir("runner-setup-multi");
   const projDir = Path.join(testDir, "proj");
   await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+  await FS.mkdir(Path.join(projDir, "src"), {recursive: true});
 
-  await FS.writeFile(Path.join(projDir, "test", "test-setup.js"), "// js\n");
-  await FS.writeFile(Path.join(projDir, "test", "test-setup.ts"), "// ts\n");
+  // One global setup is the model - two is ambiguous, so it must error rather
+  // than silently pick one.
+  await FS.writeFile(Path.join(projDir, "test", "test-setup.test.ts"), "// a\n");
+  await FS.writeFile(Path.join(projDir, "src", "test-setup.test.ts"), "// b\n");
 
-  const {setupFile} = await collectTests(projDir, ["**/test/**/*.ts"]);
-  expect(Path.basename(setupFile!)).toBe("test-setup.ts");
+  let threw = false;
+  try {
+    await collectTests(projDir, ["**/*.test.ts"]);
+  } catch (e: any) {
+    threw = true;
+    expect(e.message).toContain("one global setup file");
+  }
+  expect(threw).toBe(true);
 
   await removeTempDir(testDir);
 });
@@ -276,6 +282,32 @@ test("one failing file makes the whole run fail; counts aggregate across files (
   });
 
   expect(ok).toBe(false);
+
+  await removeTempDir(testDir);
+});
+
+test("test-setup.test.* is found wherever tests live — co-located in src/ (#13)", async () => {
+  const testDir = await createTempDir("runner-flat-setup");
+  const projDir = Path.join(testDir, "proj");
+  const outDir = Path.join(testDir, "out");
+  await FS.mkdir(Path.join(projDir, "src"), {recursive: true});
+  await FS.mkdir(outDir, {recursive: true});
+
+  // Co-located layout: tests and setup live together in src/, no test/ dir.
+  // Because setup is itself a *.test.* match, the same glob finds it here.
+  const setupPath = Path.join(projDir, "src", "test-setup.test.ts");
+  const testPath = Path.join(projDir, "src", "sample.test.ts");
+  await FS.writeFile(setupPath, "globalThis.__SETUP_MARKER__ = true;\n");
+  await FS.writeFile(testPath, "globalThis.__TEST_MARKER__ = true;\n");
+
+  const {testFiles, setupFile} = await collectTests(projDir, ["**/*.test.ts"]);
+  expect(setupFile).not.toBeNull();
+  expect(await FS.realpath(setupFile!)).toBe(await FS.realpath(setupPath));
+  expect(testFiles.map(f => Path.basename(f))).toEqual(["sample.test.ts"]);
+
+  const bundle = await FS.readFile(
+    await bundleTests(testFiles, "node", outDir, projDir, "", setupFile), "utf-8");
+  expect(bundle.indexOf("__SETUP_MARKER__")).toBeLessThan(bundle.indexOf("__TEST_MARKER__"));
 
   await removeTempDir(testDir);
 });
