@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.13] - 2026-07-28
+
+### Changed (BREAKING)
+- **One public test entrypoint: `@b9g/libuild/test`.** The platform shims `@b9g/libuild/test-bun`, `/test-node`, and `/test-browser` (and their `.js` aliases) are removed. `test-bun`/`test-node` were trivial wrappers over `bun:test` and `node:test`+`expect`; they're collapsed into the single dispatcher, and the browser runner is now an internal chunk (`_test-browser`). `@b9g/libuild/test` detects the runtime (`typeof Bun` / `typeof process` — a real browser has no `process`, which distinguishes it from node+jsdom) and loads the right backend directly, so bun/node use their own builtins rather than a libuild module. The runner no longer aliases the shims, which also removes its `require.resolve`/`import.meta` shim-resolution boilerplate. Consumers import from `@b9g/libuild/test` exactly as before — only the internal sub-paths are gone.
+
 ## [0.2.12] - 2026-07-28
 
 ### Changed (BREAKING)

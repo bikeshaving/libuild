@@ -1,6 +1,6 @@
 {
   "name": "@b9g/libuild",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "description": "Zero-config library builds",
   "main": "./dist/libuild.cjs",
   "bin": {
@@ -86,30 +86,6 @@
     "./test.js": {
       "types": "./dist/test.d.ts",
       "import": "./dist/test.js"
-    },
-    "./test-bun": {
-      "types": "./dist/test-bun.d.ts",
-      "import": "./dist/test-bun.js"
-    },
-    "./test-bun.js": {
-      "types": "./dist/test-bun.d.ts",
-      "import": "./dist/test-bun.js"
-    },
-    "./test-node": {
-      "types": "./dist/test-node.d.ts",
-      "import": "./dist/test-node.js"
-    },
-    "./test-node.js": {
-      "types": "./dist/test-node.d.ts",
-      "import": "./dist/test-node.js"
-    },
-    "./test-browser": {
-      "types": "./dist/test-browser.d.ts",
-      "import": "./dist/test-browser.js"
-    },
-    "./test-browser.js": {
-      "types": "./dist/test-browser.d.ts",
-      "import": "./dist/test-browser.js"
     }
   },
   "files": [

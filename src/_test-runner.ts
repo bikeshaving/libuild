@@ -9,10 +9,7 @@ import * as Path from "path";
 import * as OS from "os";
 import { createServer, type Server } from "http";
 import * as ESBuild from "esbuild";
-import { fileURLToPath } from "url";
 import { createRequire } from "module";
-
-const __dirname = Path.dirname(fileURLToPath(import.meta.url));
 
 export type Platform = "bun" | "node" | "chromium" | "firefox" | "webkit";
 
@@ -177,21 +174,9 @@ export async function bundleTests(
 
   await FS.writeFile(entryPath, entryContent);
 
-  // Determine the shim path based on platform
   const isBrowser = isBrowserPlatform(platform);
-  const shimName = isBrowser ? "test-browser" : `test-${platform}`;
 
-  // For development, use source files; for installed package, use dist
-  let shimPath: string;
-  try {
-    // Try to resolve from the package (installed mode)
-    shimPath = require.resolve(`@b9g/libuild/${shimName}`);
-  } catch {
-    // Development mode - use relative path
-    shimPath = Path.join(__dirname, `${shimName}.js`);
-  }
-
-  // For Node/Bun, we need to inject a require shim for CJS interop
+  // For Node/Bun, inject a require shim for CJS interop of external deps.
   const requireShim = `
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
@@ -204,23 +189,17 @@ const require = createRequire(import.meta.url);
     outfile: outPath,
     platform: isBrowser ? "browser" : "node",
     target: isBrowser ? "es2020" : "node20",
-    // Replace @b9g/libuild/test with platform-specific shim
-    alias: {
-      "@b9g/libuild/test": shimPath,
-    },
-    // node/bun resolve node_modules deps at runtime, so externalize them
-    // instead of inlining. Bundling deps into the test harness is both
-    // pointless (the runtime can require them) and actively broken for
-    // bundle-hostile packages like jsdom (spawns a worker from a real
-    // file, reads __dirname). It also matches how the *built* package runs
-    // - packages: "external" is what the library build uses - so tests
-    // exercise the same module graph and interop consumers get, instead of
-    // esbuild's looser bundled interop. Browsers have no node_modules at
-    // runtime, so they still need everything inlined. The @b9g/libuild/test
-    // alias resolves to an absolute path and stays bundled regardless.
-    ...(isBrowser ? {} : { packages: "external" as const }),
-    // External runtime-specific modules
-    external: platform === "bun" ? ["bun:test"] : [],
+    // `@b9g/libuild/test` is the single platform-aware entry; it resolves
+    // normally (no aliasing) and picks its backend at runtime. On node/bun it
+    // stays external (packages: "external") and resolves from the consumer's
+    // node_modules. Externalizing node_modules is also how the *built* package
+    // runs and avoids bundling bundle-hostile deps like jsdom. On browser it's
+    // bundled, and the dispatcher's never-run node/bun branches reference
+    // `bun:test`/`node:test`/`expect`, which can't link under the browser
+    // platform - so those are marked external (they're never executed there).
+    ...(isBrowser
+      ? { external: ["bun:test", "node:test", "expect"] }
+      : { packages: "external" as const }),
     // Inject require shim for node/bun to handle CJS deps like expect/chalk
     ...(isBrowser ? {} : { banner: { js: requireShim } }),
     // Define for dead code elimination
