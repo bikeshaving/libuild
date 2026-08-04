@@ -131,10 +131,12 @@ program
   .option("-p, --platform <platforms...>", "Platforms to test on (bun, node, chromium, firefox, webkit)")
   .option("--debug", "Keep browser open for debugging")
   .option("--timeout <ms>", "Per-file test timeout in milliseconds", "60000")
+  .option("-u, --update-snapshots", "Write/update snapshot files instead of comparing")
   .action(async (directory: string, options: {
     platform?: string[];
     debug?: boolean;
     timeout?: string;
+    updateSnapshots?: boolean;
   }) => {
     const cwd = Path.resolve(directory);
 
@@ -156,6 +158,7 @@ program
       platforms,
       debug: options.debug || false,
       timeout: parseInt(options.timeout || "60000", 10),
+      updateSnapshots: options.updateSnapshots || false,
     });
 
     process.exit(success ? 0 : 1);

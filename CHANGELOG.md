@@ -2,18 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.2.13] - 2026-07-28
+## [0.2.12] - 2026-08-01
+
+Everything since 0.2.11 (the last published release). Interim `0.2.12` and `0.2.13` were committed during development but never published, so their changes ship here under a single version rather than leaving npm with a gap.
+
+### Added
+- **Portable `toMatchSnapshot` across bun and node.** `@b9g/libuild/test` now installs one snapshot matcher that overrides each runtime's native/absent support, so `expect(value).toMatchSnapshot()` writes and verifies the **same** `.snap` files on both platforms — previously it passed on bun (its native matcher) and threw on node (`toMatchSnapshot is not a function`). Snapshots live in `__snapshots__/<file>.snap` next to the source test, in a jest-compatible format written and parsed without `eval`. Strings are stored verbatim (the rendered-output case); other values serialize via `pretty-format`. Keys are the jest-style `<describe > test> <n>`, tracked by wrapping `describe`/`test`/`it`. Update stale snapshots with `libuild test -u` (`--update-snapshots`). The exported `expect` type now includes `toMatchSnapshot`, so it typechecks. Browsers have no filesystem, so their `toMatchSnapshot` throws a clear "not supported on the browser platform" error (bun/node parity covers the use case). Adds a `pretty-format` dependency.
 
 ### Changed (BREAKING)
-- **One public test entrypoint: `@b9g/libuild/test`.** The platform shims `@b9g/libuild/test-bun`, `/test-node`, and `/test-browser` (and their `.js` aliases) are removed. `test-bun`/`test-node` were trivial wrappers over `bun:test` and `node:test`+`expect`; they're collapsed into the single dispatcher, and the browser runner is now an internal chunk (`_test-browser`). `@b9g/libuild/test` detects the runtime (`typeof Bun` / `typeof process` — a real browser has no `process`, which distinguishes it from node+jsdom) and loads the right backend directly, so bun/node use their own builtins rather than a libuild module. The runner no longer aliases the shims, which also removes its `require.resolve`/`import.meta` shim-resolution boilerplate. Consumers import from `@b9g/libuild/test` exactly as before — only the internal sub-paths are gone.
-
-## [0.2.12] - 2026-07-28
-
-### Changed (BREAKING)
+- **One public test entrypoint: `@b9g/libuild/test`.** The platform shims `@b9g/libuild/test-bun`, `/test-node`, and `/test-browser` (and their `.js` aliases) are removed. `test-bun`/`test-node` were trivial wrappers over `bun:test` and `node:test`+`expect`; they're collapsed into the single dispatcher, and the browser runner is now an internal chunk (`_test-browser`). `@b9g/libuild/test` detects the runtime (`typeof Bun` / `typeof process` — a real browser has no `process`, which distinguishes it from node+jsdom) and loads the right backend directly, so bun/node use their own builtins rather than a libuild module. Consumers import from `@b9g/libuild/test` exactly as before — only the internal sub-paths are gone.
 - **The test runner is now internal — `@b9g/libuild/test-runner` is no longer a public export.** It exposed the runner machinery plus a pile of helpers only meant for libuild's own unit tests (`bundleTests`, `collectTests`, `parseTapOutput`, etc.) and a dead `detectPlatforms()`. Every public export is a liability; the runner was never a deliberate consumer contract. The public test surface remains `@b9g/libuild/test` (the `describe`/`test`/`expect` API). `detectPlatforms()` is removed.
 
 ### Fixed
 - **Setup file now recognized for the `.spec.` convention, not just `.test.`.** Test discovery accepts both `*.test.*` and `*.spec.*`, but setup recognition only matched `test-setup.test.*` — so a `.spec.`-convention project's `test-setup.spec.ts` was silently run as an ordinary (test-less) shard and set up nothing for the other files. Both `test-setup.test.*` and `test-setup.spec.*` are now recognized.
+- **Browser test bundles now build.** The browser target was `es2020`, which can't emit the top-level `await` the `@b9g/libuild/test` dispatcher now uses to select its backend — so `-p chromium/firefox/webkit` failed to bundle. Bumped to `es2022`, which every Playwright-driven browser supports.
 
 ### Removed
 - **`libuild test --watch`** — the flag was wired up but never did anything (a no-op). Removed rather than left advertising behavior it doesn't have.

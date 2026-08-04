@@ -1,7 +1,15 @@
 import {test, expect} from "bun:test";
 import * as FS from "fs/promises";
+import * as FSSync from "fs";
 import * as Path from "path";
 import {bundleTests, collectTests, parseTapOutput, runCompleted, runTests} from "../src/_test-runner.ts";
+import {
+  installSnapshotMatcher,
+  wrapTestApi,
+  parseSnapshots,
+  formatSnapshots,
+  snapshotPathFor,
+} from "../src/_snapshot.ts";
 import {createTempDir, removeTempDir} from "./test-utils.ts";
 
 // A bundle-hostile CJS package that resolves a sibling file at load time,
@@ -328,4 +336,145 @@ test("setup file is recognized for the .spec convention too, not just .test (#au
   expect(testFiles.map(f => Path.basename(f))).toEqual(["thing.spec.ts"]);
 
   await removeTempDir(testDir);
+});
+
+// ===========================================================================
+// Portable snapshots (#14)
+// ===========================================================================
+
+// Capture the matcher the installer registers via expect.extend, and load its
+// runtime deps (fs, pretty-format) once. This is exactly what @b9g/libuild/test
+// does on bun/node.
+let snapMatcher: (this: any, received: unknown, hint?: string) => {pass: boolean; message: () => string};
+await installSnapshotMatcher({extend: (m: any) => { snapMatcher = m.toMatchSnapshot; }});
+
+// Simulate one runner-independent snapshot assertion: set the injected globals,
+// drive the wrapped describe/test so the name is tracked, and call the matcher
+// inside the (tracked) body — the same path a real test takes.
+function takeSnapshot(opts: {
+  file: string; describe?: string; test: string; value: unknown; update?: boolean; hint?: string;
+}): {pass: boolean; message: () => string} {
+  (globalThis as any).__LIBUILD_SNAPSHOT_FILE__ = opts.file;
+  (globalThis as any).__LIBUILD_UPDATE_SNAPSHOTS__ = opts.update === true;
+  let result: any;
+  const api = wrapTestApi({
+    describe: (_n: string, fn: () => void) => fn(),
+    test: (_n: string, fn: () => void) => fn(),
+    it: (_n: string, fn: () => void) => fn(),
+  });
+  const body = () => { result = snapMatcher.call({}, opts.value, opts.hint); };
+  if (opts.describe) api.describe(opts.describe, () => api.test(opts.test, body));
+  else api.test(opts.test, body);
+  return result;
+}
+
+test("snapshot .snap format round-trips values with backticks, ${, backslashes, newlines (#14)", () => {
+  const map = new Map<string, string>([
+    ["plain 1", "hello world"],
+    ["multiline 1", "\n┌───┐\n│ x │\n└───┘\n"],
+    ["tricky 1", "has a ` backtick, a ${expr} and a \\ backslash"],
+  ]);
+  const text = formatSnapshots(map);
+
+  // Jest-compatible shape and sorted keys
+  expect(text).toContain("// Jest Snapshot v1");
+  expect(text).toContain("exports[`plain 1`] = `hello world`;");
+
+  const parsed = parseSnapshots(text);
+  expect(parsed).toEqual(map); // exact round-trip, no eval
+});
+
+test("snapshot: first run writes the .snap next to the source and passes (#14)", async () => {
+  const dir = await createTempDir("snap-write");
+  const file = Path.join(dir, "render.test.ts");
+
+  const r = takeSnapshot({file, describe: "box", test: "renders", value: "┌─┐\n└─┘"});
+  expect(r.pass).toBe(true); // new snapshot is written, not a failure
+
+  const {path} = snapshotPathFor(file);
+  // Written to <dir>/__snapshots__/render.test.ts.snap
+  expect(path).toBe(Path.join(dir, "__snapshots__", "render.test.ts.snap"));
+  const content = await FS.readFile(path, "utf-8");
+  // Jest-style key: "<describe > test> <n>"
+  expect(content).toContain("exports[`box > renders 1`]");
+  expect(content).toContain("┌─┐");
+
+  await removeTempDir(dir);
+});
+
+test("snapshot: a matching stored value passes, a differing one fails (#14)", async () => {
+  const dir = await createTempDir("snap-compare");
+  const file = Path.join(dir, "a.test.ts");
+  const {dir: snapDir, path} = snapshotPathFor(file);
+  await FS.mkdir(snapDir, {recursive: true});
+  // Pre-seed a snapshot on disk (fresh path -> matcher reads from disk).
+  await FS.writeFile(path, formatSnapshots(new Map([["cmp > eq 1", "STORED"]])));
+
+  const match = takeSnapshot({file, describe: "cmp", test: "eq", value: "STORED"});
+  expect(match.pass).toBe(true);
+
+  // A different source file (fresh path) with a mismatching stored value fails.
+  const file2 = Path.join(dir, "b.test.ts");
+  const p2 = snapshotPathFor(file2);
+  await FS.mkdir(p2.dir, {recursive: true});
+  await FS.writeFile(p2.path, formatSnapshots(new Map([["cmp2 > eq 1", "STORED"]])));
+
+  const miss = takeSnapshot({file: file2, describe: "cmp2", test: "eq", value: "CHANGED"});
+  expect(miss.pass).toBe(false);
+  expect(miss.message()).toContain("does not match");
+  expect(miss.message()).toContain("libuild test -u");
+
+  await removeTempDir(dir);
+});
+
+test("snapshot: update mode overwrites a differing stored value (#14)", async () => {
+  const dir = await createTempDir("snap-update");
+  const file = Path.join(dir, "u.test.ts");
+  const {dir: snapDir, path} = snapshotPathFor(file);
+  await FS.mkdir(snapDir, {recursive: true});
+  await FS.writeFile(path, formatSnapshots(new Map([["upd > v 1", "OLD"]])));
+
+  const r = takeSnapshot({file, describe: "upd", test: "v", value: "NEW", update: true});
+  expect(r.pass).toBe(true);
+
+  const stored = parseSnapshots(await FS.readFile(path, "utf-8"));
+  expect(stored.get("upd > v 1")).toBe("NEW"); // overwritten
+
+  await removeTempDir(dir);
+});
+
+test("snapshot: repeated calls in one test get incrementing keys; objects serialize (#14)", async () => {
+  const dir = await createTempDir("snap-counter");
+  const file = Path.join(dir, "multi.test.ts");
+
+  // Two snapshots in the SAME test body -> "... 1" and "... 2".
+  (globalThis as any).__LIBUILD_SNAPSHOT_FILE__ = file;
+  (globalThis as any).__LIBUILD_UPDATE_SNAPSHOTS__ = false;
+  const api = wrapTestApi({
+    describe: (_n: string, fn: () => void) => fn(),
+    test: (_n: string, fn: () => void) => fn(),
+    it: (_n: string, fn: () => void) => fn(),
+  });
+  api.test("two snaps", () => {
+    expect(snapMatcher.call({}, "first").pass).toBe(true);
+    expect(snapMatcher.call({}, {a: 1, b: [2, 3]}).pass).toBe(true); // object via pretty-format
+  });
+
+  const stored = parseSnapshots(FSSync.readFileSync(snapshotPathFor(file).path, "utf-8"));
+  expect([...stored.keys()].sort()).toEqual(["two snaps 1", "two snaps 2"]);
+  expect(stored.get("two snaps 1")).toBe("first");
+  expect(stored.get("two snaps 2")).toContain('"a": 1'); // pretty-format object output
+
+  await removeTempDir(dir);
+});
+
+test("browser bundles target es2022 so the dispatcher's top-level await builds (#14)", async () => {
+  const dir = await createTempDir("browser-tla");
+  const file = Path.join(dir, "tla.test.ts");
+  // The @b9g/libuild/test dispatcher selects its backend with top-level await;
+  // browser bundles must target es2022+ or esbuild refuses to emit it. Using TLA
+  // directly here proves the target: on es2020 this bundleTests call would throw.
+  await FS.writeFile(file, "await Promise.resolve();\nexport {};\n");
+  await bundleTests([file], "chromium", dir, dir); // must not throw
+  await removeTempDir(dir);
 });

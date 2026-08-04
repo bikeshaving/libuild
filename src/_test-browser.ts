@@ -71,6 +71,7 @@ interface Matchers {
   toMatch(expected: RegExp | string): void;
   toThrow(expected?: string | RegExp | Error): void;
   toBeInstanceOf(expected: new (...args: any[]) => any): void;
+  toMatchSnapshot(hint?: string): void;
   not: Matchers;
 }
 
@@ -242,6 +243,13 @@ function createMatchers(actual: unknown, negated = false): Matchers {
         actual instanceof expected,
         `Expected ${stringify(actual)} to be instance of ${expected.name}`,
         `Expected ${stringify(actual)} not to be instance of ${expected.name}`
+      );
+    },
+    toMatchSnapshot() {
+      // No filesystem in the browser: portable snapshots (bun/node) can't be
+      // read/written here. Fail loudly rather than silently pass.
+      throw new ExpectError(
+        "toMatchSnapshot() is not supported on the browser platform; snapshots run on bun and node only"
       );
     },
     get not() {

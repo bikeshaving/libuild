@@ -24,6 +24,8 @@ export interface TestRunnerOptions {
   debug: boolean;
   /** Per-file test timeout in ms (each file runs in its own process) */
   timeout: number;
+  /** Write/overwrite snapshots instead of comparing (toMatchSnapshot) */
+  updateSnapshots: boolean;
 }
 
 export interface TestResult {
@@ -131,11 +133,29 @@ export async function collectTests(
 }
 
 /**
- * Generate entry point that imports the setup file (if any) then all test files
+ * Generate entry point that imports the setup file (if any) then all test files.
+ * Also injects the two snapshot globals the portable toMatchSnapshot reads (see
+ * `_snapshot`): the source file identifies the `.snap` file, and the update flag
+ * switches compare vs write. Both are read lazily at test-run time, so ESM
+ * import hoisting placing them "after" the imports doesn't matter.
  */
-function generateTestEntry(testFiles: string[], platform: string, setupFile: string | null): string {
+function generateTestEntry(
+  testFiles: string[],
+  platform: string,
+  setupFile: string | null,
+  updateSnapshots: boolean
+): string {
   const toImport = (file: string) => `import "${file.replace(/\\/g, "/")}";`;
   const lines: string[] = [];
+
+  // Per-file isolation means a bun/node shard bundles exactly one source file,
+  // so its path is the snapshot-file identity. (Browser bundles many files and
+  // its toMatchSnapshot throws, so the file global is only set when unambiguous.)
+  if (testFiles.length === 1) {
+    lines.push(`globalThis.__LIBUILD_SNAPSHOT_FILE__ = ${JSON.stringify(testFiles[0].replace(/\\/g, "/"))};`);
+  }
+  lines.push(`globalThis.__LIBUILD_UPDATE_SNAPSHOTS__ = ${updateSnapshots ? "true" : "false"};`);
+
   if (setupFile) {
     lines.push("// Setup file - runs before all tests");
     lines.push(toImport(setupFile));
@@ -164,9 +184,10 @@ export async function bundleTests(
   outDir: string,
   cwd: string,
   id: string = "",
-  setupFile: string | null = null
+  setupFile: string | null = null,
+  updateSnapshots: boolean = false
 ): Promise<string> {
-  const entryContent = generateTestEntry(testFiles, platform, setupFile);
+  const entryContent = generateTestEntry(testFiles, platform, setupFile, updateSnapshots);
   // A per-shard id keeps concurrent per-file bundles from clobbering each other.
   const suffix = id ? `-${id}` : "";
   const entryPath = Path.join(outDir, `entry-${platform}${suffix}.ts`);
@@ -188,17 +209,22 @@ const require = createRequire(import.meta.url);
     format: "esm",
     outfile: outPath,
     platform: isBrowser ? "browser" : "node",
-    target: isBrowser ? "es2020" : "node20",
+    // es2022, not es2020: the `@b9g/libuild/test` dispatcher selects its backend
+    // with top-level await, which es2020 can't emit (esbuild errors). TLA in ES
+    // modules is supported by every browser Playwright drives.
+    target: isBrowser ? "es2022" : "node20",
     // `@b9g/libuild/test` is the single platform-aware entry; it resolves
     // normally (no aliasing) and picks its backend at runtime. On node/bun it
     // stays external (packages: "external") and resolves from the consumer's
     // node_modules. Externalizing node_modules is also how the *built* package
     // runs and avoids bundling bundle-hostile deps like jsdom. On browser it's
     // bundled, and the dispatcher's never-run node/bun branches reference
-    // `bun:test`/`node:test`/`expect`, which can't link under the browser
-    // platform - so those are marked external (they're never executed there).
+    // `bun:test`/`node:test`/`expect` and the snapshot chunk's `node:fs`/
+    // `pretty-format`, which can't link (or would crash at load) under the
+    // browser platform - so those are marked external. They're never executed
+    // there; the browser's toMatchSnapshot throws instead.
     ...(isBrowser
-      ? { external: ["bun:test", "node:test", "expect"] }
+      ? { external: ["bun:test", "node:test", "expect", "fs", "node:fs", "module", "node:module", "pretty-format"] }
       : { packages: "external" as const }),
     // Inject require shim for node/bun to handle CJS deps like expect/chalk
     ...(isBrowser ? {} : { banner: { js: requireShim } }),
@@ -438,7 +464,8 @@ async function runShardedPlatform(
   tempDir: string,
   cwd: string,
   timeout: number,
-  setupFile: string | null
+  setupFile: string | null,
+  updateSnapshots: boolean
 ): Promise<TestResult> {
   const runShard = platform === "bun" ? runBunTests : runNodeTests;
   const concurrency = Math.max(1, Math.min((OS.cpus().length || 2) - 1, files.length));
@@ -455,7 +482,7 @@ async function runShardedPlatform(
 
       let shard: ShardRun;
       try {
-        const bundle = await bundleTests([file], platform, tempDir, cwd, String(i), setupFile);
+        const bundle = await bundleTests([file], platform, tempDir, cwd, String(i), setupFile, updateSnapshots);
         shard = await runShard(bundle, timeout);
       } catch (error: any) {
         shard = {
@@ -641,6 +668,7 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
     platforms: options.platforms || ["bun"],
     debug: options.debug || false,
     timeout: options.timeout || 60000,
+    updateSnapshots: options.updateSnapshots || false,
   };
 
   console.log("Finding test files...");
@@ -669,12 +697,12 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
         // Per-file process isolation is the default: each file runs in its own
         // process (frees native memory between files, runs them in parallel).
         console.log(`\nRunning ${testFiles.length} file(s) on ${platform} (per-file isolation)...`);
-        result = await runShardedPlatform(platform, testFiles, tempDir, opts.cwd, opts.timeout, setupFile);
+        result = await runShardedPlatform(platform, testFiles, tempDir, opts.cwd, opts.timeout, setupFile, opts.updateSnapshots);
       } else {
         // Browser runs the combined bundle in a Playwright page (its own
         // isolation model - a separate browser process).
         console.log(`\nBuilding tests for ${platform}...`);
-        const bundlePath = await bundleTests(testFiles, platform, tempDir, opts.cwd, "", setupFile);
+        const bundlePath = await bundleTests(testFiles, platform, tempDir, opts.cwd, "", setupFile, opts.updateSnapshots);
         console.log(`Running tests on ${platform}...`);
         result = await runBrowserTests(bundlePath, platform, opts.timeout, opts.debug, opts.cwd);
       }
