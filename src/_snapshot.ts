@@ -89,56 +89,57 @@ function trackSuite(name: unknown, fn: (...args: any[]) => any): (...args: any[]
   };
 }
 
-// Property names that aren't real sub-methods and must not be copied.
-const FUNCTION_INTERNALS = new Set(["length", "name", "prototype", "arguments", "caller", "constructor"]);
-
 /**
- * Collect sub-method names of a runner block. node's `bun:test`/`node:test`
- * differ here: node exposes `.todo`/`.skip`/`.only`/`.each` as OWN properties,
- * but bun puts them on the PROTOTYPE - so `Object.getOwnPropertyNames(test)`
- * returns just `length,name` on bun and every sub-method is silently dropped
- * (any `test.todo(...)` then throws and aborts the rest of that file). Walk the
- * prototype chain up to (but not including) `Function.prototype` so both are
- * covered without picking up `call`/`apply`/`bind`/`toString`.
- */
-function subMethodNames(real: any): string[] {
-  const names = new Set<string>();
-  let obj = real;
-  while (obj && obj !== Function.prototype && obj !== Object.prototype) {
-    for (const key of Object.getOwnPropertyNames(obj)) {
-      if (!FUNCTION_INTERNALS.has(key)) names.add(key);
-    }
-    obj = Object.getPrototypeOf(obj);
-  }
-  return [...names];
-}
-
-/**
- * Build a name-tracking wrapper around a runner's `test`/`it` (or `describe`),
- * preserving sub-methods like `.only`/`.skip`/`.todo`/`.each`. `.only` bodies
- * DO execute, so they get tracked too; `.skip`/`.todo` bodies never run, and
- * `.each` is passed through (its per-row names aren't tracked in v1).
+ * Wrap a runner block (`test`/`it`/`describe`) so snapshot keys can track the
+ * current test name, WITHOUT depending on the block's object shape. Earlier
+ * versions enumerated and copied sub-methods (`.todo`/`.skip`/`.only`/`.each`/
+ * ...); that coupled us to how each runtime exposes them and broke twice - bun
+ * puts them on the prototype (own-prop copy missed them) and defines some as
+ * getters that throw for the wrong block type (`describe.failing` throws, so
+ * eagerly reading it crashed module import). A Proxy forwards every access
+ * lazily, so anything we don't care about - prototype vs own, throwing getters,
+ * sub-methods added in future runtime versions - behaves exactly as native.
+ *
+ * bun's sub-methods are BRANDED: they're getters on `ScopeFunctions.prototype`
+ * that require `this instanceof ScopeFunctions` both when read and when the
+ * resolved function is called. So we must (a) resolve each getter against the
+ * real `target`, not the proxy `receiver` (else the getter throws), and
+ * (b) bind the resolved function to `target` (else calling it - e.g.
+ * `test.each(table)` - throws at call time). node's sub-methods are plain data
+ * properties, for which both steps are harmless no-ops.
+ *
+ * We intercept only two things:
+ *  - apply: wrap the test body so its name is tracked while it runs.
+ *  - get `.only`: its body DOES run, so return a tracking wrapper of it too.
+ *    (`.skip`/`.todo` bodies never run; `.each` rows aren't tracked in v1.)
  */
 function wrapBlock(real: any, track: (name: unknown, fn: any) => any): any {
-  const call = (fn: any) =>
-    function (this: any, name: unknown, body: unknown, ...rest: any[]) {
+  return new Proxy(real, {
+    apply(target, thisArg, args) {
+      const [name, body, ...rest] = args;
       return typeof body === "function"
-        ? fn.call(this, name, track(name, body), ...rest)
-        : fn.call(this, name, body as any, ...rest);
-    };
-
-  const wrapped: any = call(real);
-  for (const key of subMethodNames(real)) {
-    const value = real[key];
-    if (key === "only" && typeof value === "function") {
-      wrapped[key] = call(value); // .only runs its body -> track it
-    } else if (typeof value === "function") {
-      wrapped[key] = value.bind(real); // .skip/.todo/.each/... preserved as-is
-    } else {
-      wrapped[key] = value;
-    }
-  }
-  return wrapped;
+        ? Reflect.apply(target, thisArg, [name, track(name, body), ...rest])
+        : Reflect.apply(target, thisArg, args);
+    },
+    get(target, prop) {
+      // Resolve against target (not the proxy) so bun's branded getters accept
+      // `this`; a throwing getter (e.g. describe.failing) still throws only here,
+      // when the user actually reads it - exactly as the native block would.
+      const value = Reflect.get(target, prop, target);
+      if (typeof value !== "function") return value;
+      // Bind so the resolved sub-method sees `this === target` when called.
+      const bound = value.bind(target);
+      if (prop === "only") {
+        // .only runs its body -> track it too.
+        return function (name: unknown, body: unknown, ...rest: any[]) {
+          return typeof body === "function"
+            ? bound(name, track(name, body), ...rest)
+            : bound(name, body, ...rest);
+        };
+      }
+      return bound;
+    },
+  });
 }
 
 /**

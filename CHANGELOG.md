@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.14] - 2026-08-05
+
+### Fixed
+- **Snapshot test wrapper no longer depends on the runner's object shape (fixes bun `test.todo`/`.skip`/`.only`/`.each`).** The wrapper that tracks test names for snapshot keys used to enumerate and copy each block's sub-methods, which coupled it to how each runtime exposes them and broke twice on bun: 0.2.12's own-property copy missed bun's prototype-based sub-methods (so `test.todo` threw and aborted the file), and 0.2.13's prototype-walk then read bun's `describe.failing`, a getter that throws for `describe`, crashing at module import. The wrapper is now a `Proxy` that forwards access lazily, so prototype-vs-own, throwing getters, and future sub-methods all behave as the native block with nothing read at import. bun's sub-methods are additionally *branded* (getters on `ScopeFunctions.prototype` that require `this instanceof ScopeFunctions` both when read and when called), so the proxy resolves each getter against the real target and binds the result to it; node's plain data properties are unaffected. Only two things are intercepted: calling a block (to name-track its body) and reading `.only` (whose body also runs). Verified end-to-end against a real consumer suite on both runtimes (bun and node) without the workaround.
+
 ## [0.2.13] - 2026-08-05
 
 ### Fixed

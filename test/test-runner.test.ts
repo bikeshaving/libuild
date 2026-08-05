@@ -499,6 +499,55 @@ test("wrapTestApi preserves sub-methods declared on the prototype (bun shape) (#
   expect(calls).toEqual(["todo:pending", "only-ran"]);
 });
 
+test("wrapTestApi survives a sub-method that throws on read (bun describe.failing) (#14)", () => {
+  // bun defines some sub-methods as getters that THROW for the block type they
+  // don't apply to (`describe.failing` -> "Cannot get .failing on describe").
+  // The wrapper must never read sub-methods eagerly: doing so at module import
+  // would throw and take down the entire run (0 passed). The Proxy forwards
+  // lazily, so construction is safe and the getter throws only if the user
+  // actually reads it - exactly like the native block.
+  const proto: any = Object.create(Function.prototype);
+  proto.skip = (n: string) => `skip:${n}`;
+  Object.defineProperty(proto, "failing", {
+    configurable: true,
+    enumerable: true,
+    get() { throw new Error("Cannot get .failing on describe"); },
+  });
+  const block: any = (_n: string, body?: () => void) => { body?.(); };
+  Object.setPrototypeOf(block, proto);
+
+  let api: any;
+  expect(() => { api = wrapTestApi({ describe: block, test: block, it: block }); }).not.toThrow();
+  expect(typeof api.describe.skip).toBe("function"); // ordinary sub-methods forwarded
+  // The throwing getter is not masked - it forwards, and only when READ.
+  expect(() => api.describe.failing).toThrow("Cannot get .failing on describe");
+});
+
+test("wrapTestApi works against the REAL bun:test object, not just a mock (#14)", async () => {
+  // The mock-based tests above pass even when the wrapper is broken against real
+  // bun (which is how 0.2.12/0.2.13/the-first-0.2.14 each shipped a bun regression).
+  // bun's sub-methods are branded getters on ScopeFunctions.prototype: reading one
+  // against the wrong receiver throws "can only be used on instances of
+  // ScopeFunctions", and calling the resolved fn against the wrong `this` throws
+  // too. Exercise both against the genuine object. node has plain data props and
+  // no such brand, so this guard is bun-only.
+  if (typeof (globalThis as any).Bun === "undefined") return;
+  const bunTest: any = await import("bun:test");
+  const api = wrapTestApi({describe: bunTest.describe, test: bunTest.test, it: bunTest.it});
+
+  // Reading a branded getter (the primary bug) would throw right here.
+  for (const key of ["todo", "skip", "only", "skipIf", "todoIf", "each"]) {
+    expect(typeof (api.test as any)[key]).toBe("function");
+  }
+  for (const key of ["skip", "only", "each"]) {
+    expect(typeof (api.describe as any)[key]).toBe("function");
+  }
+  // `.each` is branded at CALL time too; building a registrar from an EMPTY table
+  // exercises that path without registering any tests.
+  expect(typeof (api.test as any).each([])).toBe("function");
+  expect(typeof (api.describe as any).each([])).toBe("function");
+});
+
 test("browser bundles target es2022 so the dispatcher's top-level await builds (#14)", async () => {
   const dir = await createTempDir("browser-tla");
   const file = Path.join(dir, "tla.test.ts");
