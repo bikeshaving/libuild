@@ -89,8 +89,29 @@ function trackSuite(name: unknown, fn: (...args: any[]) => any): (...args: any[]
   };
 }
 
-// Own properties that aren't real sub-methods and must not be copied.
+// Property names that aren't real sub-methods and must not be copied.
 const FUNCTION_INTERNALS = new Set(["length", "name", "prototype", "arguments", "caller", "constructor"]);
+
+/**
+ * Collect sub-method names of a runner block. node's `bun:test`/`node:test`
+ * differ here: node exposes `.todo`/`.skip`/`.only`/`.each` as OWN properties,
+ * but bun puts them on the PROTOTYPE - so `Object.getOwnPropertyNames(test)`
+ * returns just `length,name` on bun and every sub-method is silently dropped
+ * (any `test.todo(...)` then throws and aborts the rest of that file). Walk the
+ * prototype chain up to (but not including) `Function.prototype` so both are
+ * covered without picking up `call`/`apply`/`bind`/`toString`.
+ */
+function subMethodNames(real: any): string[] {
+  const names = new Set<string>();
+  let obj = real;
+  while (obj && obj !== Function.prototype && obj !== Object.prototype) {
+    for (const key of Object.getOwnPropertyNames(obj)) {
+      if (!FUNCTION_INTERNALS.has(key)) names.add(key);
+    }
+    obj = Object.getPrototypeOf(obj);
+  }
+  return [...names];
+}
 
 /**
  * Build a name-tracking wrapper around a runner's `test`/`it` (or `describe`),
@@ -107,8 +128,7 @@ function wrapBlock(real: any, track: (name: unknown, fn: any) => any): any {
     };
 
   const wrapped: any = call(real);
-  for (const key of Object.getOwnPropertyNames(real)) {
-    if (FUNCTION_INTERNALS.has(key)) continue;
+  for (const key of subMethodNames(real)) {
     const value = real[key];
     if (key === "only" && typeof value === "function") {
       wrapped[key] = call(value); // .only runs its body -> track it

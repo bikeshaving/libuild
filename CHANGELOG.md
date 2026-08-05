@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.13] - 2026-08-05
+
+### Fixed
+- **Snapshot test wrapper no longer drops `test.todo`/`.skip`/`.only`/`.each` on bun.** 0.2.12's `toMatchSnapshot` wraps `describe`/`test`/`it` to track the current test name, copying their sub-methods with `Object.getOwnPropertyNames`. bun exposes those sub-methods on the **prototype**, not as own properties, so the copy found only `length`/`name` and dropped them all — every bun test file calling `test.todo(...)` (etc.) then threw `undefined is not a function` and aborted the rest of that file, silently reducing the bun test count. (node exposes them as own properties, so node was unaffected.) The wrapper now walks the prototype chain, covering both runtimes.
+
 ## [0.2.12] - 2026-08-01
 
 Everything since 0.2.11 (the last published release). Interim `0.2.12` and `0.2.13` were committed during development but never published, so their changes ship here under a single version rather than leaving npm with a gap.

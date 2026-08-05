@@ -468,6 +468,37 @@ test("snapshot: repeated calls in one test get incrementing keys; objects serial
   await removeTempDir(dir);
 });
 
+test("wrapTestApi preserves sub-methods declared on the prototype (bun shape) (#14)", () => {
+  // bun:test puts .todo/.skip/.only/.each on the PROTOTYPE, not as own props, so
+  // Object.getOwnPropertyNames(test) is just [length,name]. Model that here: a
+  // callable whose sub-methods live one level up the chain. wrapBlock must walk
+  // the chain, else every wrapped test.todo() is undefined and aborts the file.
+  const calls: string[] = [];
+  const proto: any = Object.create(Function.prototype);
+  proto.todo = (n: string) => calls.push(`todo:${n}`);
+  proto.skip = (n: string) => calls.push(`skip:${n}`);
+  proto.only = (_n: string, body: () => void) => { body(); };
+  proto.each = () => (n: string) => calls.push(`each:${n}`);
+  const makeBlock = () => {
+    const block: any = (_n: string, body?: () => void) => { body?.(); };
+    Object.setPrototypeOf(block, proto);
+    return block;
+  };
+  // Sanity: the sub-methods are NOT own props, so an own-names-only copy (the
+  // 0.2.12 regression) would drop every one of them.
+  expect(Object.getOwnPropertyNames(makeBlock())).not.toContain("todo");
+
+  const api = wrapTestApi({ describe: makeBlock(), test: makeBlock(), it: makeBlock() });
+  for (const key of ["todo", "skip", "only", "each"] as const) {
+    expect(typeof (api.test as any)[key]).toBe("function");
+    expect(typeof (api.it as any)[key]).toBe("function");
+    expect(typeof (api.describe as any)[key]).toBe("function");
+  }
+  (api.test as any).todo("pending");
+  (api.test as any).only("live", () => calls.push("only-ran"));
+  expect(calls).toEqual(["todo:pending", "only-ran"]);
+});
+
 test("browser bundles target es2022 so the dispatcher's top-level await builds (#14)", async () => {
   const dir = await createTempDir("browser-tla");
   const file = Path.join(dir, "tla.test.ts");
