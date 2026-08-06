@@ -2,7 +2,7 @@ import {test, expect} from "bun:test";
 import * as FS from "fs/promises";
 import * as FSSync from "fs";
 import * as Path from "path";
-import {bundleTests, collectTests, parseTapOutput, runCompleted, runTests} from "../src/_test-runner.ts";
+import {bundleTests, collectTests, parseBunOutput, parseTapOutput, runCompleted, runTests} from "../src/_test-runner.ts";
 import {
   installSnapshotMatcher,
   wrapTestApi,
@@ -546,6 +546,25 @@ test("wrapTestApi works against the REAL bun:test object, not just a mock (#14)"
   // exercises that path without registering any tests.
   expect(typeof (api.test as any).each([])).toBe("function");
   expect(typeof (api.describe as any).each([])).toBe("function");
+});
+
+test("output parsers strip ANSI so forced color can't corrupt the counts", () => {
+  // With color on, the runner sets FORCE_COLOR on the child, so bun/node wrap
+  // their summaries in escape codes (e.g. bun prints "\x1b[32m 3 pass\x1b[0m").
+  // The count regexes anchor on line starts, which the codes would break - so
+  // the parsers strip ANSI first. Feed them colorized summaries and assert the
+  // numbers survive.
+  const bun = "\x1b[0m\x1b[32m 3 pass\x1b[0m\n\x1b[0m\x1b[31m 2 fail\x1b[0m\n";
+  const b = parseBunOutput(bun);
+  expect(b.passed).toBe(3);
+  expect(b.failed).toBe(2);
+  expect(b.completed).toBe(true);
+
+  const tap = "\x1b[32m# pass 5\x1b[0m\n\x1b[31m# fail 1\x1b[0m\n# tests 6\n";
+  const t = parseTapOutput(tap);
+  expect(t.passed).toBe(5);
+  expect(t.failed).toBe(1);
+  expect(t.completed).toBe(true);
 });
 
 test("browser bundles target es2022 so the dispatcher's top-level await builds (#14)", async () => {

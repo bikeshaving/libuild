@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.15] - 2026-08-06
+
+### Added
+- **Colored test output.** `libuild test` now colors its per-file lines and the results summary (green pass, red fail, yellow todo, dim skipped), and — because each test file runs in its own child process whose output libuild captures over a pipe — it forwards `FORCE_COLOR` to those children so their own failure detail (e.g. bun's assertion diffs) stays colored too. Zero-config and no flag: color is on when stdout is a TTY and off when piped or redirected, honoring the standard `NO_COLOR` (force off) and `FORCE_COLOR` (force on) environment variables. Child summaries are ANSI-stripped before the pass/fail counts are parsed, so forced color never corrupts the tallies. (An earlier build emitted summary color codes unconditionally, even when piped; that's now gated on the same detection.)
+
 ## [0.2.14] - 2026-08-05
 
 ### Fixed

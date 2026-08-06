@@ -11,6 +11,36 @@ import { createServer, type Server } from "http";
 import * as ESBuild from "esbuild";
 import { createRequire } from "module";
 
+// ---------------------------------------------------------------------------
+// Color output. Zero-config, following the de-facto conventions: honor NO_COLOR
+// (disable) and FORCE_COLOR (enable), otherwise color only when our stdout is a
+// TTY - so an interactive run is colored and a piped/CI run stays clean. When
+// color is on we ALSO set FORCE_COLOR on the child runners, so their own output
+// (e.g. bun's assertion diffs) stays colored through the pipe we capture it on;
+// their summaries are ANSI-stripped before parsing so the codes never corrupt
+// the pass/fail counts.
+// ---------------------------------------------------------------------------
+const USE_COLOR: boolean = (() => {
+  const { NO_COLOR, FORCE_COLOR } = process.env;
+  if (NO_COLOR) return false;
+  if (FORCE_COLOR != null && FORCE_COLOR !== "") return FORCE_COLOR !== "0";
+  return Boolean(process.stdout.isTTY);
+})();
+
+const paint = (code: string, s: string): string => (USE_COLOR ? `\x1b[${code}m${s}\x1b[0m` : s);
+const green = (s: string) => paint("32", s);
+const red = (s: string) => paint("31", s);
+const yellow = (s: string) => paint("33", s);
+const dim = (s: string) => paint("2", s);
+
+// Env for spawned runners: inherit, plus FORCE_COLOR when we've chosen color.
+const CHILD_ENV: NodeJS.ProcessEnv | undefined = USE_COLOR
+  ? { ...process.env, FORCE_COLOR: "1" }
+  : undefined;
+
+const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
+const stripAnsi = (s: string): string => s.replace(ANSI_PATTERN, "");
+
 export type Platform = "bun" | "node" | "chromium" | "firefox" | "webkit";
 
 export interface TestRunnerOptions {
@@ -256,6 +286,7 @@ const TAP_DIRECTIVE = /(?<!\\)#\s*(TODO|SKIP)\b/i;
  * Exported for unit testing.
  */
 export function parseTapOutput(output: string): { passed: number; failed: number; errors: Array<{ name: string; error: string }>; skipped: number; todo: number; completed: boolean } {
+  output = stripAnsi(output); // forced color must not corrupt the TAP tokens
   const errors: Array<{ name: string; error: string }> = [];
   const lines = output.split("\n");
 
@@ -338,6 +369,7 @@ async function runNodeTests(bundlePath: string, timeout: number): Promise<ShardR
     const child = spawn("node", ["--test", "--test-reporter=tap", bundlePath], {
       stdio: ["pipe", "pipe", "pipe"],
       timeout,
+      env: CHILD_ENV,
     });
 
     let stdout = "";
@@ -382,7 +414,8 @@ async function runNodeTests(bundlePath: string, timeout: number): Promise<ShardR
  * Parse Bun test output to extract test results
  * Format: "N pass", "N fail"
  */
-function parseBunOutput(output: string): { passed: number; failed: number; errors: Array<{ name: string; error: string }>; completed: boolean } {
+export function parseBunOutput(output: string): { passed: number; failed: number; errors: Array<{ name: string; error: string }>; completed: boolean } {
+  output = stripAnsi(output); // forced color must not corrupt the summary tokens
   let passed = 0;
   let failed = 0;
   const errors: Array<{ name: string; error: string }> = [];
@@ -411,6 +444,7 @@ async function runBunTests(bundlePath: string, timeout: number): Promise<ShardRu
     const child = spawn("bun", ["test", bundlePath], {
       stdio: ["pipe", "pipe", "pipe"],
       timeout,
+      env: CHILD_ENV,
     });
 
     let stdout = "";
@@ -495,9 +529,9 @@ async function runShardedPlatform(
       const failed = r.failed > 0;
       // Build the whole per-file report as one string so concurrent shards
       // don't interleave (a single console.log call is atomic).
-      let line = `${failed ? "✗" : "✓"} ${rel}: ${r.passed} passed, ${r.failed} failed`;
-      if (r.todo) line += `, ${r.todo} todo`;
-      if (r.skipped) line += `, ${r.skipped} skipped`;
+      let line = `${failed ? red("✗") : green("✓")} ${rel}: ${green(`${r.passed} passed`)}, ${failed ? red(`${r.failed} failed`) : "0 failed"}`;
+      if (r.todo) line += `, ${yellow(`${r.todo} todo`)}`;
+      if (r.skipped) line += `, ${dim(`${r.skipped} skipped`)}`;
       if (failed && shard.output.trim()) line += "\n" + shard.output.trimEnd();
       console.log(line);
 
@@ -635,20 +669,19 @@ function printResults(results: TestResult[]): boolean {
   let allPassed = true;
 
   for (const result of results) {
-    const status = result.failed === 0 ? "✓" : "✗";
-    const color = result.failed === 0 ? "\x1b[32m" : "\x1b[31m";
-    const reset = "\x1b[0m";
+    const ok = result.failed === 0;
+    const status = ok ? green("✓") : red("✗");
 
-    let summaryLine = `${color}${status}${reset} ${result.platform}: ${result.passed} passed, ${result.failed} failed`;
-    if (result.todo) summaryLine += `, ${result.todo} todo`;
-    if (result.skipped) summaryLine += `, ${result.skipped} skipped`;
+    let summaryLine = `${status} ${result.platform}: ${green(`${result.passed} passed`)}, ${ok ? "0 failed" : red(`${result.failed} failed`)}`;
+    if (result.todo) summaryLine += `, ${yellow(`${result.todo} todo`)}`;
+    if (result.skipped) summaryLine += `, ${dim(`${result.skipped} skipped`)}`;
     console.log(summaryLine);
 
     if (result.failed > 0) {
       allPassed = false;
       for (const error of result.errors) {
-        console.log(`    ✗ ${error.name}`);
-        console.log(`      ${error.error}`);
+        console.log(`    ${red("✗")} ${error.name}`);
+        console.log(`      ${dim(error.error)}`);
       }
     }
   }
