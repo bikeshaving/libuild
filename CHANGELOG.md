@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.16] - 2026-08-11
+
+### Fixed
+- **A test file that exceeds the timeout is now a failure instead of quietly vanishing from a green run** (#18). When a file blew the per-file budget, `libuild test` stayed green and the file's remaining tests simply didn't appear in the totals — nothing failed, nothing named the file, and the only way to notice was knowing what the count should have been. The cause: the timeout was enforced by `spawn`'s own `timeout` option and then *reconstructed* afterwards from the exit status. That reconstruction is impossible for node, which traps the resulting `SIGTERM` and exits `(code 1, signal null)` after printing valid TAP for the tests it did finish — indistinguishable by exit status from an ordinary failing run, so the check (which looked only at "did we see test lines" and "was there a signal") read it as a clean partial pass. libuild now enforces the timeout itself, so "we killed this for running too long" is a fact it records rather than infers, and escalates to `SIGKILL` after a grace period so a runner that traps `SIGTERM` can't hang the suite. A timed-out shard is reported red, names the file, and states how many of its tests finished before the timeout. The exit-status check also no longer trusts a completed-looking run that exited non-zero while reporting no failing test — that means tests went missing somewhere invisible (an unhandled rejection, a runner-level error), which is red, not green.
+
+### Added
+- **`libuild test` accepts test files and globs, not just a directory** (#19). The smallest runnable unit used to be "every test file under the directory", so iterating on one file meant paying the full-suite cost, or dropping to `bun test path/to/file.test.ts` — which runs under bun's harness instead of libuild's, silently skipping the node platform, and doesn't apply libuild's loader. Now `libuild test path/to/file.test.ts` (one file, several files, or a quoted glob like `'test/**/*-snapshot.test.ts'`) runs exactly that selection under the same loader, setup file, and platforms as the directory form. A single directory argument keeps its original meaning. `--filter <patterns...>` does the same by glob. The setup file (`test-setup.test.*`) is always discovered with the full default globs rather than the selection patterns, so narrowing what you run never silently drops your preload. A selection that matches nothing exits non-zero rather than reporting a green empty run, and a mistyped path is a clear error instead of a silent no-op.
+
 ## [0.2.15] - 2026-08-06
 
 ### Added

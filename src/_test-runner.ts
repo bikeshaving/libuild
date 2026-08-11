@@ -46,8 +46,14 @@ export type Platform = "bun" | "node" | "chromium" | "firefox" | "webkit";
 export interface TestRunnerOptions {
   /** Working directory */
   cwd: string;
-  /** Test file patterns */
-  patterns: string[];
+  /**
+   * Glob patterns selecting test files. Defaults to DEFAULT_PATTERNS, EXCEPT
+   * when `files` is non-empty and no patterns are given - naming files
+   * explicitly means "run exactly these" (issue #19).
+   */
+  patterns?: string[];
+  /** Explicit test files to run, in addition to whatever `patterns` matches */
+  files?: string[];
   /** Platforms to run on (bun, node, chromium, firefox, webkit) */
   platforms: Platform[];
   /** Enable debug mode (keeps browser open) */
@@ -139,17 +145,27 @@ export function isSetupFile(file: string): boolean {
  * file from the test set (it's caught by the test-directory glob but is a
  * preload, not a test). Exported so discovery/exclusion is testable without
  * spawning.
+ *
+ * `files` are explicit paths (a single-file run, see issue #19); they're unioned
+ * with whatever `patterns` matches. The setup file is always looked up with the
+ * FULL default globs rather than `patterns`, so narrowing the selection - to one
+ * file, or via --filter - still preloads the same setup the whole-suite run uses.
+ * That parity is the point of the single-file loop: same loader, same setup.
  */
 export async function collectTests(
   cwd: string,
-  patterns: string[]
+  patterns: string[],
+  files: string[] = []
 ): Promise<{ testFiles: string[]; setupFile: string | null }> {
-  const foundFiles = await findTestFiles(cwd, patterns);
+  const selected = [
+    ...files.map((f) => Path.resolve(cwd, f)),
+    ...(patterns.length ? await findTestFiles(cwd, patterns) : []),
+  ];
 
-  // The setup file is itself a *.test.* match (see isSetupFile), so it's
-  // already in foundFiles - recognize it, pull it out of the run, and hand it
+  // The setup file is itself a *.test.* match (see isSetupFile), so it's found
+  // by the default globs - recognize it, keep it out of the run, and hand it
   // back to be imported first. One global setup is the model; error on more.
-  const setupMatches = foundFiles.filter(isSetupFile);
+  const setupMatches = (await findTestFiles(cwd, DEFAULT_PATTERNS)).filter(isSetupFile);
   if (setupMatches.length > 1) {
     throw new Error(
       `Multiple test-setup.{test,spec}.* files found; libuild supports one global setup file:\n` +
@@ -157,9 +173,64 @@ export async function collectTests(
     );
   }
   const setupFile = setupMatches[0] ?? null;
-  const testFiles = foundFiles.filter((f) => !isSetupFile(f));
+  const testFiles = [...new Set(selected)].filter((f) => !isSetupFile(f));
 
   return { testFiles, setupFile };
+}
+
+const GLOB_CHARS = /[*?[\]{}]/;
+
+/**
+ * Turn the `test` command's positional arguments into a working directory plus
+ * an explicit file list / glob patterns (issue #19).
+ *
+ * - no targets, or a single directory: discover under that directory (the
+ *   original behavior)
+ * - one or more existing files: run exactly those, relative to the CURRENT
+ *   directory - so setup-file discovery and the printed paths match a full run
+ * - an unexpanded glob (quoted, or no shell match): kept as a pattern
+ */
+export async function resolveTestTargets(
+  baseCwd: string,
+  targets: string[]
+): Promise<{ cwd: string; files: string[]; patterns: string[] }> {
+  const empty = { cwd: baseCwd, files: [] as string[], patterns: [] as string[] };
+  if (targets.length === 0) return empty;
+
+  const stats = await Promise.all(
+    targets.map(async (t) => {
+      try {
+        return await FS.stat(Path.resolve(baseCwd, t));
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  // A lone directory argument keeps the original meaning: it IS the root.
+  if (targets.length === 1 && stats[0]?.isDirectory()) {
+    return { ...empty, cwd: Path.resolve(baseCwd, targets[0]) };
+  }
+
+  const files: string[] = [];
+  const patterns: string[] = [];
+  for (const [i, target] of targets.entries()) {
+    const stat = stats[i];
+    if (stat?.isFile()) {
+      files.push(Path.resolve(baseCwd, target));
+    } else if (stat?.isDirectory()) {
+      throw new Error(
+        `Cannot mix a directory with other test targets: ${target}\n` +
+        `Pass a single directory, or a list of test files.`
+      );
+    } else if (GLOB_CHARS.test(target)) {
+      patterns.push(target);
+    } else {
+      throw new Error(`No such test file or directory: ${target}`);
+    }
+  }
+
+  return { cwd: baseCwd, files, patterns };
 }
 
 /**
@@ -350,64 +421,132 @@ export function parseTapOutput(output: string): { passed: number; failed: number
   };
 }
 
+// How long a timed-out child gets to die politely before we SIGKILL it.
+const KILL_GRACE_MS = 5000;
+
+interface SpawnResult {
+  stdout: string;
+  stderr: string;
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  /** We killed it for exceeding the per-file timeout (authoritative, not inferred) */
+  timedOut: boolean;
+  /** The process could not be spawned at all */
+  error: Error | null;
+}
+
 /**
- * A test run only counts as successfully completed if the child produced a
- * result summary AND was not killed by a signal (timeout / OOM). Otherwise it
- * must be treated as a failure, never a false green (issue #16).
+ * Spawn one test shard and capture its output.
+ *
+ * The timeout is enforced here rather than via spawn's own `timeout` option so
+ * that "we killed this for running too long" is a fact we RECORD instead of one
+ * we try to reconstruct from the exit status afterwards. Reconstruction is
+ * exactly what failed in issue #18: node traps our SIGTERM and exits (1, null),
+ * which is indistinguishable from an ordinary failing run by exit status alone.
  */
-export function runCompleted(completed: boolean, signal: NodeJS.Signals | null): boolean {
-  return completed && signal == null;
+async function spawnShard(command: string, args: string[], timeout: number): Promise<SpawnResult> {
+  const { spawn } = await import("child_process");
+
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: CHILD_ENV,
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    // Capture only - the per-file orchestrator prints a grouped line and dumps
+    // this output on failure (streaming live would interleave across shards).
+    child.stdout?.on("data", (data) => { stdout += data.toString(); });
+    child.stderr?.on("data", (data) => { stderr += data.toString(); });
+
+    let graceTimer: NodeJS.Timeout | undefined;
+    const killTimer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      // A wedged runner (or one trapping SIGTERM) must not hang the suite.
+      graceTimer = setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS);
+    }, timeout);
+
+    const done = (result: Omit<SpawnResult, "stdout" | "stderr" | "timedOut">) => {
+      clearTimeout(killTimer);
+      if (graceTimer) clearTimeout(graceTimer);
+      resolve({ stdout, stderr, timedOut, ...result });
+    };
+
+    child.on("close", (code, signal) => done({ code, signal, error: null }));
+    child.on("error", (error) => done({ code: null, signal: null, error }));
+  });
+}
+
+/**
+ * Decide whether a finished shard counts as a successful run, and if not, why.
+ * Returns null when the run is trustworthy, otherwise a human-readable reason.
+ *
+ * A shard is only green when it ran to a result summary, wasn't killed, AND
+ * exited cleanly. That last clause is issue #18: on timeout node prints the TAP
+ * lines for the tests it managed to finish, then exits (1, null). The old check
+ * looked only at "did we see test lines" and "was there a signal", so a timeout
+ * read as a clean partial pass - the file's remaining tests silently evaporated
+ * from the totals and the suite stayed green.
+ */
+export function shardFailure(run: {
+  completed: boolean;
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  timedOut: boolean;
+  failed: number;
+  timeout: number;
+  /** Tests that produced a result before the process died */
+  finished: number;
+}): string | null {
+  if (run.timedOut) {
+    return `timed out after ${run.timeout}ms - ${run.finished} test(s) finished, the rest never ran ` +
+      `(raise --timeout, or split the file)`;
+  }
+  if (run.signal != null) return `killed by ${run.signal} (out of memory?)`;
+  if (!run.completed) return `exited ${run.code ?? "?"} without producing a test summary`;
+  // Completed, but the runner still reported failure while naming no failing
+  // test: the file aborted somewhere we can't see (unhandled rejection, a
+  // runner-level error). Tests went missing, so this is red, not green.
+  if (run.code !== 0 && run.failed === 0) {
+    return `exited ${run.code} but reported no failing tests - tests may not have run`;
+  }
+  return null;
 }
 
 /**
  * Run tests in Node.js using node:test
  */
 async function runNodeTests(bundlePath: string, timeout: number): Promise<ShardRun> {
-  const { spawn } = await import("child_process");
+  const { stdout, stderr, code, signal, timedOut, error } =
+    await spawnShard("node", ["--test", "--test-reporter=tap", bundlePath], timeout);
 
-  return new Promise((resolve) => {
-    const child = spawn("node", ["--test", "--test-reporter=tap", bundlePath], {
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout,
-      env: CHILD_ENV,
-    });
+  if (error) {
+    return {
+      result: { platform: "node", passed: 0, failed: 1, errors: [{ name: "spawn error", error: error.message }], skipped: 0, todo: 0 },
+      output: error.message,
+    };
+  }
 
-    let stdout = "";
-    let stderr = "";
-    // Capture only - the per-file orchestrator prints a grouped line and dumps
-    // this output on failure (streaming live would interleave across shards).
-    child.stdout?.on("data", (data) => { stdout += data.toString(); });
-    child.stderr?.on("data", (data) => { stderr += data.toString(); });
-
-    child.on("close", (code, signal) => {
-      const { passed, failed, errors, skipped, todo, completed } = parseTapOutput(stdout);
-      if (!runCompleted(completed, signal)) {
-        // Killed (timeout/OOM) or crashed before producing a summary: this is a
-        // failure, not a clean 0/0 pass (issue #16).
-        const reason = signal != null ? `killed (${signal})` : `exited ${code ?? "?"} without completing`;
-        resolve({
-          result: {
-            platform: "node",
-            passed,
-            failed: Math.max(failed, 1),
-            errors: [...errors, { name: `node test process ${reason}`, error: "test run did not complete (timeout, crash, or OOM)" }],
-            skipped,
-            todo,
-          },
-          output: stdout + stderr,
-        });
-        return;
-      }
-      resolve({ result: { platform: "node", passed, failed, errors, skipped, todo }, output: stdout + stderr });
-    });
-
-    child.on("error", (err) => {
-      resolve({
-        result: { platform: "node", passed: 0, failed: 1, errors: [{ name: "spawn error", error: err.message }], skipped: 0, todo: 0 },
-        output: err.message,
-      });
-    });
+  const { passed, failed, errors, skipped, todo, completed } = parseTapOutput(stdout);
+  const reason = shardFailure({
+    completed, code, signal, timedOut, failed, timeout,
+    finished: passed + failed + skipped + todo,
   });
+
+  return {
+    result: {
+      platform: "node",
+      passed,
+      failed: reason ? Math.max(failed, 1) : failed,
+      errors: reason ? [...errors, { name: "node test process did not complete", error: reason }] : errors,
+      skipped,
+      todo,
+    },
+    output: stdout + stderr,
+  };
 }
 
 /**
@@ -438,50 +577,32 @@ export function parseBunOutput(output: string): { passed: number; failed: number
  * Run tests in Bun
  */
 async function runBunTests(bundlePath: string, timeout: number): Promise<ShardRun> {
-  const { spawn } = await import("child_process");
+  const { stdout, stderr, code, signal, timedOut, error } =
+    await spawnShard("bun", ["test", bundlePath], timeout);
 
-  return new Promise((resolve) => {
-    const child = spawn("bun", ["test", bundlePath], {
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout,
-      env: CHILD_ENV,
-    });
+  if (error) {
+    return {
+      result: { platform: "bun", passed: 0, failed: 1, errors: [{ name: "spawn error", error: error.message }] },
+      output: error.message,
+    };
+  }
 
-    let stdout = "";
-    let stderr = "";
-
-    // Capture only - the per-file orchestrator prints a grouped line and dumps
-    // this output on failure (streaming live would interleave across shards).
-    child.stdout?.on("data", (data) => { stdout += data.toString(); });
-    child.stderr?.on("data", (data) => { stderr += data.toString(); });
-
-    child.on("close", (code, signal) => {
-      const { passed, failed, errors, completed } = parseBunOutput(stdout + stderr);
-      if (!runCompleted(completed, signal)) {
-        // Killed (timeout/OOM) or crashed before producing a summary: this is a
-        // failure, not a clean 0/0 pass (issue #16).
-        const reason = signal != null ? `killed (${signal})` : `exited ${code ?? "?"} without completing`;
-        resolve({
-          result: {
-            platform: "bun",
-            passed,
-            failed: Math.max(failed, 1),
-            errors: [...errors, { name: `bun test process ${reason}`, error: "test run did not complete (timeout, crash, or OOM)" }],
-          },
-          output: stdout + stderr,
-        });
-        return;
-      }
-      resolve({ result: { platform: "bun", passed, failed, errors }, output: stdout + stderr });
-    });
-
-    child.on("error", (err) => {
-      resolve({
-        result: { platform: "bun", passed: 0, failed: 1, errors: [{ name: "spawn error", error: err.message }] },
-        output: err.message,
-      });
-    });
+  const output = stdout + stderr;
+  const { passed, failed, errors, completed } = parseBunOutput(output);
+  const reason = shardFailure({
+    completed, code, signal, timedOut, failed, timeout,
+    finished: passed + failed,
   });
+
+  return {
+    result: {
+      platform: "bun",
+      passed,
+      failed: reason ? Math.max(failed, 1) : failed,
+      errors: reason ? [...errors, { name: "bun test process did not complete", error: reason }] : errors,
+    },
+    output,
+  };
 }
 
 /**
@@ -490,7 +611,7 @@ async function runBunTests(bundlePath: string, timeout: number): Promise<ShardRu
  * each file's native/off-heap memory at process exit - which bun/JSC never
  * returns within a single long-lived process, so a large jsdom-backed suite
  * would otherwise thrash and never finish - and lets independent files run in
- * parallel. A killed/crashed shard counts as a failure (see runCompleted).
+ * parallel. A killed/crashed/timed-out shard counts as a failure (see shardFailure).
  */
 async function runShardedPlatform(
   platform: Platform,
@@ -695,9 +816,13 @@ function printResults(results: TestResult[]): boolean {
  * Main test runner
  */
 export async function runTests(options: Partial<TestRunnerOptions> = {}): Promise<boolean> {
-  const opts: TestRunnerOptions = {
+  const files = options.files ?? [];
+  const opts: Required<TestRunnerOptions> = {
     cwd: options.cwd || process.cwd(),
-    patterns: options.patterns || DEFAULT_PATTERNS,
+    // Naming files explicitly means "run exactly these" - don't also glob the
+    // tree back in (issue #19).
+    patterns: options.patterns ?? (files.length ? [] : DEFAULT_PATTERNS),
+    files,
     platforms: options.platforms || ["bun"],
     debug: options.debug || false,
     timeout: options.timeout || 60000,
@@ -705,11 +830,15 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
   };
 
   console.log("Finding test files...");
-  const { testFiles, setupFile } = await collectTests(opts.cwd, opts.patterns);
+  const { testFiles, setupFile } = await collectTests(opts.cwd, opts.patterns, opts.files);
 
   if (testFiles.length === 0) {
-    console.log("No test files found.");
-    return true;
+    // An explicit selection that matches nothing is a mistake worth failing on:
+    // silently "passing" is how a typo'd path or stale --filter becomes a green
+    // run. Plain discovery finding nothing stays a no-op success.
+    const explicit = opts.files.length > 0 || options.patterns != null;
+    console.log(explicit ? red("No test files matched the given files/patterns.") : "No test files found.");
+    return !explicit;
   }
 
   console.log(`Found ${testFiles.length} test file(s)`);

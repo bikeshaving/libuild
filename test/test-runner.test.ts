@@ -2,7 +2,7 @@ import {test, expect} from "bun:test";
 import * as FS from "fs/promises";
 import * as FSSync from "fs";
 import * as Path from "path";
-import {bundleTests, collectTests, parseBunOutput, parseTapOutput, runCompleted, runTests} from "../src/_test-runner.ts";
+import {bundleTests, collectTests, parseBunOutput, parseTapOutput, resolveTestTargets, shardFailure, runTests} from "../src/_test-runner.ts";
 import {
   installSnapshotMatcher,
   wrapTestApi,
@@ -201,14 +201,36 @@ test("parseTapOutput: directive-aware fallback tally when summary lines absent (
   expect(r.errors.map(e => e.name)).toContain("real failure");
 });
 
-test("runCompleted: killed or summary-less runs are not successes (#16)", () => {
+const OK_RUN = {completed: true, code: 0, signal: null, timedOut: false, failed: 0, timeout: 60000, finished: 3};
+
+test("shardFailure: killed or summary-less runs are not successes (#16)", () => {
   // Clean, completed run
-  expect(runCompleted(true, null)).toBe(true);
-  // Killed by a signal (timeout/OOM) - NOT a success even if a summary parsed
-  expect(runCompleted(true, "SIGTERM")).toBe(false);
-  expect(runCompleted(true, "SIGKILL")).toBe(false);
+  expect(shardFailure(OK_RUN)).toBeNull();
+  // Ordinary failing run: reported by the runner, not by us
+  expect(shardFailure({...OK_RUN, code: 1, failed: 2})).toBeNull();
+  // Killed by a signal (OOM) - NOT a success even if a summary parsed
+  expect(shardFailure({...OK_RUN, signal: "SIGKILL"})).toMatch(/SIGKILL/);
   // No summary produced (crashed before finishing) - NOT a success
-  expect(runCompleted(false, null)).toBe(false);
+  expect(shardFailure({...OK_RUN, completed: false, code: 7})).toMatch(/without producing a test summary/);
+});
+
+test("shardFailure: a timeout is a failure that names the count it got through (#18)", () => {
+  // The exact shape of a timed-out `node --test`: it traps SIGTERM, prints TAP
+  // for the tests it finished, and exits (1, null) - byte-identical by exit
+  // status to an ordinary failing run, which is how it used to pass as green.
+  const reason = shardFailure({
+    completed: true, code: 1, signal: null, timedOut: true,
+    failed: 0, timeout: 60000, finished: 12,
+  });
+  expect(reason).toBeTruthy();
+  expect(reason).toMatch(/timed out after 60000ms/);
+  expect(reason).toMatch(/12 test\(s\) finished/);
+});
+
+test("shardFailure: completed-but-nonzero with no failing test is not green (#18)", () => {
+  // Tests went missing somewhere we can't see (unhandled rejection, runner
+  // error). Reporting "0 failed" here is the false-green this guards against.
+  expect(shardFailure({...OK_RUN, code: 1, failed: 0})).toMatch(/reported no failing tests/);
 });
 
 test("parseTapOutput.completed distinguishes a real run from a killed one (#16)", () => {
@@ -238,6 +260,109 @@ test("a killed (timed-out) test run is reported as failure, not a false green (#
 
   // Before #16 this returned true (0 passed, 0 failed -> false green)
   expect(ok).toBe(false);
+
+  await removeTempDir(testDir);
+});
+
+test("a file that exceeds the timeout mid-run fails instead of vanishing (#18)", async () => {
+  const testDir = await createTempDir("runner-timeout");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+  // The #18 shape, distinct from #16's hang-at-load: the file gets FAR enough to
+  // report a passing test, then blows the budget. node traps our SIGTERM and
+  // exits (1, null) with valid partial TAP, so the old signal-only check read it
+  // as "1 passed, 0 failed" and the never-run tests just disappeared.
+  await FS.writeFile(Path.join(projDir, "test", "slow.test.ts"),
+    'import {test} from "node:test";\nimport assert from "node:assert";\n' +
+    'test("quick", () => { assert.ok(true); });\n' +
+    'test("slow", async () => { await new Promise(r => setTimeout(r, 60000)); });\n' +
+    'test("never runs", () => { assert.ok(true); });\n');
+
+  const ok = await runTests({
+    cwd: projDir,
+    platforms: ["node"],
+    patterns: ["**/test/**/*.ts"],
+    timeout: 4000,
+  });
+
+  expect(ok).toBe(false);
+
+  await removeTempDir(testDir);
+});
+
+test("runTests runs only the explicitly named file (#19)", async () => {
+  const testDir = await createTempDir("runner-single-file");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+
+  await FS.writeFile(Path.join(projDir, "test", "good.test.ts"),
+    'import {test} from "node:test";\nimport assert from "node:assert";\n' +
+    'test("good", () => { assert.ok(true); });\n');
+  // A failing neighbor: if selection leaked back into a full discovery, the
+  // single-file run would go red.
+  await FS.writeFile(Path.join(projDir, "test", "bad.test.ts"),
+    'import {test} from "node:test";\nimport assert from "node:assert";\n' +
+    'test("bad", () => { assert.fail("should not have run"); });\n');
+
+  const good = Path.join(projDir, "test", "good.test.ts");
+  expect(await runTests({cwd: projDir, files: [good], platforms: ["node"], timeout: 30000})).toBe(true);
+
+  // ...and the selection is real, not just "everything passes"
+  const bad = Path.join(projDir, "test", "bad.test.ts");
+  expect(await runTests({cwd: projDir, files: [bad], platforms: ["node"], timeout: 30000})).toBe(false);
+
+  await removeTempDir(testDir);
+});
+
+test("a selection that matches nothing fails; empty discovery still passes (#19)", async () => {
+  const testDir = await createTempDir("runner-empty-selection");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(projDir, {recursive: true});
+
+  // Plain discovery over a project with no tests: a no-op success.
+  expect(await runTests({cwd: projDir, platforms: ["node"], timeout: 30000})).toBe(true);
+  // A typo'd --filter must NOT read as green.
+  expect(await runTests({cwd: projDir, patterns: ["**/nope-*.test.ts"], platforms: ["node"], timeout: 30000})).toBe(false);
+
+  await removeTempDir(testDir);
+});
+
+test("resolveTestTargets: directory, files, globs, and bad paths (#19)", async () => {
+  const testDir = await createTempDir("resolve-targets");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+  const file = Path.join(projDir, "test", "a.test.ts");
+  await FS.writeFile(file, "export {};\n");
+
+  // No targets: discover under the base directory (original behavior)
+  expect(await resolveTestTargets(projDir, [])).toEqual({cwd: projDir, files: [], patterns: []});
+
+  // A lone directory IS the root
+  const dir = await resolveTestTargets(testDir, ["proj"]);
+  expect(dir.cwd).toBe(projDir);
+  expect(dir.files).toEqual([]);
+
+  // A file: run exactly it, rooted at the CURRENT dir so setup discovery and
+  // printed paths match a full run
+  const one = await resolveTestTargets(projDir, ["test/a.test.ts"]);
+  expect(one.cwd).toBe(projDir);
+  expect(one.files).toEqual([file]);
+
+  // An unexpanded/quoted glob is kept as a pattern
+  expect((await resolveTestTargets(projDir, ["test/**/*.test.ts"])).patterns).toEqual(["test/**/*.test.ts"]);
+
+  // A typo'd path is an error, not a silent empty run
+  const rejection = async (targets: string[]): Promise<string> => {
+    try {
+      await resolveTestTargets(projDir, targets);
+      return "";
+    } catch (error: any) {
+      return error?.message ?? String(error);
+    }
+  };
+  expect(await rejection(["test/nope.test.ts"])).toMatch(/No such test file/);
+  // Mixing a directory with other targets is ambiguous
+  expect(await rejection(["test", "test/a.test.ts"])).toMatch(/Cannot mix a directory/);
 
   await removeTempDir(testDir);
 });

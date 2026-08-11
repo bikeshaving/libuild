@@ -3,7 +3,7 @@ import { Command } from "commander";
 import * as FS from "fs/promises";
 import * as Path from "path";
 import { build, publish } from "./libuild.ts";
-import { runTests, type Platform } from "./_test-runner.ts";
+import { resolveTestTargets, runTests, type Platform } from "./_test-runner.ts";
 
 // =============================================================================
 // Publish argument validation
@@ -127,18 +127,34 @@ program
 program
   .command("test")
   .description("Run tests across platforms")
-  .argument("[directory]", "Directory containing tests", ".")
+  .argument("[targets...]", "Directory containing tests, or specific test file(s)/glob(s) to run")
   .option("-p, --platform <platforms...>", "Platforms to test on (bun, node, chromium, firefox, webkit)")
   .option("--debug", "Keep browser open for debugging")
+  .option("--filter <patterns...>", "Glob pattern(s) selecting which test files to run")
   .option("--timeout <ms>", "Per-file test timeout in milliseconds", "60000")
   .option("-u, --update-snapshots", "Write/update snapshot files instead of comparing")
-  .action(async (directory: string, options: {
+  .action(async (targets: string[], options: {
     platform?: string[];
     debug?: boolean;
+    filter?: string[];
     timeout?: string;
     updateSnapshots?: boolean;
   }) => {
-    const cwd = Path.resolve(directory);
+    // A target may be a directory (the root), specific test files, or an
+    // unexpanded glob - so the single-file loop runs under the same loader,
+    // setup file, and platforms as the full suite (issue #19).
+    let cwd: string;
+    let files: string[];
+    let patterns: string[] | undefined;
+    try {
+      const resolved = await resolveTestTargets(process.cwd(), targets ?? []);
+      cwd = resolved.cwd;
+      files = resolved.files;
+      patterns = options.filter ?? (resolved.patterns.length ? resolved.patterns : undefined);
+    } catch (error: any) {
+      console.error("Error:", error?.message ?? error);
+      process.exit(1);
+    }
 
     // Validate platforms
     const validPlatforms: Platform[] = ["bun", "node", "chromium", "firefox", "webkit"];
@@ -155,6 +171,8 @@ program
 
     const success = await runTests({
       cwd,
+      files,
+      patterns,
       platforms,
       debug: options.debug || false,
       timeout: parseInt(options.timeout || "60000", 10),
