@@ -3,6 +3,9 @@ import * as Path from "path";
 import {spawn} from "child_process";
 
 import * as ESBuild from "esbuild";
+// All builds go through this wrapper so a dead esbuild service recovers instead
+// of cascading into every later build (see _esbuild.ts).
+import { build as esbuildBuild } from "./_esbuild.ts";
 import {umdPlugin} from "./plugins/umd.js";
 import {externalEntrypointsPlugin} from "./plugins/external.js";
 import {dtsPlugin} from "./plugins/dts.js";
@@ -1263,7 +1266,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     const allEntryNames = [...srcEntryNames, ...binEntryNames];
 
     if (allESMEntryPoints.length > 0) {
-      await ESBuild.build({
+      await esbuildBuild({
         entryPoints: allESMEntryPoints.map(p => ({in: p, out: flatOut(p)})),
         outdir: distDir,
         chunkNames: "_chunks/[name]-[hash]", // Put chunks in a subdirectory
@@ -1335,7 +1338,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       // Build src entries (CJS)
       if (srcEntryPoints.length > 0) {
         try {
-          await ESBuild.build({
+          await esbuildBuild({
             entryPoints: srcEntryPoints.map(p => ({in: p, out: flatOut(p)})),
             outdir: distDir,
             format: "cjs",
@@ -1391,7 +1394,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       ? pkg.name.split("/").pop()!.replace(/-/g, "").charAt(0).toUpperCase() + pkg.name.split("/").pop()!.replace(/-/g, "").slice(1)
       : pkg.name.replace(/-/g, "").charAt(0).toUpperCase() + pkg.name.replace(/-/g, "").slice(1);
 
-    await ESBuild.build({
+    await esbuildBuild({
       entryPoints: [umdPath],
       outfile: Path.join(distDir, "umd.js"),
       format: "cjs",
