@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.17] - 2026-08-12
+
+### Fixed
+- **Browser test bundles no longer break from live `bun:test`/`node:test` imports.** `@b9g/libuild/test`'s never-run node/bun branches were marked `external` in browser bundles, surviving as live dynamic imports. That forced esbuild to give the dispatcher a lazy async wrapper, and — depending on the esbuild version's wrapper choice — the resulting `await init_test()` could land inside a non-async wrapper, making the entire bundle a syntax error before a single test ran (every browser run then died on Playwright's 30s timeout). Those specifiers now resolve inside the bundle to stubs whose module bodies throw: they link cleanly, the dispatcher stays plain ESM with its top-level await at genuine top level, and a browser-dead code path that ever actually evaluates one fails loudly.
+- **Browser runner no longer starts before any test registers** (crank PR #375). The dispatcher's top-level await makes it an async module, so every importing test file's body is deferred to a microtask continuation — and the browser runner scheduled its run with `queueMicrotask`, which was already queued ahead of those continuations. It ran with zero tests registered and reported a green empty run. The runner now starts in a macrotask (`setTimeout`), which fires only after the whole microtask queue — every module body, including TLA continuations — has drained.
+- **A browser run that registers zero tests is a hard failure, not a green exit 0** (crank PR #375). Discovered-files-but-nothing-registered is the signature of a runner malfunction (the bug above produced exactly that shape); merging against it would silently disable a consumer's entire suite while CI stayed green. A genuinely empty run (no files found) still exits 0.
+- **`--platform node` works in packages without `"type": "module"`.** Test bundles for node/bun are now written as `.mjs`, so node's format detection no longer falls back to the consumer's package `type` and refuse the ESM bundle ("Cannot use import statement outside a module").
+- **A dead esbuild service no longer cascades into every remaining build.** esbuild keeps one long-lived service child per process and never respawns it: if that child dies (OOM, reaped under load), every later `build()` throws "The service is no longer running" — in libuild's own suite, one such death turned a green run into 139 failures. All builds now go through a wrapper that, on that specific error only, calls `esbuild.stop()` to drop the dead handle and retries once, which spawns a fresh service (verified by SIGKILLing the real service child mid-run). Ordinary build errors are not retried.
+
+### Added
+- **Timeout failures report "x of y": how many tests finished out of how many the file registered.** `@b9g/libuild/test` counts registrations as they happen (in the same proxy that tracks names for snapshots) and emits the total on stdout, where the runner parses it back out and strips it from displayed output. A timed-out file now reports `40 of 47 test(s) finished` instead of a bare `40`, so a trivial loss is distinguishable from a catastrophic one. Files that don't import `@b9g/libuild/test` simply keep the numerator-only message.
+
 ## [0.2.16] - 2026-08-11
 
 ### Fixed
