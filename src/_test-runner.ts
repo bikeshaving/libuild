@@ -391,6 +391,68 @@ function makeBrowserStubPlugin(libuildDir: string | null): ESBuild.Plugin {
   };
 }
 
+const FORCE_ESM_NS = "libuild-force-esm";
+
+/**
+ * Force module-format classification by SYNTAX, not by package.json `type`
+ * (issue #21). esbuild classifies a file in a `"type": "commonjs"` package as
+ * CommonJS even when the file itself uses `import` syntax - and when such a
+ * file statically imports a module using top-level await (the
+ * `@b9g/libuild/test` dispatcher), esbuild emits the required
+ * `await init_...()` inside a NON-async `__commonJS` wrapper: the whole
+ * browser bundle is a syntax error, and CJS-typed consumers can't run browser
+ * tests at all. (Upstream esbuild behavior - reproducible with no libuild in
+ * the graph.)
+ *
+ * The sidestep: re-resolve consumer-side source files into a plugin namespace.
+ * Namespaced modules have no enclosing package.json for esbuild to consult, so
+ * classification falls back to the file's own syntax - `import`/`export` means
+ * ESM, bare `require()` still means CJS. node_modules is exempt: dependencies'
+ * own package `type` is authoritative for them, and they can't be importing
+ * the dispatcher.
+ */
+function makeForceEsmPlugin(): ESBuild.Plugin {
+  return {
+    name: FORCE_ESM_NS,
+    setup(build) {
+      build.onResolve({ filter: /.*/ }, async (args) => {
+        // Skip our own re-resolution (below), and anything already claimed by
+        // another namespace (e.g. the browser stubs).
+        if (args.pluginData === FORCE_ESM_NS || (args.namespace !== "file" && args.namespace !== FORCE_ESM_NS)) {
+          return undefined;
+        }
+        const resolved = await build.resolve(args.path, {
+          importer: args.importer,
+          namespace: "file",
+          resolveDir: args.resolveDir || (args.importer ? Path.dirname(args.importer) : undefined),
+          kind: args.kind,
+          pluginData: FORCE_ESM_NS,
+        });
+        if (resolved.errors.length > 0 || resolved.external || !resolved.path) return resolved;
+        // Another plugin (the stubs) claimed it - hands off.
+        if (resolved.namespace !== "file" && resolved.namespace !== "") return resolved;
+        if (resolved.path.split(Path.sep).includes("node_modules")) return resolved;
+        if (!/\.(ts|tsx|mts|cts|js|jsx|mjs)$/i.test(resolved.path)) return resolved;
+        return { path: resolved.path, namespace: FORCE_ESM_NS };
+      });
+
+      build.onLoad({ filter: /.*/, namespace: FORCE_ESM_NS }, async (args) => {
+        const ext = Path.extname(args.path).toLowerCase();
+        const loader: ESBuild.Loader =
+          ext === ".ts" || ext === ".mts" || ext === ".cts" ? "ts"
+          : ext === ".tsx" ? "tsx"
+          : ext === ".jsx" ? "jsx"
+          : "js";
+        return {
+          contents: await FS.readFile(args.path, "utf-8"),
+          loader,
+          resolveDir: Path.dirname(args.path),
+        };
+      });
+    },
+  };
+}
+
 /** Where the consumer's `@b9g/libuild` build actually lives (realpath), for
  * stub scoping. Resolved via the `./package.json` export because it carries no
  * conditions - `./test` is import-only, which a require-based resolve can't
@@ -464,8 +526,10 @@ const require = createRequire(import.meta.url);
     // bundle instead: the dispatcher stays plain ESM with its top-level await
     // at genuine top level. The stubs throw if ever actually evaluated - which
     // the browser branch never does.
+    // Stub plugin FIRST: its bare specifiers (bun:test, fs, ...) must be
+    // claimed before the force-esm catch-all tries to resolve them as files.
     ...(isBrowser
-      ? { plugins: [makeBrowserStubPlugin(resolveLibuildDir(cwd))] }
+      ? { plugins: [makeBrowserStubPlugin(resolveLibuildDir(cwd)), makeForceEsmPlugin()] }
       : { packages: "external" as const }),
     // Inject require shim for node/bun to handle CJS deps like expect/chalk
     ...(isBrowser ? {} : { banner: { js: requireShim } }),

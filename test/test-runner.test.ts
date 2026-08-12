@@ -554,6 +554,44 @@ test("browser stubs are scoped: a consumer's own pretty-format import bundles fo
   await removeTempDir(testDir);
 });
 
+test("browser bundle parses in a type:commonjs consumer package (#21)", async () => {
+  const testDir = await createTempDir("cjs-browser-bundle");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+  // The consumer package is CJS-typed: esbuild used to classify the test file
+  // as CommonJS from the package `type` despite its import syntax, emitting
+  // `await init_test()` inside a non-async wrapper - the whole browser bundle
+  // was a syntax error and CJS consumers couldn't run browser tests at all.
+  await FS.writeFile(Path.join(projDir, "package.json"),
+    JSON.stringify({name: "p", version: "1.0.0", type: "commonjs"}));
+  await FS.mkdir(Path.join(projDir, "node_modules", "@b9g"), {recursive: true});
+  await FS.symlink(Path.resolve(import.meta.dir, "../dist"), Path.join(projDir, "node_modules", "@b9g", "libuild"));
+  await FS.writeFile(Path.join(projDir, "test", "a.test.ts"),
+    'import {test, expect} from "@b9g/libuild/test";\ntest("a", () => { expect(1).toBe(1); });\n');
+  // A genuinely-CJS local helper must STAY CommonJS under the syntax-based
+  // classification (the fix must not force ESM onto require-style files).
+  await FS.writeFile(Path.join(projDir, "test", "helper.js"),
+    "module.exports.n = 1;\n");
+  await FS.writeFile(Path.join(projDir, "test", "b.test.ts"),
+    'import {test, expect} from "@b9g/libuild/test";\nimport {n} from "./helper.js";\n' +
+    'test("b", () => { expect(n).toBe(1); });\n');
+
+  const bundle = await bundleTests(
+    [Path.join(projDir, "test", "a.test.ts"), Path.join(projDir, "test", "b.test.ts")],
+    "chromium", projDir, projDir);
+  const content = await FS.readFile(bundle, "utf-8");
+
+  const {spawn} = await import("child_process");
+  const syntax = await new Promise<number>((resolve) => {
+    const child = spawn("node", ["--input-type=module", "--check"], {stdio: ["pipe", "ignore", "ignore"]});
+    child.stdin.end(content);
+    child.on("close", (code) => resolve(code ?? 1));
+  });
+  expect(syntax).toBe(0);
+
+  await removeTempDir(testDir);
+});
+
 test("registration counting covers only/skip/todo/each (denominator accuracy)", async () => {
   const {wrapTestApi} = await import("../src/_snapshot.ts");
 

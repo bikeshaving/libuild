@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.18] - 2026-08-12
+
+### Fixed
+- **Browser test bundles are no longer a syntax error in `"type": "commonjs"` consumer packages** (#21). esbuild classifies a file in a CJS-typed package as CommonJS from the package `type` even when the file itself uses `import` syntax; when such a file statically imports a top-level-await module (the `@b9g/libuild/test` dispatcher), esbuild emits the required `await init_...()` inside a non-async `__commonJS` wrapper and the whole bundle fails to parse - CJS-typed consumers couldn't run browser tests at all (upstream esbuild behavior, reproducible with no libuild in the graph). Browser bundles now route consumer-side source files through a plugin namespace with no enclosing package.json to consult, so module format falls back to each file's own syntax: `import`/`export` means ESM, bare `require()`/`module.exports` still means CJS (local CommonJS helpers keep working). node_modules is exempt - dependencies' own package `type` remains authoritative.
+
 ## [0.2.17] - 2026-08-12
 
 ### Fixed
