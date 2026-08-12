@@ -1,5 +1,9 @@
 import {describe, expect, test} from "bun:test";
+import * as FS from "fs/promises";
+import * as Path from "path";
+import {execSync} from "child_process";
 import {build} from "../src/_esbuild.ts";
+import {createTempDir, removeTempDir} from "./test-utils.ts";
 
 // esbuild keeps one long-lived service child per module instance and never
 // respawns it, so a single service death used to poison every later build in
@@ -59,6 +63,50 @@ describe("esbuild service recovery", () => {
     expect(attempts).toBe(2);
   });
 
+  test("recovery is single-flight: concurrent failures stop() once", async () => {
+    // stop() is process-global and esbuild strands in-flight requests on the
+    // service it destroys. If every concurrently-failing build ran its own
+    // stop()+retry, the second stop() would kill the fresh service the first
+    // retry had just spawned - hanging that retry forever (the deadlock the
+    // adversarial review reproduced). Only the FIRST failure from a given
+    // service generation may stop(); the rest just retry.
+    let stops = 0;
+    let failures = 0;
+    const deps = {
+      build: async () => {
+        if (failures < 4) { failures++; throw serviceDead(); }
+        return {ok: true} as any;
+      },
+      stop: () => { stops++; },
+    };
+
+    const results = await Promise.all([
+      build({} as any, deps),
+      build({} as any, deps),
+      build({} as any, deps),
+      build({} as any, deps),
+    ]);
+
+    expect(results.every((r) => (r as any).ok)).toBe(true);
+    expect(stops).toBe(1);
+  });
+
+  test('matches the in-flight death spelling ("was stopped") too', async () => {
+    // Builds in flight when the service dies reject with "The service was
+    // stopped", not "no longer running". Both must recover - concurrency
+    // means most victims of a death see the FORMER.
+    let attempts = 0;
+    const result = await build({} as any, {
+      build: async () => {
+        if (++attempts === 1) throw new Error("The service was stopped");
+        return {ok: true} as any;
+      },
+      stop: () => {},
+    });
+    expect(result).toEqual({ok: true} as any);
+    expect(attempts).toBe(2);
+  });
+
   test("a throwing stop() does not mask the recovery", async () => {
     let attempts = 0;
     const result = await build({} as any, {
@@ -71,5 +119,60 @@ describe("esbuild service recovery", () => {
 
     expect(result).toEqual({ok: true} as any);
     expect(attempts).toBe(2);
+  });
+});
+
+describe("esbuild service restart (integration, real service)", () => {
+  // The fakes above prove the wrapper's logic; this proves the claim the
+  // wrapper is BUILT on - that after the real service child dies, a plain
+  // build stays dead but the wrapper's stop()+retry spawns a fresh service.
+  // If a future esbuild changes its service lifecycle or error strings, this
+  // is the test that notices.
+  test("SIGKILLed service: plain build fails, wrapped build recovers", async () => {
+    const tempDir = await createTempDir("esbuild-restart");
+    try {
+      const entry = Path.join(tempDir, "in.js");
+      await FS.writeFile(entry, "export const x = 1;\n");
+      const opts = {
+        entryPoints: [entry],
+        bundle: true,
+        outfile: Path.join(tempDir, "out.js"),
+        logLevel: "silent",
+      } as any;
+
+      // Healthy build first - this is what spawns the service child.
+      await build(opts);
+
+      // Kill only OUR OWN service child (`pgrep -P <this pid>`), never a
+      // machine-wide `pgrep -f esbuild`: under per-file isolation, sibling
+      // shard processes have their own services, and killing theirs would
+      // make this test the very cascade-failure it exists to prevent.
+      const pids = execSync(`pgrep -P ${process.pid} -f esbuild || true`, {encoding: "utf-8"})
+        .trim().split("\n").filter(Boolean);
+      expect(pids.length).toBeGreaterThan(0);
+      for (const pid of pids) process.kill(parseInt(pid, 10), "SIGKILL");
+      // Give esbuild's JS side a beat to observe the closed streams.
+      await new Promise((r) => setTimeout(r, 300));
+
+      // A plain (unwrapped) build must fail - this is the disease. If this
+      // ever starts succeeding, esbuild has learned to respawn on its own
+      // and the wrapper is obsolete.
+      const ESBuild = await import("esbuild");
+      await ESBuild.build(opts).then(
+        () => { throw new Error("expected the unwrapped build to reject"); },
+        (error: any) => {
+          expect(String(error?.message ?? error)).toMatch(/service (is no longer running|was stopped)/i);
+        },
+      );
+
+      // The wrapped build recovers (stop() + retry spawns a fresh service)...
+      await build(opts);
+      // ...and the service stays healthy for subsequent builds.
+      await build(opts);
+      const out = await FS.readFile(Path.join(tempDir, "out.js"), "utf-8");
+      expect(out).toContain("x = 1");
+    } finally {
+      await removeTempDir(tempDir);
+    }
   });
 });

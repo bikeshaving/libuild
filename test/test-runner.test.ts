@@ -258,6 +258,58 @@ test("parseRegistered takes the last total; stripRegistered hides the markers", 
   expect(stripRegistered(dump)).not.toMatch(/__LIBUILD_REGISTERED__/);
 });
 
+test("a test's own output cannot hijack the count or vanish from the dump", () => {
+  // A console.log mentioning the marker mid-sentence, or a bun code frame
+  // quoting the bundle's own marker constant, must neither be PARSED as a
+  // count nor be STRIPPED from the failure dump - an unanchored scan let a
+  // 4-test file report "0 of 99" while eating the very line explaining the
+  // failure.
+  const chatter = 'my test says __LIBUILD_REGISTERED__ 99 (own output)\n' +
+    'var REGISTERED_MARKER = "__LIBUILD_REGISTERED__";\n' +
+    '__LIBUILD_REGISTERED__ 4\n';
+  expect(parseRegistered(chatter)).toBe(4);
+  const stripped = stripRegistered(chatter);
+  expect(stripped).toContain("own output");
+  expect(stripped).toContain("var REGISTERED_MARKER");
+  expect(stripped).not.toMatch(/^__LIBUILD_REGISTERED__ 4$/m);
+});
+
+test("shardFailure: finishing cleanly at the buzzer is not a timeout failure", () => {
+  // The kill timer fires unconditionally; if the child had already produced a
+  // full summary and exited 0 (node flushes TAP on SIGTERM), nothing was
+  // lost - reporting "N of N finished, the rest never ran" would be nonsense.
+  expect(shardFailure({
+    completed: true, code: 0, signal: null, timedOut: true,
+    failed: 0, timeout: 5000, finished: 12, registered: 12,
+  })).toBeNull();
+  // But a timed-out child that EXITED NONZERO still fails.
+  expect(shardFailure({
+    completed: true, code: 1, signal: null, timedOut: true,
+    failed: 0, timeout: 5000, finished: 12, registered: 47,
+  })).toMatch(/timed out/);
+});
+
+test("an inconsistent denominator (finished > registered) is suppressed", () => {
+  // Registration paths we don't wrap (runtime-specific sub-methods) can
+  // undercount; "5 of 2" is worse than "5".
+  const reason = shardFailure({
+    completed: true, code: 1, signal: null, timedOut: true,
+    failed: 0, timeout: 5000, finished: 5, registered: 2,
+  });
+  expect(reason).toMatch(/5 test\(s\) finished/);
+  expect(reason).not.toMatch(/ of /);
+});
+
+test("parseBunOutput reports skip/todo so the x-of-y numerator matches", () => {
+  const out = "bun test v1.3.14\n\n 3 pass\n 2 skip\n 1 todo\n 0 fail\nRan 6 tests\n";
+  const r = parseBunOutput(out);
+  expect(r.passed).toBe(3);
+  expect(r.skipped).toBe(2);
+  expect(r.todo).toBe(1);
+  expect(r.failed).toBe(0);
+  expect(r.completed).toBe(true);
+});
+
 test("shardFailure: completed-but-nonzero with no failing test is not green (#18)", () => {
   // Tests went missing somewhere we can't see (unhandled rejection, runner
   // error). Reporting "0 failed" here is the false-green this guards against.
@@ -418,6 +470,12 @@ test("browser bundle parses and contains no live node/bun imports", async () => 
   // browser run died before a single test executed. Stubbing resolves them
   // inside the bundle, so: (a) it parses, (b) no live imports remain.
   const content = await FS.readFile(bundle, "utf-8");
+  // The entry's ready flag is the runner's start signal (ESM guarantees it is
+  // set only after every test file - including TLA continuations - has fully
+  // evaluated), and the runner must wait on it rather than bet on scheduler
+  // ordering.
+  expect(content).toMatch(/__LIBUILD_TEST_READY__ = true/);
+  expect(content).toMatch(/__LIBUILD_TEST_READY__/);
   // `--input-type=module` only applies to stdin, so pipe the bundle in.
   const {spawn} = await import("child_process");
   const syntax = await new Promise<number>((resolve) => {
@@ -449,6 +507,52 @@ test("node/bun bundles use .mjs so consumers without type:module still run", asy
   expect(bundle.endsWith(".mjs")).toBe(true);
 
   await removeTempDir(testDir);
+});
+
+test("registration counting covers only/skip/todo/each (denominator accuracy)", async () => {
+  const {wrapTestApi} = await import("../src/_snapshot.ts");
+
+  // Fake runner API shaped like bun's: sub-methods that register.
+  const fake = () => {
+    const test: any = (_n: string, _f: () => void) => {};
+    test.skip = (_n: string, _f?: () => void) => {};
+    test.todo = (_n: string, _f?: () => void) => {};
+    test.only = (_n: string, _f: () => void) => {};
+    test.each = (_table: unknown[]) => (_n: string, _f: (...a: any[]) => void) => {};
+    return test;
+  };
+  const api = wrapTestApi({describe: fake(), test: fake(), it: fake()});
+
+  // The counter emits its running total via console.log in a microtask;
+  // capture it rather than exporting mutable state for tests to poke.
+  const emitted: string[] = [];
+  const realLog = console.log;
+  console.log = (...args: any[]) => { emitted.push(args.join(" ")); };
+  try {
+    const before = await currentRegisteredTotal(emitted);
+    api.test("plain", () => {});                      // +1
+    api.test.skip("skipped", () => {});               // +1 (runtimes report it)
+    api.test.todo("todo");                            // +1
+    api.test.only("only", () => {});                  // +1
+    api.test.each([1, 2, 3])("row %i", () => {});     // +3 (one per row)
+    api.describe("suite", () => { api.it("inner", () => {}); }); // +1, describe itself +0
+    const after = await currentRegisteredTotal(emitted);
+    expect(after - before).toBe(8);
+    // Drain any pending debounced emit while capture is still on, so no
+    // marker line leaks into the suite's own output after restore.
+    await new Promise((r) => setTimeout(r, 0));
+  } finally {
+    console.log = realLog;
+  }
+
+  // Reads the most recent emitted total (the counter is cumulative across the
+  // process; deltas are what's meaningful here).
+  async function currentRegisteredTotal(lines: string[]): Promise<number> {
+    api.test("tick", () => {}); // force an emit
+    await new Promise((r) => setTimeout(r, 0));      // let the microtask drain
+    const markers = lines.filter((l) => l.startsWith("__LIBUILD_REGISTERED__"));
+    return parseInt(markers[markers.length - 1].split(" ")[1], 10) - 1; // minus the tick
+  }
 });
 
 test("each test file runs in its own process — default isolation (#16)", async () => {

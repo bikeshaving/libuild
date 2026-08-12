@@ -73,8 +73,12 @@ let emitScheduled = false;
  * Browsers have no parent process parsing stdout, so this stays node/bun-only
  * rather than spamming the captured console output.
  */
-function noteRegistration(): void {
-  registeredCount++;
+function noteRegistration(n: number = 1): void {
+  registeredCount += n;
+  // The `process` guard is defense in depth: today the browser path never
+  // reaches this at all (test.ts only calls wrapTestApi on node/bun), but
+  // nothing strips the marker from captured browser console output, so if
+  // that ever changes this guard is what keeps it user-invisible.
   if (emitScheduled || typeof process === "undefined") return;
   emitScheduled = true;
   queueMicrotask(() => {
@@ -177,9 +181,35 @@ function wrapBlock(real: any, track: (name: unknown, fn: any) => any, counts = f
       if (prop === "only") {
         // .only runs its body -> track it too.
         return function (name: unknown, body: unknown, ...rest: any[]) {
+          if (counts) noteRegistration();
           return typeof body === "function"
             ? bound(name, track(name, body), ...rest)
             : bound(name, body, ...rest);
+        };
+      }
+      // Registration counting for the sub-methods that register runnable or
+      // reported tests. skip/todo count because both runtimes REPORT them
+      // (node's TAP summary and bun's "N skip"/"N todo" lines), so the "x of
+      // y" numerator includes them - an uncounted .skip would push the
+      // denominator below the numerator. .each counts one per table row: each
+      // row becomes a reported test. Sub-methods we don't know about
+      // (runtime-specific variants like skipIf) fall through uncounted; the
+      // runner suppresses the denominator when the count is inconsistent, so
+      // an exotic path degrades the message rather than corrupting it.
+      if (counts && (prop === "skip" || prop === "todo" || prop === "failing")) {
+        return function (...args: any[]) {
+          noteRegistration();
+          return bound(...args);
+        };
+      }
+      if (counts && prop === "each") {
+        return function (table: unknown, ...tableRest: any[]) {
+          const registrar = bound(table, ...tableRest);
+          if (typeof registrar !== "function") return registrar;
+          return function (...args: any[]) {
+            noteRegistration(Array.isArray(table) ? table.length : 1);
+            return registrar(...args);
+          };
         };
       }
       return bound;

@@ -270,14 +270,17 @@ declare global {
     ended: boolean;
     failed: number;
     passed: number;
+    skipped: number;
     errors: Array<{ name: string; error: string }>;
   };
+  var __LIBUILD_TEST_READY__: boolean | undefined;
 }
 
 globalThis.__LIBUILD_TEST__ = {
   ended: false,
   failed: 0,
   passed: 0,
+  skipped: 0,
   errors: [],
 };
 
@@ -329,6 +332,23 @@ export function test(name: string, fn: TestFn) {
   tests.push({ name, fn, suite: currentSuite });
 }
 
+// skip/todo register nothing but must EXIST: a file shared with node/bun that
+// calls test.skip would otherwise die with a TypeError mid-module, aborting
+// every registration after it in the single browser bundle (the tests before
+// the throw still ran, so the run stayed green with tests missing). They tally
+// into `skipped` so the result reflects that tests were deliberately not run.
+function registerSkip(_name: string, _fn?: TestFn) {
+  globalThis.__LIBUILD_TEST__.skipped++;
+}
+test.skip = registerSkip;
+test.todo = registerSkip;
+describe.skip = function (_name: string, _fn?: () => void) {
+  // The body is NOT evaluated, so inner tests neither run nor tally - we
+  // can't count what never registers, and evaluating the body just to count
+  // would run consumer code that .skip promises not to run.
+  globalThis.__LIBUILD_TEST__.skipped++;
+};
+
 export const it = test;
 
 export function beforeEach(fn: HookFn) {
@@ -366,19 +386,37 @@ function getFullName(t: Test): string {
   return names.join(" > ");
 }
 
-// Auto-run after all modules loaded. This must be a MACROTASK, not a
-// microtask: `@b9g/libuild/test` selects this backend with top-level await,
-// which makes it an async module - every importing test file's body is then
-// deferred to a microtask continuation that runs AFTER this chunk evaluates.
-// A queueMicrotask here is already queued by the time those continuations are
-// scheduled, so it would fire with zero tests registered and report a green
-// empty run (crank PR #375). setTimeout runs after the microtask queue - i.e.
-// after every module body, including TLA continuations, has finished
-// registering.
+// Auto-run after all modules loaded. The start signal is the generated
+// entry's __LIBUILD_TEST_READY__ flag, set as the entry's LAST statement: ESM
+// guarantees that statement runs only after every imported test file has
+// fully evaluated - including top-level-await continuations spanning any
+// number of macrotasks. Scheduler-based starts all lose some race with TLA:
+// queueMicrotask fired before the dispatcher's TLA continuations ran any
+// test-file body (green empty run, crank PR #375), and setTimeout still lost
+// to a test file whose own TLA crossed a macrotask (fetch, timers) - its
+// later tests silently vanished from a green run. Waiting on the flag is the
+// only ordering the module system actually promises. If the entry throws
+// before setting it, the flag never appears, `ended` never fires, and the
+// harness reports the page errors it captured - loud, not green.
 setTimeout(async () => {
+  while (!globalThis.__LIBUILD_TEST_READY__) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
   const suiteRan = new Set<Suite>();
 
-  for (const t of tests) {
+  // Indexed sweep, not for..of: anything that registers DURING the run (a
+  // test body or hook adding tests) extends `tests` and is picked up. After
+  // draining, wait one macrotask and re-check - a fire-and-forget late
+  // registration (setTimeout in a module body) lands in the sweep instead of
+  // silently missing the run.
+  let index = 0;
+  while (true) {
+    if (index >= tests.length) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (index >= tests.length) break;
+    }
+    const t = tests[index++];
     const fullName = getFullName(t);
     const chain = getSuiteChain(t.suite);
 

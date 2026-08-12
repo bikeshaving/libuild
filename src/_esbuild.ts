@@ -16,7 +16,12 @@
 
 import * as ESBuild from "esbuild";
 
-const SERVICE_DEAD = /service is no longer running/i;
+// Two spellings of the same event: builds started AFTER the death hit the
+// pre-flight guard ("no longer running"); builds IN FLIGHT when it died are
+// rejected by the close handler ("was stopped"). Both mean "dead service,
+// retry against a fresh one"; missing the second left every in-flight shard
+// unrecovered on each death.
+const SERVICE_DEAD = /service is no longer running|service was stopped/i;
 
 /** Injectable for tests - killing a real service process is slow and racy. */
 export interface EsbuildDeps {
@@ -29,6 +34,17 @@ const DEFAULT_DEPS: EsbuildDeps = {
   stop: () => ESBuild.stop(),
 };
 
+// Service generation, for SINGLE-FLIGHT recovery. stop() is process-global:
+// it kills whatever service exists NOW, and esbuild's close handling strands
+// (never settles) requests in flight on the stream it destroys. The test
+// runner races many concurrent builds, so when a service dies they ALL fail
+// together - if each caller then ran its own stop()+retry, the second stop()
+// would kill the fresh service the first retry just spawned, hanging that
+// retry forever. Instead each build records the generation it started under,
+// and only the FIRST failure from a given generation performs the stop();
+// everyone else just retries against the already-recovered service.
+let generation = 0;
+
 /**
  * Run an esbuild build, recovering once from a dead service.
  *
@@ -40,15 +56,20 @@ export async function build(
   options: ESBuild.BuildOptions,
   deps: EsbuildDeps = DEFAULT_DEPS
 ): Promise<ESBuild.BuildResult> {
+  const gen = generation;
   try {
     return await deps.build(options);
   } catch (error: any) {
     if (!SERVICE_DEAD.test(error?.message ?? String(error))) throw error;
-    // Drop the dead handle, then let the next call spawn a new service.
-    try {
-      deps.stop();
-    } catch {
-      // stop() on an already-dead service is not itself interesting.
+    // Single-flight: only recover if nobody has since our attempt began.
+    // (No await between the check and the increment, so this is atomic.)
+    if (generation === gen) {
+      generation++;
+      try {
+        deps.stop();
+      } catch {
+        // stop() on an already-dead service is not itself interesting.
+      }
     }
     return await deps.build(options);
   }
