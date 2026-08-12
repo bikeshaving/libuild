@@ -55,19 +55,29 @@ const stripAnsi = (s: string): string => s.replace(ANSI_PATTERN, "");
 // reporter re-emits child stdout as "# ..." comments, hence no anchoring.
 // ---------------------------------------------------------------------------
 const REGISTERED_MARKER = "__LIBUILD_REGISTERED__";
-const REGISTERED_PATTERN = new RegExp(`${REGISTERED_MARKER}\\s+(\\d+)`, "g");
+// Anchored to the whole line (node's TAP reporter re-emits child stdout as a
+// "# " comment, hence the optional prefix; trailing \s* tolerates \r). The
+// anchoring is load-bearing: an unanchored scan let a test's OWN output - a
+// console.log mentioning the marker, a bun code frame quoting the bundle -
+// hijack the count, and an `includes`-based strip deleted such lines from the
+// failure dump, eating exactly the output that explained the failure.
+const REGISTERED_LINE = new RegExp(`^\\s*(?:#\\s*)?${REGISTERED_MARKER}\\s+(\\d+)\\s*$`);
 
 /** Last registration total the child reported, or null if it reported none. */
 export function parseRegistered(output: string): number | null {
-  const matches = [...stripAnsi(output).matchAll(REGISTERED_PATTERN)];
-  return matches.length ? parseInt(matches[matches.length - 1][1], 10) : null;
+  let last: number | null = null;
+  for (const line of stripAnsi(output).split("\n")) {
+    const m = line.match(REGISTERED_LINE);
+    if (m) last = parseInt(m[1], 10);
+  }
+  return last;
 }
 
 /** Drop the marker lines so they never surface in a failure dump. */
 export function stripRegistered(output: string): string {
   return output
     .split("\n")
-    .filter((line) => !line.includes(REGISTERED_MARKER))
+    .filter((line) => !REGISTERED_LINE.test(stripAnsi(line)))
     .join("\n");
 }
 
@@ -292,6 +302,14 @@ function generateTestEntry(
     lines.push(toImport(setupFile));
   }
   lines.push(...testFiles.map(toImport));
+
+  // The ready flag is the browser runner's start signal. ESM guarantees this
+  // statement runs only after EVERY imported module has fully evaluated -
+  // including top-level-await continuations, however many macrotasks they
+  // span. Scheduler-based starts (queueMicrotask, setTimeout) all lose some
+  // race with TLA; this is the only ordering the module system actually
+  // promises. Node/bun ignore the flag.
+  lines.push("globalThis.__LIBUILD_TEST_READY__ = true;");
 
   return `// Auto-generated test entry for ${platform}
 ${lines.join("\n")}
@@ -574,9 +592,20 @@ export function shardFailure(run: {
   /** Tests the file registered, when the child got far enough to report it */
   registered?: number | null;
 }): string | null {
-  if (run.timedOut) {
+  // A child that finished cleanly inside the kill-grace window is NOT a
+  // timeout failure: the timer fires unconditionally, but if the run produced
+  // a complete summary and exited 0 before dying, nothing was lost. Without
+  // this, a file finishing at the buzzer reports the nonsense "N of N
+  // test(s) finished, the rest never ran".
+  const finishedCleanly = run.completed && run.signal == null && run.code === 0;
+  if (run.timedOut && !finishedCleanly) {
     // The denominator is what turns "some tests were lost" into "how many".
-    const of = run.registered != null ? `${run.finished} of ${run.registered}` : `${run.finished}`;
+    // Suppress it when it's inconsistent (finished > registered): the count
+    // misses registration paths we don't wrap, and a denominator smaller
+    // than the numerator is worse than none.
+    const of = run.registered != null && run.registered >= run.finished
+      ? `${run.finished} of ${run.registered}`
+      : `${run.finished}`;
     return `timed out after ${run.timeout}ms - ${of} test(s) finished, the rest never ran ` +
       `(raise --timeout, or split the file)`;
   }
@@ -629,24 +658,33 @@ async function runNodeTests(bundlePath: string, timeout: number): Promise<ShardR
  * Parse Bun test output to extract test results
  * Format: "N pass", "N fail"
  */
-export function parseBunOutput(output: string): { passed: number; failed: number; errors: Array<{ name: string; error: string }>; completed: boolean } {
+export function parseBunOutput(output: string): { passed: number; failed: number; errors: Array<{ name: string; error: string }>; skipped: number; todo: number; completed: boolean } {
   output = stripAnsi(output); // forced color must not corrupt the summary tokens
-  let passed = 0;
-  let failed = 0;
   const errors: Array<{ name: string; error: string }> = [];
 
-  // Match "N pass" and "N fail" lines
-  const passMatch = output.match(/^\s*(\d+)\s+pass/m);
-  const failMatch = output.match(/^\s*(\d+)\s+fail/m);
-
-  if (passMatch) passed = parseInt(passMatch[1], 10);
-  if (failMatch) failed = parseInt(failMatch[1], 10);
+  // Match "N pass" / "N fail" / "N skip" / "N todo" summary lines. skip/todo
+  // matter beyond display: the registration count (see parseRegistered)
+  // includes .skip/.todo registrations, so the "x of y" numerator must too,
+  // or a skip-heavy file reads as having lost tests it never intended to run.
+  const count = (label: string): number | null => {
+    const m = output.match(new RegExp(`^\\s*(\\d+)\\s+${label}`, "m"));
+    return m ? parseInt(m[1], 10) : null;
+  };
+  const passMatch = count("pass");
+  const failMatch = count("fail");
 
   // Bun always prints a "N pass"/"N fail" summary on a completed run; its
   // absence means the child was killed or crashed before finishing.
   const completed = passMatch !== null || failMatch !== null;
 
-  return { passed, failed, errors, completed };
+  return {
+    passed: passMatch ?? 0,
+    failed: failMatch ?? 0,
+    skipped: count("skip") ?? 0,
+    todo: count("todo") ?? 0,
+    errors,
+    completed,
+  };
 }
 
 /**
@@ -664,10 +702,10 @@ async function runBunTests(bundlePath: string, timeout: number): Promise<ShardRu
   }
 
   const output = stdout + stderr;
-  const { passed, failed, errors, completed } = parseBunOutput(output);
+  const { passed, failed, errors, skipped, todo, completed } = parseBunOutput(output);
   const reason = shardFailure({
     completed, code, signal, timedOut, failed, timeout,
-    finished: passed + failed,
+    finished: passed + failed + skipped + todo,
     registered: parseRegistered(output),
   });
 
@@ -677,6 +715,8 @@ async function runBunTests(bundlePath: string, timeout: number): Promise<ShardRu
       passed,
       failed: reason ? Math.max(failed, 1) : failed,
       errors: reason ? [...errors, { name: "bun test process did not complete", error: reason }] : errors,
+      skipped,
+      todo,
     },
     output: stripRegistered(output),
   };
@@ -803,8 +843,15 @@ ${bundleContent}
     });
   });
 
+  const platformName = `browser (${browser})`;
+  let browserInstance: import("playwright").Browser | undefined;
+  // Uncaught page errors are the ground truth for "the bundle broke": a test
+  // file that throws during load produces one here and may register nothing
+  // (or only its predecessors). They must reach the RESULT, not just the log.
+  const pageErrors: string[] = [];
+
   try {
-    const browserInstance = await playwright[browser].launch({
+    browserInstance = await playwright[browser].launch({
       headless: !debug,
     });
 
@@ -824,54 +871,85 @@ ${bundleContent}
 
     // Capture page errors
     page.on("pageerror", (err) => {
+      pageErrors.push(err.message);
       console.error("Page error:", err.message);
     });
 
     await page.goto(`http://localhost:${port}/`);
 
-    // Wait for tests to complete
-    await page.waitForFunction(
-      () => (globalThis as any).__LIBUILD_TEST__?.ended === true,
-      { timeout }
-    );
-
-    // Get results
-    const results = await page.evaluate(() => (globalThis as any).__LIBUILD_TEST__);
-
-    if (!debug) {
-      await browserInstance.close();
-    } else {
-      console.log("\nDebug mode: browser left open. Press Ctrl+C to exit.");
-      await new Promise(() => {}); // Wait forever
-    }
-
-    // Zero tests out of discovered test files is a malfunction, not a pass:
-    // the registration-ordering class of bug (see the setTimeout comment in
-    // _test-browser.ts) produced exactly this shape - files found, nothing
-    // registered, exit 0 - which would merge as "suite silently disabled, CI
-    // green". A run that was going to be empty never gets here (runTests
-    // returns early when no files are found).
-    if (results.passed + results.failed === 0) {
+    // Wait for tests to complete. If the bundle threw before the runner could
+    // even start (ended never fires), this times out - which is a REPORTED
+    // platform failure carrying the captured page errors, not an uncaught
+    // Playwright exception crashing the CLI with the browser left running.
+    try {
+      await page.waitForFunction(
+        () => (globalThis as any).__LIBUILD_TEST__?.ended === true,
+        { timeout }
+      );
+    } catch {
       return {
-        platform: `browser (${browser})`,
+        platform: platformName,
         passed: 0,
         failed: 1,
         errors: [{
-          name: "no tests ran",
-          error: "test files were bundled and loaded, but zero tests registered - " +
-            "this is a runner malfunction, not an empty suite",
+          name: "test run never completed",
+          error: pageErrors.length
+            ? `page error(s) during load/run:\n${pageErrors.map((e) => `  ${e}`).join("\n")}`
+            : `no result within ${timeout}ms - the bundle may have hung or failed to start`,
         }],
       };
     }
 
+    // Get results
+    const results = await page.evaluate(() => (globalThis as any).__LIBUILD_TEST__);
+
+    if (debug) {
+      console.log("\nDebug mode: browser left open. Press Ctrl+C to exit.");
+      await new Promise(() => {}); // Wait forever
+    }
+
+    const errors: Array<{ name: string; error: string }> = [...results.errors];
+    let failed = results.failed;
+
+    // An uncaught page error is a failure even when tests passed around it:
+    // in a single browser bundle, one file throwing mid-load aborts every
+    // LATER file's registrations while the earlier tests still run green.
+    for (const e of pageErrors) {
+      failed++;
+      errors.push({
+        name: "uncaught page error",
+        error: `${e} - tests registered after this error never ran`,
+      });
+    }
+
+    // Zero tests out of discovered test files fails: the registration-loss
+    // class of bug (see the ready-flag comment in _test-browser.ts) produced
+    // exactly this shape - files found, nothing registered, exit 0 - which
+    // would merge as "suite silently disabled, CI green". A run that was
+    // going to be empty never gets here (runTests returns early when no
+    // files are found). All-skipped files land in `skipped`, not here.
+    if (results.passed + failed + (results.skipped ?? 0) === 0) {
+      failed = 1;
+      errors.push({
+        name: "no tests ran",
+        error: "test files were bundled and loaded, but zero tests registered - " +
+          "usually a file that crashed during load (see page errors above) or " +
+          "registered its tests too late",
+      });
+    }
+
     return {
-      platform: `browser (${browser})`,
+      platform: platformName,
       passed: results.passed,
-      failed: results.failed,
-      errors: results.errors,
+      failed,
+      errors,
+      skipped: results.skipped,
     };
   } finally {
     server!.close();
+    if (browserInstance && !debug) {
+      await browserInstance.close().catch(() => {});
+    }
   }
 }
 
