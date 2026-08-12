@@ -102,7 +102,14 @@ program
   .option("--save", "Update root package.json to point to dist files")
   .action(async (directory: string, options: { save?: boolean }) => {
     const cwd = Path.resolve(directory);
-    await build(cwd, options.save || false);
+    try {
+      await build(cwd, options.save || false);
+    } catch (error: any) {
+      // A refusal or build failure is a clean one-line error and exit 1,
+      // never an unhandled-rejection stack dump.
+      console.error("Error:", error?.message ?? error);
+      process.exit(1);
+    }
   });
 
 program

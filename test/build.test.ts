@@ -1101,3 +1101,31 @@ test("test ignoring works with mixed valid and test files", async () => {
 
   await removeTempDir(testDir);
 });
+
+test('build refuses "type": "commonjs" packages (ESM-only policy, #21)', async () => {
+  const testDir = await createTempDir("cjs-build-refusal");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(projDir, "src", "index.ts"), "export const x = 1;\n");
+  await FS.writeFile(Path.join(projDir, "package.json"),
+    JSON.stringify({name: "p", version: "1.0.0", type: "commonjs", private: true}));
+
+  // The same policy the test runner enforces: an explicit CommonJS
+  // declaration is refused with the fix stated, before anything builds.
+  let message = "";
+  try {
+    await build(projDir);
+  } catch (error: any) {
+    message = error?.message ?? String(error);
+  }
+  expect(message).toMatch(/"type": "commonjs"/);
+  expect(message).toMatch(/"type": "module"/);
+
+  // An untyped package builds fine - nothing was declared.
+  await FS.writeFile(Path.join(projDir, "package.json"),
+    JSON.stringify({name: "p", version: "1.0.0", private: true}));
+  await build(projDir);
+  expect(await fileExists(Path.join(projDir, "dist"))).toBe(true);
+
+  await removeTempDir(testDir);
+});

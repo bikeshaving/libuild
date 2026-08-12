@@ -2,7 +2,7 @@ import {test, expect} from "bun:test";
 import * as FS from "fs/promises";
 import * as FSSync from "fs";
 import * as Path from "path";
-import {bundleTests, collectTests, parseBunOutput, parseRegistered, parseTapOutput, resolveTestTargets, shardFailure, stripRegistered, runTests} from "../src/_test-runner.ts";
+import {bundleTests, collectTests, packageTypeRefusal, parseBunOutput, parseRegistered, parseTapOutput, resolveTestTargets, shardFailure, stripRegistered, runTests} from "../src/_test-runner.ts";
 import {
   installSnapshotMatcher,
   wrapTestApi,
@@ -494,17 +494,29 @@ test("browser bundle parses and contains no live node/bun imports", async () => 
   await removeTempDir(testDir);
 });
 
-test("node/bun bundles use .mjs so consumers without type:module still run", async () => {
-  const testDir = await createTempDir("mjs-bundle");
+test("the bundle dir declares type:module so .js bundles load as ESM anywhere", async () => {
+  const testDir = await createTempDir("esm-bundle-dir");
   const projDir = Path.join(testDir, "proj");
+  const outDir = Path.join(testDir, "out");
   await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+  await FS.mkdir(outDir, {recursive: true});
   await FS.writeFile(Path.join(projDir, "test", "a.test.ts"),
     'import {test} from "node:test";\ntest("a", () => {});\n');
 
-  // The bundle is ESM; with a `.js` extension node's format detection falls
-  // back to the consumer's package.json `type`, which plain CJS packages lack.
-  const bundle = await bundleTests([Path.join(projDir, "test", "a.test.ts")], "node", projDir, projDir);
-  expect(bundle.endsWith(".mjs")).toBe(true);
+  // libuild is ESM-only, so the statement lives in ONE place: the bundle
+  // directory's own package.json (not per-file .mjs extensions). node resolves
+  // the nearest manifest, so bundles load as ESM even when the consumer
+  // package has no `type` of its own.
+  const bundle = await bundleTests([Path.join(projDir, "test", "a.test.ts")], "node", outDir, projDir);
+  expect(bundle.endsWith(".js")).toBe(true);
+  expect(JSON.parse(await FS.readFile(Path.join(outDir, "package.json"), "utf-8")).type).toBe("module");
+
+  // A pre-existing manifest at outDir is never clobbered ("wx") - callers
+  // pointing outDir at a real project directory keep their package.json.
+  await FS.writeFile(Path.join(projDir, "package.json"),
+    JSON.stringify({name: "keep-me", version: "1.0.0"}));
+  await bundleTests([Path.join(projDir, "test", "a.test.ts")], "node", projDir, projDir);
+  expect(JSON.parse(await FS.readFile(Path.join(projDir, "package.json"), "utf-8")).name).toBe("keep-me");
 
   await removeTempDir(testDir);
 });
@@ -554,40 +566,37 @@ test("browser stubs are scoped: a consumer's own pretty-format import bundles fo
   await removeTempDir(testDir);
 });
 
-test("browser bundle parses in a type:commonjs consumer package (#21)", async () => {
-  const testDir = await createTempDir("cjs-browser-bundle");
+test('libuild test refuses "type": "commonjs" packages on every platform (#21)', async () => {
+  const testDir = await createTempDir("cjs-refusal");
   const projDir = Path.join(testDir, "proj");
   await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
-  // The consumer package is CJS-typed: esbuild used to classify the test file
-  // as CommonJS from the package `type` despite its import syntax, emitting
-  // `await init_test()` inside a non-async wrapper - the whole browser bundle
-  // was a syntax error and CJS consumers couldn't run browser tests at all.
+  // libuild is ESM-only: an explicit CommonJS declaration is refused loudly
+  // with the fix, rather than half-supported (it happened to work on node/bun
+  // and broke as an esbuild bundle syntax error on browsers).
   await FS.writeFile(Path.join(projDir, "package.json"),
     JSON.stringify({name: "p", version: "1.0.0", type: "commonjs"}));
-  await FS.mkdir(Path.join(projDir, "node_modules", "@b9g"), {recursive: true});
-  await FS.symlink(Path.resolve(import.meta.dir, "../dist"), Path.join(projDir, "node_modules", "@b9g", "libuild"));
+
+  const refusal = await packageTypeRefusal(projDir);
+  expect(refusal).toMatch(/"type": "commonjs"/);
+  expect(refusal).toMatch(/"type": "module"/); // the fix is stated
+
+  // The refusal is whole-run: even a node-only invocation (which used to
+  // work incidentally) is refused.
   await FS.writeFile(Path.join(projDir, "test", "a.test.ts"),
-    'import {test, expect} from "@b9g/libuild/test";\ntest("a", () => { expect(1).toBe(1); });\n');
-  // A genuinely-CJS local helper must STAY CommonJS under the syntax-based
-  // classification (the fix must not force ESM onto require-style files).
-  await FS.writeFile(Path.join(projDir, "test", "helper.js"),
-    "module.exports.n = 1;\n");
-  await FS.writeFile(Path.join(projDir, "test", "b.test.ts"),
-    'import {test, expect} from "@b9g/libuild/test";\nimport {n} from "./helper.js";\n' +
-    'test("b", () => { expect(n).toBe(1); });\n');
+    'import {test} from "node:test";\nimport assert from "node:assert";\n' +
+    'test("a", () => { assert.ok(true); });\n');
+  expect(await runTests({cwd: projDir, platforms: ["node"], timeout: 30000})).toBe(false);
 
-  const bundle = await bundleTests(
-    [Path.join(projDir, "test", "a.test.ts"), Path.join(projDir, "test", "b.test.ts")],
-    "chromium", projDir, projDir);
-  const content = await FS.readFile(bundle, "utf-8");
-
-  const {spawn} = await import("child_process");
-  const syntax = await new Promise<number>((resolve) => {
-    const child = spawn("node", ["--input-type=module", "--check"], {stdio: ["pipe", "ignore", "ignore"]});
-    child.stdin.end(content);
-    child.on("close", (code) => resolve(code ?? 1));
-  });
-  expect(syntax).toBe(0);
+  // module-typed and UNTYPED packages are never refused (untyped packages
+  // are classified by syntax everywhere - measured, not assumed).
+  await FS.writeFile(Path.join(projDir, "package.json"),
+    JSON.stringify({name: "p", version: "1.0.0", type: "module"}));
+  expect(await packageTypeRefusal(projDir)).toBeNull();
+  await FS.writeFile(Path.join(projDir, "package.json"),
+    JSON.stringify({name: "p", version: "1.0.0"}));
+  expect(await packageTypeRefusal(projDir)).toBeNull();
+  // ...and no package.json at all (bare directory of tests).
+  expect(await packageTypeRefusal(testDir)).toBeNull();
 
   await removeTempDir(testDir);
 });
