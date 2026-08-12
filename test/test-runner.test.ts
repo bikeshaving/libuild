@@ -509,6 +509,51 @@ test("node/bun bundles use .mjs so consumers without type:module still run", asy
   await removeTempDir(testDir);
 });
 
+test("a root that IS a test directory discovers files without the .test infix", async () => {
+  const testDir = await createTempDir("testdir-root");
+  const projDir = Path.join(testDir, "proj");
+  const suiteDir = Path.join(projDir, "test");
+  await FS.mkdir(suiteDir, {recursive: true});
+  // No `.test.` infix - matched only by the under-a-test-dir rule, which
+  // evaluated FROM INSIDE test/ used to demand test/test/ and find nothing.
+  // The assertion FAILS on purpose: runTests returning false proves the file
+  // was discovered and executed (a discovery miss reports "no files" -> true).
+  await FS.writeFile(Path.join(suiteDir, "plain.ts"),
+    'import {test} from "node:test";\nimport assert from "node:assert";\n' +
+    'test("ran", () => { assert.fail("discovered and executed"); });\n');
+
+  expect(await runTests({cwd: suiteDir, platforms: ["node"], timeout: 30000})).toBe(false);
+
+  await removeTempDir(testDir);
+});
+
+test("browser stubs are scoped: a consumer's own pretty-format import bundles for real", async () => {
+  const testDir = await createTempDir("stub-scope");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+  await FS.writeFile(Path.join(projDir, "package.json"), JSON.stringify({name: "p", version: "1.0.0"}));
+  await FS.mkdir(Path.join(projDir, "node_modules", "@b9g"), {recursive: true});
+  await FS.symlink(Path.resolve(import.meta.dir, "../dist"), Path.join(projDir, "node_modules", "@b9g", "libuild"));
+  await FS.symlink(Path.resolve(import.meta.dir, "../node_modules/pretty-format"), Path.join(projDir, "node_modules", "pretty-format"));
+
+  // The consumer imports pretty-format for THEMSELVES; only libuild's own
+  // internal import may be stubbed.
+  await FS.writeFile(Path.join(projDir, "test", "a.test.ts"),
+    'import {test, expect} from "@b9g/libuild/test";\n' +
+    'import {format} from "pretty-format";\n' +
+    'test("formats", () => { expect(format({a: 1})).toContain("a"); });\n');
+
+  const bundle = await bundleTests([Path.join(projDir, "test", "a.test.ts")], "chromium", projDir, projDir);
+  const content = await FS.readFile(bundle, "utf-8");
+
+  // Real pretty-format code made it into the bundle (consumer's import)...
+  expect(content).toMatch(/printListItems|printObjectProperties/);
+  // ...while node builtins stay stubbed for everyone (libuild's fs import).
+  expect(content).toContain('is not available in the browser test bundle');
+
+  await removeTempDir(testDir);
+});
+
 test("registration counting covers only/skip/todo/each (denominator accuracy)", async () => {
   const {wrapTestApi} = await import("../src/_snapshot.ts");
 
