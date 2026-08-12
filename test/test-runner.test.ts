@@ -587,6 +587,14 @@ test("browser bundle parses and contains no live node/bun imports", async () => 
   // dispatcher's TLA continuations run test-file bodies -> zero tests register.
   expect(content).toMatch(/setTimeout\(async/);
   expect(content).not.toMatch(/queueMicrotask\(async/);
+  // Uncaught errors are captured IN the page with the phase known
+  // synchronously: pre-start errors mean lost registrations (fatal), run-time
+  // unhandled rejections are warnings - and behavior no longer depends on
+  // which browser routes rejections to Playwright's pageerror.
+  expect(content).toMatch(/addEventListener\("error"/);
+  expect(content).toMatch(/addEventListener\("unhandledrejection"/);
+  expect(content).toMatch(/loadErrors/);
+  expect(content).toMatch(/runtimeErrors/);
 
   await removeTempDir(testDir);
 });
