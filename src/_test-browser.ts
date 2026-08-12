@@ -268,21 +268,57 @@ export function expect(actual: unknown): Matchers {
 declare global {
   var __LIBUILD_TEST__: {
     ended: boolean;
+    started: boolean;
     failed: number;
     passed: number;
     skipped: number;
     errors: Array<{ name: string; error: string }>;
+    /** Uncaught errors BEFORE the runner started: registration was cut short */
+    loadErrors: string[];
+    /** Uncaught errors/unhandled rejections DURING the run: surfaced, not fatal */
+    runtimeErrors: string[];
   };
   var __LIBUILD_TEST_READY__: boolean | undefined;
 }
 
 globalThis.__LIBUILD_TEST__ = {
   ended: false,
+  started: false,
   failed: 0,
   passed: 0,
   skipped: 0,
   errors: [],
+  loadErrors: [],
+  runtimeErrors: [],
 };
+
+// Capture uncaught errors IN THE PAGE, where the current phase is known
+// synchronously - Playwright's `pageerror` can't tell load from run, and the
+// browsers don't even agree on what reaches it (firefox surfaces unhandled
+// rejections there; chromium/webkit don't). The phase is the whole meaning:
+//  - before the runner starts, an uncaught error means a test file's body
+//    aborted mid-registration and everything after it silently never
+//    registered - that MUST fail the run;
+//  - during the run, module bodies have all completed (the runner starts on
+//    the entry's ready flag), so nothing can have been lost - an unhandled
+//    rejection floating out of a test is reported, not fatal. Suites that
+//    deliberately exercise error propagation (crank's async generators)
+//    produce these while every assertion passes.
+function noteUncaught(kind: string, detail: unknown): void {
+  const message = `${kind}: ${
+    detail instanceof Error ? detail.message : String(detail ?? "unknown error")
+  }`;
+  const state = globalThis.__LIBUILD_TEST__;
+  (state.started ? state.runtimeErrors : state.loadErrors).push(message);
+}
+// globalThis, not window: this module has no DOM lib types, and in a browser
+// they are the same object.
+(globalThis as any).addEventListener("error", (event: any) => {
+  noteUncaught("uncaught error", event.error ?? event.message);
+});
+(globalThis as any).addEventListener("unhandledrejection", (event: any) => {
+  noteUncaught("unhandled rejection", event.reason);
+});
 
 type TestFn = () => void | Promise<void>;
 type HookFn = () => void | Promise<void>;
@@ -403,6 +439,10 @@ setTimeout(async () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 
+  // Registration is complete; from here an uncaught error can't have eaten
+  // registrations (see noteUncaught).
+  globalThis.__LIBUILD_TEST__.started = true;
+
   const suiteRan = new Set<Suite>();
 
   // Indexed sweep, not for..of: anything that registers DURING the run (a
@@ -420,6 +460,7 @@ setTimeout(async () => {
     const fullName = getFullName(t);
     const chain = getSuiteChain(t.suite);
 
+    let testError: any = null;
     try {
       // Run beforeAll for suites that haven't run yet
       for (const suite of chain) {
@@ -429,27 +470,44 @@ setTimeout(async () => {
         }
       }
 
-      // Run beforeEach hooks (outer to inner)
+      // Run beforeEach hooks (outer to inner). A beforeEach throw skips the
+      // test body (matching node/bun) but NOT the afterEach cleanup below.
       for (const suite of chain) {
         for (const hook of suite.beforeEach) await hook();
       }
 
       await t.fn();
+    } catch (e: any) {
+      testError = e;
+    }
 
-      // Run afterEach hooks (inner to outer)
-      for (const suite of [...chain].reverse()) {
-        for (const hook of suite.afterEach) await hook();
+    // afterEach ALWAYS runs, failing test included - node:test and bun:test
+    // both guarantee this (issue #25). Skipping cleanup on failure compounds:
+    // one real failure left a console.error stub installed, every later test
+    // that re-stubbed died with Sinon's "already wrapped", and crank's webkit
+    // run reported 23 failures for 1 bug while burying the real assertion.
+    // Each hook is individually guarded so one throwing cleanup can't skip
+    // the rest; the test's own error stays the reported failure if both threw.
+    for (const suite of [...chain].reverse()) {
+      for (const hook of suite.afterEach) {
+        try {
+          await hook();
+        } catch (e: any) {
+          testError = testError ?? e;
+        }
       }
+    }
 
+    if (testError == null) {
       console.log("✓", fullName);
       globalThis.__LIBUILD_TEST__.passed++;
-    } catch (e: any) {
+    } else {
       console.error("✗", fullName);
-      console.error("  ", e.message);
+      console.error("  ", testError.message);
       globalThis.__LIBUILD_TEST__.failed++;
       globalThis.__LIBUILD_TEST__.errors.push({
         name: fullName,
-        error: e.message || String(e),
+        error: testError.message || String(testError),
       });
     }
   }

@@ -989,25 +989,74 @@ ${bundleContent}
 
     await page.goto(`http://localhost:${port}/`);
 
-    // Wait for tests to complete. If the bundle threw before the runner could
-    // even start (ended never fires), this times out - which is a REPORTED
-    // platform failure carrying the captured page errors, not an uncaught
-    // Playwright exception crashing the CLI with the browser left running.
-    try {
-      await page.waitForFunction(
-        () => (globalThis as any).__LIBUILD_TEST__?.ended === true,
-        { timeout }
-      );
-    } catch {
+    // Wait for the run to END, with a STALL timeout rather than a total
+    // budget. `timeout` means "per file" on node/bun, but the browser runs
+    // the whole suite as one bundle - a single absolute deadline meant a
+    // 30-file suite had to finish everything (browser launch included) in
+    // one file's allowance, so big suites "timed out" at the default while
+    // making steady progress (crank's 602 tests on firefox). Progress -
+    // the ready flag, the runner starting, each completed test - resets the
+    // clock; `timeout` ms with NO progress is a genuine hang.
+    let stalled: string | null = null;
+    {
+      let lastProgress = "";
+      let stallAt = Date.now() + timeout;
+      while (true) {
+        const state = await page
+          .evaluate(() => {
+            const t = (globalThis as any).__LIBUILD_TEST__;
+            return {
+              loaded: t != null,
+              ready: (globalThis as any).__LIBUILD_TEST_READY__ === true,
+              started: t?.started === true,
+              ended: t?.ended === true,
+              done: t ? t.passed + t.failed + (t.skipped ?? 0) : 0,
+              loadErrors: t ? t.loadErrors.length : 0,
+            };
+          })
+          .catch(() => null); // navigation/crash mid-poll: treated as no progress
+        if (state?.ended) break;
+        // A load error before the ready flag is unrecoverable - a module body
+        // threw, so the entry (and the runner) can never start. Fail NOW with
+        // the error, not after a full stall timeout of silence.
+        if (state && !state.ready && state.loadErrors > 0) {
+          stalled = "a test file threw while loading - the runner can never start";
+          break;
+        }
+        const progress = JSON.stringify(state);
+        if (state && progress !== lastProgress) {
+          lastProgress = progress;
+          stallAt = Date.now() + timeout;
+        }
+        if (Date.now() > stallAt) {
+          stalled = !state?.loaded
+            ? "the bundle never evaluated (crashed at load?)"
+            : !state.started
+              ? "the runner never started - a test file's top-level await may be hung"
+              : `stalled after ${state.done} test(s) completed`;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    }
+
+    if (stalled) {
+      // Best effort: the page-side capture usually has the precise error even
+      // when Playwright's pageerror missed or mangled it.
+      const inPage: string[] = await page
+        .evaluate(() => (globalThis as any).__LIBUILD_TEST__?.loadErrors ?? [])
+        .catch(() => []);
+      const detail = [...new Set([...inPage, ...pageErrors])];
       return {
         platform: platformName,
         passed: 0,
         failed: 1,
         errors: [{
           name: "test run never completed",
-          error: pageErrors.length
-            ? `page error(s) during load/run:\n${pageErrors.map((e) => `  ${e}`).join("\n")}`
-            : `no result within ${timeout}ms - the bundle may have hung or failed to start`,
+          error: `${stalled}` +
+            (detail.length
+              ? `\nerror(s):\n${detail.map((e) => `  ${e}`).join("\n")}`
+              : ` (no progress for ${timeout}ms)`),
         }],
       };
     }
@@ -1023,15 +1072,23 @@ ${bundleContent}
     const errors: Array<{ name: string; error: string }> = [...results.errors];
     let failed = results.failed;
 
-    // An uncaught page error is a failure even when tests passed around it:
-    // in a single browser bundle, one file throwing mid-load aborts every
-    // LATER file's registrations while the earlier tests still run green.
-    for (const e of pageErrors) {
+    // Phase-aware uncaught errors, recorded IN the page (see noteUncaught in
+    // _test-browser.ts). Before the runner started: a test file's body
+    // aborted mid-registration, everything after it silently never
+    // registered - fail. During the run: registration was already complete
+    // (the runner starts on the entry's ready flag), so nothing was lost -
+    // surface as warnings. Suites that deliberately float unhandled
+    // rejections (error-propagation tests) stay green, and behavior no
+    // longer depends on which browser routes rejections to `pageerror`.
+    for (const e of results.loadErrors ?? []) {
       failed++;
       errors.push({
-        name: "uncaught page error",
+        name: "uncaught error during load",
         error: `${e} - tests registered after this error never ran`,
       });
+    }
+    for (const e of results.runtimeErrors ?? []) {
+      console.warn(yellow(`⚠ uncaught during run (not a failure): ${e}`));
     }
 
     // Zero tests out of discovered test files fails: the registration-loss

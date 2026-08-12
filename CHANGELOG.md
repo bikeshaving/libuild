@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.19] - 2026-08-12
+
+### Fixed
+- **Browser timeout is stall-based, not an absolute deadline** (crank #375, firefox). `--timeout` means per-file on node/bun, but the browser runs the whole suite as one bundle - a single absolute deadline meant a 30-file suite (browser launch included) had to finish in one file's allowance, so large suites "timed out" at the default while making steady progress. Progress - the entry's ready flag, the runner starting, each completed test - now resets the clock; `timeout` ms with NO progress is a genuine hang. Crank's 602-test suite passes on firefox at the default timeout. (Measured while diagnosing: firefox's cost is ~8s of launch overhead, not bundle parsing - the 1.6MB bundle parses in under 600ms.)
+- **Uncaught page errors are phase-aware; mid-run unhandled rejections no longer fail the run.** 0.2.17 failed the run on ANY `pageerror`, but browsers don't agree on what reaches it - firefox surfaces unhandled rejections there, chromium/webkit don't - so suites that deliberately float rejections to test error propagation (crank's async generators) failed on firefox only, with a message ("tests registered after this error never ran") their own registration counts disproved. Uncaught errors are now captured in the page, where phase is known synchronously: before the runner starts, registration was genuinely cut short - red; during the run (module bodies are complete by ESM guarantee), nothing was lost - a yellow warning. Identical behavior on all three browsers.
+- **A bundle that throws during load fails in seconds, naming the error** - a module-body throw means the runner can never start, so the harness no longer waits out the full timeout in silence.
+- **Browser runner: a failing test no longer skips its own `afterEach`** (#25). Cleanup hooks now run in all cases (each individually guarded, the test's own error kept as the reported failure), matching node:test/bun:test. Skipping cleanup on failure compounds: one real failure left a `console.error` stub installed and crank's webkit run reported 23 failures for 1 bug, burying the real assertion text.
+
 ## [0.2.18] - 2026-08-12
 
 ### Fixed
