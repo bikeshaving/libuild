@@ -43,6 +43,46 @@ function fullNameFor(name: unknown): string {
   return prefix ? `${prefix} > ${String(name)}` : String(name);
 }
 
+// ---------------------------------------------------------------------------
+// Registration count. A shard that dies mid-run can only report how many tests
+// FINISHED; the total it was going to run is knowable only from inside the
+// child, because both runtimes register every top-level test (running the file
+// body) before executing any of them. So we count registrations here and print
+// the total on stdout, where the parent parses it back out - giving a timeout
+// message a denominator ("12 of 47 finished") instead of a bare numerator.
+//
+// Wire format shared with `_test-runner.ts` (REGISTERED_MARKER there); keep the
+// two literals in sync. node's TAP reporter re-emits child stdout as a "# ..."
+// comment, so the parser tolerates a leading prefix.
+// ---------------------------------------------------------------------------
+const REGISTERED_MARKER = "__LIBUILD_REGISTERED__";
+
+let registeredCount = 0;
+let emitScheduled = false;
+
+/**
+ * Count one registered test and schedule the total to be printed.
+ *
+ * The emit is deferred to a microtask rather than printed per registration:
+ * a module body is one synchronous block, so the microtask drains after the
+ * WHOLE file has registered, and one line carries the final total. Re-arming on
+ * later registrations covers top-level await (which splits the body into
+ * several sync chunks) and tests registered from inside other tests - each
+ * emits an updated total, and the parent takes the last one it sees.
+ *
+ * Browsers have no parent process parsing stdout, so this stays node/bun-only
+ * rather than spamming the captured console output.
+ */
+function noteRegistration(): void {
+  registeredCount++;
+  if (emitScheduled || typeof process === "undefined") return;
+  emitScheduled = true;
+  queueMicrotask(() => {
+    emitScheduled = false;
+    console.log(`${REGISTERED_MARKER} ${registeredCount}`);
+  });
+}
+
 /**
  * Wrap a test body so that, while it runs, `currentTestName` reflects it. The
  * full name is captured HERE (at registration, when the describe stack is
@@ -112,11 +152,16 @@ function trackSuite(name: unknown, fn: (...args: any[]) => any): (...args: any[]
  *  - apply: wrap the test body so its name is tracked while it runs.
  *  - get `.only`: its body DOES run, so return a tracking wrapper of it too.
  *    (`.skip`/`.todo` bodies never run; `.each` rows aren't tracked in v1.)
+ *
+ * `counts` marks the blocks that register a runnable test (`test`/`it`, not
+ * `describe`) so the registration total covers tests that were actually going
+ * to run - `.skip`/`.todo` reach the runner through the `get` trap, never here.
  */
-function wrapBlock(real: any, track: (name: unknown, fn: any) => any): any {
+function wrapBlock(real: any, track: (name: unknown, fn: any) => any, counts = false): any {
   return new Proxy(real, {
     apply(target, thisArg, args) {
       const [name, body, ...rest] = args;
+      if (counts) noteRegistration();
       return typeof body === "function"
         ? Reflect.apply(target, thisArg, [name, track(name, body), ...rest])
         : Reflect.apply(target, thisArg, args);
@@ -150,8 +195,8 @@ export function wrapTestApi<T extends { describe: any; test: any; it: any }>(api
   return {
     ...api,
     describe: wrapBlock(api.describe, trackSuite),
-    test: wrapBlock(api.test, trackBody),
-    it: wrapBlock(api.it, trackBody),
+    test: wrapBlock(api.test, trackBody, true),
+    it: wrapBlock(api.it, trackBody, true),
   };
 }
 
