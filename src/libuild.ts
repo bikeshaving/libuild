@@ -2,7 +2,6 @@ import * as FS from "fs/promises";
 import * as Path from "path";
 import {spawn} from "child_process";
 
-import * as ESBuild from "esbuild";
 // All builds go through this wrapper so a dead esbuild service recovers instead
 // of cascading into every later build (see _esbuild.ts).
 import { build as esbuildBuild } from "./_esbuild.ts";
@@ -82,6 +81,25 @@ interface BuildOptions {
     cjs: boolean;
     umd: boolean;
   };
+}
+
+/**
+ * The single statement of libuild's ESM-only policy, shared by build and test
+ * (issue #21). Source entrypoints are ES modules; `.mjs`/`.cjs`/`.mts`/`.cts`
+ * entrypoints are not supported and CommonJS exists ONLY as the `main`-field
+ * fallback artifact the build emits. A package that explicitly declares
+ * `"type": "commonjs"` is refused everywhere with this message - partial
+ * support (it happened to run on node/bun and broke on browsers) is still
+ * support, and worse, unreliable support. Packages with no `type` field are
+ * fine: nothing was declared, and every tool involved classifies files by
+ * their own syntax.
+ */
+export function packageTypeRefusalMessage(): string {
+  return (
+    `this package declares "type": "commonjs", which libuild does not support - libuild is ESM-only ` +
+    `(CJS is produced only as the build's main-field fallback).\n` +
+    `Fix: set "type": "module" in package.json.`
+  );
 }
 
 function isValidEntrypoint(filename: string): boolean {
@@ -1034,6 +1052,13 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   // Load package.json
   const pkgPath = Path.join(cwd, "package.json");
   const pkg = JSON.parse(await FS.readFile(pkgPath, "utf-8")) as PackageJSON;
+
+  // libuild is ESM-only (see packageTypeRefusalMessage): source entrypoints
+  // are ES modules and CJS exists solely as the main-field fallback the BUILD
+  // produces. A package declaring itself CommonJS is refused up front.
+  if ((pkg as any).type === "commonjs") {
+    throw new Error(packageTypeRefusalMessage());
+  }
 
   // Validate bin paths early to provide clear error messages
   if (pkg.bin) {

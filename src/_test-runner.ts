@@ -12,6 +12,7 @@ import * as ESBuild from "esbuild";
 // All builds go through this wrapper so a dead esbuild service recovers instead
 // of cascading into every later build (see _esbuild.ts).
 import { build as esbuildBuild } from "./_esbuild.ts";
+import { packageTypeRefusalMessage } from "./libuild.ts";
 import { createRequire } from "module";
 
 // ---------------------------------------------------------------------------
@@ -391,66 +392,28 @@ function makeBrowserStubPlugin(libuildDir: string | null): ESBuild.Plugin {
   };
 }
 
-const FORCE_ESM_NS = "libuild-force-esm";
-
 /**
- * Force module-format classification by SYNTAX, not by package.json `type`
- * (issue #21). esbuild classifies a file in a `"type": "commonjs"` package as
- * CommonJS even when the file itself uses `import` syntax - and when such a
- * file statically imports a module using top-level await (the
- * `@b9g/libuild/test` dispatcher), esbuild emits the required
- * `await init_...()` inside a NON-async `__commonJS` wrapper: the whole
- * browser bundle is a syntax error, and CJS-typed consumers can't run browser
- * tests at all. (Upstream esbuild behavior - reproducible with no libuild in
- * the graph.)
+ * libuild's ESM-only policy, applied to the test runner: a package that
+ * explicitly declares `"type": "commonjs"` is refused for the WHOLE run, on
+ * every platform (issue #21; the policy statement and rationale live with
+ * `packageTypeRefusalMessage` in libuild.ts, and `build` enforces the same).
  *
- * The sidestep: re-resolve consumer-side source files into a plugin namespace.
- * Namespaced modules have no enclosing package.json for esbuild to consult, so
- * classification falls back to the file's own syntax - `import`/`export` means
- * ESM, bare `require()` still means CJS. node_modules is exempt: dependencies'
- * own package `type` is authoritative for them, and they can't be importing
- * the dispatcher.
+ * Returns the refusal message, or null. Exported for direct unit testing.
  */
-function makeForceEsmPlugin(): ESBuild.Plugin {
-  return {
-    name: FORCE_ESM_NS,
-    setup(build) {
-      build.onResolve({ filter: /.*/ }, async (args) => {
-        // Skip our own re-resolution (below), and anything already claimed by
-        // another namespace (e.g. the browser stubs).
-        if (args.pluginData === FORCE_ESM_NS || (args.namespace !== "file" && args.namespace !== FORCE_ESM_NS)) {
-          return undefined;
-        }
-        const resolved = await build.resolve(args.path, {
-          importer: args.importer,
-          namespace: "file",
-          resolveDir: args.resolveDir || (args.importer ? Path.dirname(args.importer) : undefined),
-          kind: args.kind,
-          pluginData: FORCE_ESM_NS,
-        });
-        if (resolved.errors.length > 0 || resolved.external || !resolved.path) return resolved;
-        // Another plugin (the stubs) claimed it - hands off.
-        if (resolved.namespace !== "file" && resolved.namespace !== "") return resolved;
-        if (resolved.path.split(Path.sep).includes("node_modules")) return resolved;
-        if (!/\.(ts|tsx|mts|cts|js|jsx|mjs)$/i.test(resolved.path)) return resolved;
-        return { path: resolved.path, namespace: FORCE_ESM_NS };
-      });
-
-      build.onLoad({ filter: /.*/, namespace: FORCE_ESM_NS }, async (args) => {
-        const ext = Path.extname(args.path).toLowerCase();
-        const loader: ESBuild.Loader =
-          ext === ".ts" || ext === ".mts" || ext === ".cts" ? "ts"
-          : ext === ".tsx" ? "tsx"
-          : ext === ".jsx" ? "jsx"
-          : "js";
-        return {
-          contents: await FS.readFile(args.path, "utf-8"),
-          loader,
-          resolveDir: Path.dirname(args.path),
-        };
-      });
-    },
-  };
+export async function packageTypeRefusal(cwd: string): Promise<string | null> {
+  // Walk UP to the nearest package.json, exactly as node and esbuild resolve
+  // the governing manifest - `libuild test test/` roots discovery inside a
+  // subdirectory, but the declaration that poisons classification lives at
+  // the package root above it.
+  for (let dir = Path.resolve(cwd); ; dir = Path.dirname(dir)) {
+    try {
+      const packageType = JSON.parse(await FS.readFile(Path.join(dir, "package.json"), "utf-8")).type;
+      return packageType === "commonjs" ? packageTypeRefusalMessage() : null;
+    } catch {
+      // keep walking
+    }
+    if (dir === Path.dirname(dir)) return null; // filesystem root, nothing declared
+  }
 }
 
 /** Where the consumer's `@b9g/libuild` build actually lives (realpath), for
@@ -484,13 +447,17 @@ export async function bundleTests(
   // A per-shard id keeps concurrent per-file bundles from clobbering each other.
   const suffix = id ? `-${id}` : "";
   const entryPath = Path.join(outDir, `entry-${platform}${suffix}.ts`);
-  // `.mjs` for node/bun: the bundle is ESM, and the consumer's nearest
-  // package.json may lack `"type": "module"` - node then refuses a `.js` ESM
-  // file ("Cannot use import statement outside a module"). The extension makes
-  // the format unambiguous regardless of the consumer's package type. Browser
-  // bundles keep `.js` (the content is inlined into the served HTML anyway).
   const isBrowser = isBrowserPlatform(platform);
-  const outPath = Path.join(outDir, `bundle-${platform}${suffix}${isBrowser ? ".js" : ".mjs"}`);
+  const outPath = Path.join(outDir, `bundle-${platform}${suffix}.js`);
+
+  // The temp dir declares itself an ES module package. This is what makes the
+  // `.js` bundles load as ESM under node in consumers WITHOUT a
+  // `"type": "module"` of their own, and what keeps the generated entry
+  // classified as ESM by esbuild. libuild is ESM-only, so this is stated once
+  // here rather than encoded per-file with .mjs extensions. "wx" so a caller
+  // pointing outDir at a real project directory never clobbers its manifest.
+  await FS.writeFile(Path.join(outDir, "package.json"), '{"type":"module"}\n', { flag: "wx" })
+    .catch(() => {});
 
   await FS.writeFile(entryPath, entryContent);
 
@@ -526,10 +493,8 @@ const require = createRequire(import.meta.url);
     // bundle instead: the dispatcher stays plain ESM with its top-level await
     // at genuine top level. The stubs throw if ever actually evaluated - which
     // the browser branch never does.
-    // Stub plugin FIRST: its bare specifiers (bun:test, fs, ...) must be
-    // claimed before the force-esm catch-all tries to resolve them as files.
     ...(isBrowser
-      ? { plugins: [makeBrowserStubPlugin(resolveLibuildDir(cwd)), makeForceEsmPlugin()] }
+      ? { plugins: [makeBrowserStubPlugin(resolveLibuildDir(cwd))] }
       : { packages: "external" as const }),
     // Inject require shim for node/bun to handle CJS deps like expect/chalk
     ...(isBrowser ? {} : { banner: { js: requireShim } }),
@@ -1117,6 +1082,14 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
     timeout: options.timeout || 60000,
     updateSnapshots: options.updateSnapshots || false,
   };
+
+  // ESM-only, enforced for the whole run: a "type": "commonjs" package is
+  // refused on every platform, not just where it happens to break.
+  const refusal = await packageTypeRefusal(opts.cwd);
+  if (refusal) {
+    console.error(red(`libuild test: ${refusal}`));
+    return false;
+  }
 
   console.log("Finding test files...");
   const { testFiles, setupFile } = await collectTests(opts.cwd, opts.patterns, opts.files);
