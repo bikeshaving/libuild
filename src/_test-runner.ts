@@ -9,6 +9,9 @@ import * as Path from "path";
 import * as OS from "os";
 import { createServer, type Server } from "http";
 import * as ESBuild from "esbuild";
+// All builds go through this wrapper so a dead esbuild service recovers instead
+// of cascading into every later build (see _esbuild.ts).
+import { build as esbuildBuild } from "./_esbuild.ts";
 import { createRequire } from "module";
 
 // ---------------------------------------------------------------------------
@@ -40,6 +43,33 @@ const CHILD_ENV: NodeJS.ProcessEnv | undefined = USE_COLOR
 
 const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
 const stripAnsi = (s: string): string => s.replace(ANSI_PATTERN, "");
+
+// ---------------------------------------------------------------------------
+// Registration total. `_snapshot.ts` counts the tests a file registers and
+// prints this marker on the child's stdout (see its REGISTERED_MARKER); we read
+// it back here so a timeout can say "12 of 47 finished" rather than just "12
+// finished". Wire format shared across the process boundary - keep in sync.
+//
+// The child may print several (top-level await, tests registering tests), each
+// carrying a running total, so the LAST one is authoritative. node's TAP
+// reporter re-emits child stdout as "# ..." comments, hence no anchoring.
+// ---------------------------------------------------------------------------
+const REGISTERED_MARKER = "__LIBUILD_REGISTERED__";
+const REGISTERED_PATTERN = new RegExp(`${REGISTERED_MARKER}\\s+(\\d+)`, "g");
+
+/** Last registration total the child reported, or null if it reported none. */
+export function parseRegistered(output: string): number | null {
+  const matches = [...stripAnsi(output).matchAll(REGISTERED_PATTERN)];
+  return matches.length ? parseInt(matches[matches.length - 1][1], 10) : null;
+}
+
+/** Drop the marker lines so they never surface in a failure dump. */
+export function stripRegistered(output: string): string {
+  return output
+    .split("\n")
+    .filter((line) => !line.includes(REGISTERED_MARKER))
+    .join("\n");
+}
 
 export type Platform = "bun" | "node" | "chromium" | "firefox" | "webkit";
 
@@ -275,6 +305,37 @@ function isBrowserPlatform(platform: Platform): platform is "chromium" | "firefo
   return platform === "chromium" || platform === "firefox" || platform === "webkit";
 }
 
+// Node/bun-only specifiers reachable from `@b9g/libuild/test`'s never-run
+// branches. In browser bundles each resolves to a stub whose module body
+// throws - so they link cleanly (no live external imports, see the comment at
+// the `plugins` option below) and fail loudly if a code path that should be
+// browser-dead ever actually evaluates one.
+const BROWSER_STUBBED = [
+  "bun:test", "node:test", "expect", "fs", "node:fs", "module", "node:module", "pretty-format",
+];
+
+const browserStubPlugin: ESBuild.Plugin = {
+  name: "libuild-browser-stubs",
+  setup(build) {
+    const filter = new RegExp(
+      `^(${BROWSER_STUBBED.map((s) => s.replace(/[:.-]/g, "\\$&")).join("|")})$`
+    );
+    build.onResolve({ filter }, (args) => ({
+      path: args.path,
+      namespace: "libuild-browser-stub",
+    }));
+    build.onLoad({ filter: /.*/, namespace: "libuild-browser-stub" }, (args) => ({
+      // A throwing module BODY (not throwing exports): anything importing this
+      // statically links fine at bundle time, and the throw only fires if the
+      // module is initialized at runtime - which only a bug can cause.
+      contents: `throw new Error(${JSON.stringify(
+        `libuild: "${args.path}" is not available in the browser test bundle`
+      )});`,
+      loader: "js",
+    }));
+  },
+};
+
 /**
  * Bundle tests for a specific platform.
  * Exported for tests that assert externalization behavior.
@@ -292,11 +353,15 @@ export async function bundleTests(
   // A per-shard id keeps concurrent per-file bundles from clobbering each other.
   const suffix = id ? `-${id}` : "";
   const entryPath = Path.join(outDir, `entry-${platform}${suffix}.ts`);
-  const outPath = Path.join(outDir, `bundle-${platform}${suffix}.js`);
+  // `.mjs` for node/bun: the bundle is ESM, and the consumer's nearest
+  // package.json may lack `"type": "module"` - node then refuses a `.js` ESM
+  // file ("Cannot use import statement outside a module"). The extension makes
+  // the format unambiguous regardless of the consumer's package type. Browser
+  // bundles keep `.js` (the content is inlined into the served HTML anyway).
+  const isBrowser = isBrowserPlatform(platform);
+  const outPath = Path.join(outDir, `bundle-${platform}${suffix}${isBrowser ? ".js" : ".mjs"}`);
 
   await FS.writeFile(entryPath, entryContent);
-
-  const isBrowser = isBrowserPlatform(platform);
 
   // For Node/Bun, inject a require shim for CJS interop of external deps.
   const requireShim = `
@@ -318,14 +383,20 @@ const require = createRequire(import.meta.url);
     // normally (no aliasing) and picks its backend at runtime. On node/bun it
     // stays external (packages: "external") and resolves from the consumer's
     // node_modules. Externalizing node_modules is also how the *built* package
-    // runs and avoids bundling bundle-hostile deps like jsdom. On browser it's
-    // bundled, and the dispatcher's never-run node/bun branches reference
+    // runs and avoids bundling bundle-hostile deps like jsdom. On browser the
+    // dispatcher is bundled, and its never-run node/bun branches reference
     // `bun:test`/`node:test`/`expect` and the snapshot chunk's `node:fs`/
-    // `pretty-format`, which can't link (or would crash at load) under the
-    // browser platform - so those are marked external. They're never executed
-    // there; the browser's toMatchSnapshot throws instead.
+    // `pretty-format`. Those used to be marked `external` - which left them as
+    // LIVE dynamic imports, forcing esbuild to give the dispatcher a lazy async
+    // wrapper; importers then needed `await init_test()` at their own top
+    // level, and (depending on the esbuild version's wrapper choice) that
+    // `await` could land inside a non-async wrapper, making the whole bundle a
+    // syntax error before a single test ran. Stubbing resolves them INSIDE the
+    // bundle instead: the dispatcher stays plain ESM with its top-level await
+    // at genuine top level. The stubs throw if ever actually evaluated - which
+    // the browser branch never does.
     ...(isBrowser
-      ? { external: ["bun:test", "node:test", "expect", "fs", "node:fs", "module", "node:module", "pretty-format"] }
+      ? { plugins: [browserStubPlugin] }
       : { packages: "external" as const }),
     // Inject require shim for node/bun to handle CJS deps like expect/chalk
     ...(isBrowser ? {} : { banner: { js: requireShim } }),
@@ -336,7 +407,7 @@ const require = createRequire(import.meta.url);
     logLevel: "warning",
   };
 
-  await ESBuild.build(buildOptions);
+  await esbuildBuild(buildOptions);
 
   return outPath;
 }
@@ -500,9 +571,13 @@ export function shardFailure(run: {
   timeout: number;
   /** Tests that produced a result before the process died */
   finished: number;
+  /** Tests the file registered, when the child got far enough to report it */
+  registered?: number | null;
 }): string | null {
   if (run.timedOut) {
-    return `timed out after ${run.timeout}ms - ${run.finished} test(s) finished, the rest never ran ` +
+    // The denominator is what turns "some tests were lost" into "how many".
+    const of = run.registered != null ? `${run.finished} of ${run.registered}` : `${run.finished}`;
+    return `timed out after ${run.timeout}ms - ${of} test(s) finished, the rest never ran ` +
       `(raise --timeout, or split the file)`;
   }
   if (run.signal != null) return `killed by ${run.signal} (out of memory?)`;
@@ -534,6 +609,7 @@ async function runNodeTests(bundlePath: string, timeout: number): Promise<ShardR
   const reason = shardFailure({
     completed, code, signal, timedOut, failed, timeout,
     finished: passed + failed + skipped + todo,
+    registered: parseRegistered(stdout),
   });
 
   return {
@@ -545,7 +621,7 @@ async function runNodeTests(bundlePath: string, timeout: number): Promise<ShardR
       skipped,
       todo,
     },
-    output: stdout + stderr,
+    output: stripRegistered(stdout + stderr),
   };
 }
 
@@ -592,6 +668,7 @@ async function runBunTests(bundlePath: string, timeout: number): Promise<ShardRu
   const reason = shardFailure({
     completed, code, signal, timedOut, failed, timeout,
     finished: passed + failed,
+    registered: parseRegistered(output),
   });
 
   return {
@@ -601,7 +678,7 @@ async function runBunTests(bundlePath: string, timeout: number): Promise<ShardRu
       failed: reason ? Math.max(failed, 1) : failed,
       errors: reason ? [...errors, { name: "bun test process did not complete", error: reason }] : errors,
     },
-    output,
+    output: stripRegistered(output),
   };
 }
 
@@ -766,6 +843,25 @@ ${bundleContent}
     } else {
       console.log("\nDebug mode: browser left open. Press Ctrl+C to exit.");
       await new Promise(() => {}); // Wait forever
+    }
+
+    // Zero tests out of discovered test files is a malfunction, not a pass:
+    // the registration-ordering class of bug (see the setTimeout comment in
+    // _test-browser.ts) produced exactly this shape - files found, nothing
+    // registered, exit 0 - which would merge as "suite silently disabled, CI
+    // green". A run that was going to be empty never gets here (runTests
+    // returns early when no files are found).
+    if (results.passed + results.failed === 0) {
+      return {
+        platform: `browser (${browser})`,
+        passed: 0,
+        failed: 1,
+        errors: [{
+          name: "no tests ran",
+          error: "test files were bundled and loaded, but zero tests registered - " +
+            "this is a runner malfunction, not an empty suite",
+        }],
+      };
     }
 
     return {

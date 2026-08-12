@@ -2,7 +2,7 @@ import {test, expect} from "bun:test";
 import * as FS from "fs/promises";
 import * as FSSync from "fs";
 import * as Path from "path";
-import {bundleTests, collectTests, parseBunOutput, parseTapOutput, resolveTestTargets, shardFailure, runTests} from "../src/_test-runner.ts";
+import {bundleTests, collectTests, parseBunOutput, parseRegistered, parseTapOutput, resolveTestTargets, shardFailure, stripRegistered, runTests} from "../src/_test-runner.ts";
 import {
   installSnapshotMatcher,
   wrapTestApi,
@@ -227,6 +227,37 @@ test("shardFailure: a timeout is a failure that names the count it got through (
   expect(reason).toMatch(/12 test\(s\) finished/);
 });
 
+test("timeout message carries the registered total when the child reported one", () => {
+  const withTotal = shardFailure({
+    completed: true, code: 1, signal: null, timedOut: true,
+    failed: 0, timeout: 60000, finished: 12, registered: 47,
+  });
+  expect(withTotal).toMatch(/12 of 47 test\(s\) finished/);
+
+  // Files that don't import @b9g/libuild/test never report a total; the
+  // message must still read correctly without a denominator.
+  const withoutTotal = shardFailure({
+    completed: true, code: 1, signal: null, timedOut: true,
+    failed: 0, timeout: 60000, finished: 12, registered: null,
+  });
+  expect(withoutTotal).toMatch(/12 test\(s\) finished/);
+  expect(withoutTotal).not.toMatch(/ of /);
+});
+
+test("parseRegistered takes the last total; stripRegistered hides the markers", () => {
+  // node's TAP reporter re-emits child stdout as a "# " comment
+  expect(parseRegistered("# __LIBUILD_REGISTERED__ 47\nok 1 - x\n")).toBe(47);
+  // Several emits (top-level await, tests registering tests) -> last wins
+  expect(parseRegistered("__LIBUILD_REGISTERED__ 3\n__LIBUILD_REGISTERED__ 9\n")).toBe(9);
+  // A file that never reports one
+  expect(parseRegistered("ok 1 - x\n")).toBeNull();
+
+  // The marker is plumbing, never user-facing output
+  const dump = "ok 1 - x\n# __LIBUILD_REGISTERED__ 47\nnot ok 2 - y\n";
+  expect(stripRegistered(dump)).toBe("ok 1 - x\nnot ok 2 - y\n");
+  expect(stripRegistered(dump)).not.toMatch(/__LIBUILD_REGISTERED__/);
+});
+
 test("shardFailure: completed-but-nonzero with no failing test is not green (#18)", () => {
   // Tests went missing somewhere we can't see (unhandled rejection, runner
   // error). Reporting "0 failed" here is the false-green this guards against.
@@ -363,6 +394,59 @@ test("resolveTestTargets: directory, files, globs, and bad paths (#19)", async (
   expect(await rejection(["test/nope.test.ts"])).toMatch(/No such test file/);
   // Mixing a directory with other targets is ambiguous
   expect(await rejection(["test", "test/a.test.ts"])).toMatch(/Cannot mix a directory/);
+
+  await removeTempDir(testDir);
+});
+
+test("browser bundle parses and contains no live node/bun imports", async () => {
+  const testDir = await createTempDir("browser-bundle");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+  // Import the real dispatcher so the bundle contains the whole graph the bug
+  // lived in: `@b9g/libuild/test` selecting its backend with top-level await.
+  await FS.writeFile(Path.join(projDir, "package.json"), JSON.stringify({name: "p", version: "1.0.0"}));
+  await FS.mkdir(Path.join(projDir, "node_modules", "@b9g"), {recursive: true});
+  await FS.symlink(Path.resolve(import.meta.dir, "../dist"), Path.join(projDir, "node_modules", "@b9g", "libuild"));
+  await FS.writeFile(Path.join(projDir, "test", "a.test.ts"),
+    'import {test, expect} from "@b9g/libuild/test";\ntest("a", () => { expect(1).toBe(1); });\n');
+
+  const bundle = await bundleTests([Path.join(projDir, "test", "a.test.ts")], "chromium", projDir, projDir);
+
+  // The externals used to survive as live dynamic imports, forcing lazy async
+  // wrappers that (on some esbuild versions) put `await init_...()` inside a
+  // non-async wrapper - the whole bundle was then a syntax error and every
+  // browser run died before a single test executed. Stubbing resolves them
+  // inside the bundle, so: (a) it parses, (b) no live imports remain.
+  const content = await FS.readFile(bundle, "utf-8");
+  // `--input-type=module` only applies to stdin, so pipe the bundle in.
+  const {spawn} = await import("child_process");
+  const syntax = await new Promise<number>((resolve) => {
+    const child = spawn("node", ["--input-type=module", "--check"], {stdio: ["pipe", "ignore", "ignore"]});
+    child.stdin.end(content);
+    child.on("close", (code) => resolve(code ?? 1));
+  });
+  expect(syntax).toBe(0);
+
+  expect(content).not.toMatch(/(import\(|from )"(bun:test|node:test|expect|node:fs|pretty-format)"/);
+  // The runner must start in a macrotask: a microtask fires before the
+  // dispatcher's TLA continuations run test-file bodies -> zero tests register.
+  expect(content).toMatch(/setTimeout\(async/);
+  expect(content).not.toMatch(/queueMicrotask\(async/);
+
+  await removeTempDir(testDir);
+});
+
+test("node/bun bundles use .mjs so consumers without type:module still run", async () => {
+  const testDir = await createTempDir("mjs-bundle");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+  await FS.writeFile(Path.join(projDir, "test", "a.test.ts"),
+    'import {test} from "node:test";\ntest("a", () => {});\n');
+
+  // The bundle is ESM; with a `.js` extension node's format detection falls
+  // back to the consumer's package.json `type`, which plain CJS packages lack.
+  const bundle = await bundleTests([Path.join(projDir, "test", "a.test.ts")], "node", projDir, projDir);
+  expect(bundle.endsWith(".mjs")).toBe(true);
 
   await removeTempDir(testDir);
 });

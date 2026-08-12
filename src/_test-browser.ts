@@ -366,8 +366,16 @@ function getFullName(t: Test): string {
   return names.join(" > ");
 }
 
-// Auto-run after all modules loaded
-queueMicrotask(async () => {
+// Auto-run after all modules loaded. This must be a MACROTASK, not a
+// microtask: `@b9g/libuild/test` selects this backend with top-level await,
+// which makes it an async module - every importing test file's body is then
+// deferred to a microtask continuation that runs AFTER this chunk evaluates.
+// A queueMicrotask here is already queued by the time those continuations are
+// scheduled, so it would fire with zero tests registered and report a green
+// empty run (crank PR #375). setTimeout runs after the microtask queue - i.e.
+// after every module body, including TLA continuations, has finished
+// registering.
+setTimeout(async () => {
   const suiteRan = new Set<Suite>();
 
   for (const t of tests) {
