@@ -141,6 +141,22 @@ const IGNORE_PATTERNS = [
   "**/coverage/**",
 ];
 
+const TEST_DIR_NAMES = new Set(["test", "tests", "__tests__"]);
+
+/**
+ * Default patterns, adjusted for the root they run from. `**\/test/**` means
+ * "any file under a directory named test" - but evaluated from INSIDE that
+ * directory it demands a nested test/test/, so `libuild test test/` (or
+ * running from within test/) discovered nothing unless files carried the
+ * `.test.` infix. When the root itself is a test directory, everything under
+ * it is a test file, same as the parent-rooted glob would have said.
+ */
+export function defaultPatternsFor(cwd: string): string[] {
+  return TEST_DIR_NAMES.has(Path.basename(cwd).toLowerCase())
+    ? [...DEFAULT_PATTERNS, "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"]
+    : DEFAULT_PATTERNS;
+}
+
 /**
  * Find test files matching patterns
  */
@@ -323,36 +339,71 @@ function isBrowserPlatform(platform: Platform): platform is "chromium" | "firefo
   return platform === "chromium" || platform === "firefox" || platform === "webkit";
 }
 
-// Node/bun-only specifiers reachable from `@b9g/libuild/test`'s never-run
-// branches. In browser bundles each resolves to a stub whose module body
-// throws - so they link cleanly (no live external imports, see the comment at
-// the `plugins` option below) and fail loudly if a code path that should be
-// browser-dead ever actually evaluates one.
-const BROWSER_STUBBED = [
-  "bun:test", "node:test", "expect", "fs", "node:fs", "module", "node:module", "pretty-format",
-];
+// Specifiers reachable from `@b9g/libuild/test`'s never-run node/bun branches,
+// which browser bundles must not leave as live imports (see the comment at the
+// `plugins` option below). Two tiers:
+//
+// - GLOBAL: node builtins and the runtimes' test modules. These can never
+//   meaningfully resolve in a browser bundle from ANY importer, and stubbing
+//   them (throw at evaluation, not at bundle time) is what lets consumer code
+//   keep runtime-guarded dynamic imports (`if (!isBrowser) await import("fs")`)
+//   that never execute in the browser.
+// - SCOPED to libuild's own modules: real npm packages a consumer's browser
+//   test may legitimately import for itself. Only libuild's internal imports
+//   are stubbed; a consumer's own `import {format} from "pretty-format"`
+//   resolves normally (bundling the real package, or failing with esbuild's
+//   ordinary resolution error - either way, correctly attributed).
+const GLOBAL_BROWSER_STUBS = ["bun:test", "node:test", "fs", "node:fs", "module", "node:module"];
+const SCOPED_BROWSER_STUBS = ["expect", "pretty-format"];
 
-const browserStubPlugin: ESBuild.Plugin = {
-  name: "libuild-browser-stubs",
-  setup(build) {
-    const filter = new RegExp(
-      `^(${BROWSER_STUBBED.map((s) => s.replace(/[:.-]/g, "\\$&")).join("|")})$`
-    );
-    build.onResolve({ filter }, (args) => ({
-      path: args.path,
-      namespace: "libuild-browser-stub",
-    }));
-    build.onLoad({ filter: /.*/, namespace: "libuild-browser-stub" }, (args) => ({
-      // A throwing module BODY (not throwing exports): anything importing this
-      // statically links fine at bundle time, and the throw only fires if the
-      // module is initialized at runtime - which only a bug can cause.
-      contents: `throw new Error(${JSON.stringify(
-        `libuild: "${args.path}" is not available in the browser test bundle`
-      )});`,
-      loader: "js",
-    }));
-  },
-};
+/**
+ * `libuildDir` is the real (symlink-resolved) directory of the consumer's
+ * `@b9g/libuild/test` module - matching esbuild's importer paths, which are
+ * also realpaths, so scoping survives linked/vendored installs. When it can't
+ * be resolved (a bundle graph that never imports the dispatcher), scoped stubs
+ * fall back to global, preserving the old behavior for graphs that can't
+ * contain consumer imports of these packages anyway.
+ */
+function makeBrowserStubPlugin(libuildDir: string | null): ESBuild.Plugin {
+  const scoped = new Set(SCOPED_BROWSER_STUBS);
+  const all = [...GLOBAL_BROWSER_STUBS, ...SCOPED_BROWSER_STUBS];
+  const filter = new RegExp(`^(${all.map((s) => s.replace(/[:.-]/g, "\\$&")).join("|")})$`);
+
+  return {
+    name: "libuild-browser-stubs",
+    setup(build) {
+      build.onResolve({ filter }, (args) => {
+        if (scoped.has(args.path) && libuildDir != null && !args.importer.startsWith(libuildDir)) {
+          return undefined; // consumer's own import - resolve normally
+        }
+        return { path: args.path, namespace: "libuild-browser-stub" };
+      });
+      build.onLoad({ filter: /.*/, namespace: "libuild-browser-stub" }, (args) => ({
+        // A throwing module BODY (not throwing exports): anything importing
+        // this statically links fine at bundle time, and the throw only fires
+        // if the module is initialized at runtime - which only a bug can cause.
+        contents: `throw new Error(${JSON.stringify(
+          `libuild: "${args.path}" is not available in the browser test bundle`
+        )});`,
+        loader: "js",
+      }));
+    },
+  };
+}
+
+/** Where the consumer's `@b9g/libuild` build actually lives (realpath), for
+ * stub scoping. Resolved via the `./package.json` export because it carries no
+ * conditions - `./test` is import-only, which a require-based resolve can't
+ * see. Node's resolver follows symlinks like esbuild does, so the two agree on
+ * linked installs. Null when unresolvable. */
+function resolveLibuildDir(cwd: string): string | null {
+  try {
+    const req = createRequire(Path.join(cwd, "package.json"));
+    return Path.dirname(req.resolve("@b9g/libuild/package.json"));
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Bundle tests for a specific platform.
@@ -414,7 +465,7 @@ const require = createRequire(import.meta.url);
     // at genuine top level. The stubs throw if ever actually evaluated - which
     // the browser branch never does.
     ...(isBrowser
-      ? { plugins: [browserStubPlugin] }
+      ? { plugins: [makeBrowserStubPlugin(resolveLibuildDir(cwd))] }
       : { packages: "external" as const }),
     // Inject require shim for node/bun to handle CJS deps like expect/chalk
     ...(isBrowser ? {} : { banner: { js: requireShim } }),
@@ -995,7 +1046,7 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
     cwd: options.cwd || process.cwd(),
     // Naming files explicitly means "run exactly these" - don't also glob the
     // tree back in (issue #19).
-    patterns: options.patterns ?? (files.length ? [] : DEFAULT_PATTERNS),
+    patterns: options.patterns ?? (files.length ? [] : defaultPatternsFor(options.cwd || process.cwd())),
     files,
     platforms: options.platforms || ["bun"],
     debug: options.debug || false,
