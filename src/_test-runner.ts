@@ -528,47 +528,79 @@ const TAP_DIRECTIVE = /(?<!\\)#\s*(TODO|SKIP)\b/i;
 export function parseTapOutput(output: string): { passed: number; failed: number; errors: Array<{ name: string; error: string }>; skipped: number; todo: number; completed: boolean } {
   output = stripAnsi(output); // forced color must not corrupt the TAP tokens
   const errors: Array<{ name: string; error: string }> = [];
-  const lines = output.split("\n");
 
-  let lastTestName = "";
-  let lastTestNotOk = false;
   let tallyPassed = 0;
   let tallyFailed = 0;
   let tallySkipped = 0;
   let tallyTodo = 0;
+  // Suites that failed of their OWN error - a throw in a describe() callback
+  // body during registration. Node reports these as `not ok` with
+  // `failureType: 'testCodeFailure'`, but counts them under `# suites`, NOT
+  // `# fail`, and still exits 0 - so a runner trusting the summary (or the
+  // exit code) reports green while every test registered after the throw
+  // silently never runs (issue #23). Suites that are `not ok` merely because
+  // a CHILD failed carry `failureType: 'subtestsFailed'` and must NOT count,
+  // or every ordinary failure would be double-counted through its parents.
+  let suiteFailed = 0;
 
-  for (const line of lines) {
-    // TAP format: "ok 1 - test name" or "not ok 1 - test name"
-    const okMatch = line.match(/^\s*ok \d+ - (.+)/);
-    const notOkMatch = line.match(/^\s*not ok \d+ - (.+)/);
+  // Per-entry state machine: each `ok`/`not ok` line opens an entry, its YAML
+  // block (type / failureType / error) accumulates onto it, and the next
+  // entry (or EOF) finalizes it. The tally can't happen at the `type:` line
+  // as it used to - `failureType` and `error` come after it in the block.
+  let current: { name: string; notOk: boolean; type?: string; failureType?: string; error?: string } | null = null;
 
-    if (okMatch) {
-      lastTestName = okMatch[1];
-      lastTestNotOk = false;
-    } else if (notOkMatch) {
-      lastTestName = notOkMatch[1];
-      lastTestNotOk = true;
-    }
-
-    // Only tally on "type: 'test'" lines (skip describe-block "type: 'suite'")
-    if (line.includes("type: 'test'") || line.includes('type: "test"')) {
-      const directive = lastTestName.match(TAP_DIRECTIVE);
+  const finalize = () => {
+    if (!current) return;
+    if (current.type === "test") {
+      const directive = current.name.match(TAP_DIRECTIVE);
       const kind = directive ? directive[1].toUpperCase() : null;
       if (kind === "SKIP") {
         tallySkipped++;
       } else if (kind === "TODO") {
         tallyTodo++;
-      } else if (lastTestNotOk) {
+      } else if (current.notOk) {
         tallyFailed++;
-        errors.push({ name: lastTestName, error: "Test failed" });
+        errors.push({ name: current.name, error: current.error ?? "Test failed" });
       } else {
         tallyPassed++;
       }
+    } else if (current.type === "suite" && current.notOk && current.failureType !== "subtestsFailed") {
+      suiteFailed++;
+      errors.push({
+        name: `suite "${current.name}" threw during registration`,
+        error: (current.error ?? "error during suite registration") +
+          " - tests declared after the throw never registered",
+      });
+    }
+    current = null;
+  };
+
+  for (const line of output.split("\n")) {
+    // TAP format: "ok 1 - test name" or "not ok 1 - test name"
+    const okMatch = line.match(/^\s*ok \d+ - (.+)/);
+    const notOkMatch = line.match(/^\s*not ok \d+ - (.+)/);
+    if (okMatch || notOkMatch) {
+      finalize();
+      current = { name: (okMatch ?? notOkMatch)![1], notOk: notOkMatch != null };
+      continue;
+    }
+    if (!current) continue;
+    let m: RegExpMatchArray | null;
+    if ((m = line.match(/^\s*type: ['"]?(\w+)/))) {
+      current.type = m[1];
+    } else if ((m = line.match(/^\s*failureType: ['"]?(\w+)/))) {
+      current.failureType = m[1];
+    } else if ((m = line.match(/^\s*error: '(.*)'\s*$/))) {
+      current.error = m[1];
     }
   }
+  finalize();
 
   // Node's TAP reporter emits an authoritative summary; trust it for the counts
   // when present (the hand tally above still supplies failing-test names).
+  // Registration-failed suites are ADDED on top: node's `# fail` deliberately
+  // excludes them (they count under `# suites`), which is exactly the blind
+  // spot being closed.
   const summary = (label: string): number | null => {
     const m = output.match(new RegExp(`^#\\s*${label}\\s+(\\d+)`, "m"));
     return m ? parseInt(m[1], 10) : null;
@@ -578,11 +610,11 @@ export function parseTapOutput(output: string): { passed: number; failed: number
   // was killed or crashed before finishing produces neither a `# tests` line
   // nor any `type: 'test'` line - it must not be mistaken for a clean 0/0 pass.
   const completed = summary("tests") !== null
-    || (tallyPassed + tallyFailed + tallySkipped + tallyTodo) > 0;
+    || (tallyPassed + tallyFailed + tallySkipped + tallyTodo + suiteFailed) > 0;
 
   return {
     passed: summary("pass") ?? tallyPassed,
-    failed: summary("fail") ?? tallyFailed,
+    failed: (summary("fail") ?? tallyFailed) + suiteFailed,
     skipped: summary("skipped") ?? tallySkipped,
     todo: summary("todo") ?? tallyTodo,
     errors,

@@ -316,6 +316,103 @@ test("shardFailure: completed-but-nonzero with no failing test is not green (#18
   expect(shardFailure({...OK_RUN, code: 1, failed: 0})).toMatch(/reported no failing tests/);
 });
 
+// The two suite-failure shapes node emits (captured from node 25). A suite
+// that THREW during registration carries failureType 'testCodeFailure'; a
+// suite that is not ok merely because a child failed carries 'subtestsFailed'.
+// Node counts both under `# suites`, not `# fail`, and exits 0 for the former.
+const SUITE_THROW_TAP = `TAP version 13
+# Subtest: outer
+    # Subtest: passes
+    ok 1 - passes
+      ---
+      duration_ms: 1
+      type: 'test'
+      ...
+    # Subtest: callback throws
+    not ok 2 - callback throws
+      ---
+      duration_ms: 0.5
+      type: 'suite'
+      failureType: 'testCodeFailure'
+      error: 'BOOM: describe callback threw'
+      code: 'ERR_TEST_FAILURE'
+      ...
+    # Subtest: after the throw
+    ok 3 - after the throw
+      ---
+      duration_ms: 1
+      type: 'test'
+      ...
+    1..3
+not ok 1 - outer
+  ---
+  duration_ms: 5
+  type: 'suite'
+  failureType: 'subtestsFailed'
+  error: '1 subtest failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+1..1
+# tests 2
+# suites 2
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 6
+`;
+
+test("a throw during suite registration is a named failure, not a green run (#23)", () => {
+  const r = parseTapOutput(SUITE_THROW_TAP);
+  // node reports "# fail 0" and exits 0 here - the registration throw only
+  // exists as a `not ok` suite entry. It must surface as a failure with the
+  // actual error text, and the parent's 'subtestsFailed' must NOT also count
+  // (that would double-count every ordinary failure through its ancestors).
+  expect(r.passed).toBe(2);
+  expect(r.failed).toBe(1);
+  expect(r.errors).toHaveLength(1);
+  expect(r.errors[0].name).toContain("callback throws");
+  expect(r.errors[0].error).toContain("BOOM: describe callback threw");
+});
+
+test("ordinary failures are not double-counted through their parent suites (#23)", () => {
+  const tap = `TAP version 13
+# Subtest: parent
+    # Subtest: fails normally
+    not ok 1 - fails normally
+      ---
+      duration_ms: 1
+      type: 'test'
+      failureType: 'testCodeFailure'
+      error: 'regular failure'
+      ...
+    1..1
+not ok 1 - parent
+  ---
+  duration_ms: 2
+  type: 'suite'
+  failureType: 'subtestsFailed'
+  error: '1 subtest failed'
+  ...
+1..1
+# tests 1
+# suites 1
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3
+`;
+  const r = parseTapOutput(tap);
+  expect(r.failed).toBe(1); // the test itself; parent suite adds nothing
+  expect(r.errors).toHaveLength(1);
+  expect(r.errors[0].name).toBe("fails normally");
+  // Failing tests now carry their error text instead of a generic label.
+  expect(r.errors[0].error).toContain("regular failure");
+});
+
 test("parseTapOutput.completed distinguishes a real run from a killed one (#16)", () => {
   expect(parseTapOutput(NODE_TAP).completed).toBe(true);
   // Empty / summary-less output (killed before any result) -> not completed
@@ -645,6 +742,53 @@ test("registration counting covers only/skip/todo/each (denominator accuracy)", 
     const markers = lines.filter((l) => l.startsWith("__LIBUILD_REGISTERED__"));
     return parseInt(markers[markers.length - 1].split(" ")[1], 10) - 1; // minus the tick
   }
+});
+
+test("a describe-callback throw fails the node run end-to-end (#23)", async () => {
+  const testDir = await createTempDir("suite-throw-e2e");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+  // The exact crank shape: the throw sits inside a describe() callback, node
+  // exits 0 with "# fail 0", and 0.2.17 reported this green with the
+  // never-registered tests silently missing.
+  await FS.writeFile(Path.join(projDir, "test", "boom.test.ts"),
+    'import {describe, it} from "node:test";\nimport assert from "node:assert";\n' +
+    'describe("outer", () => {\n' +
+    '  it("passes", () => { assert.ok(1); });\n' +
+    '  describe("broken", () => { throw new Error("BOOM"); });\n' +
+    '  it("after", () => { assert.ok(1); });\n' +
+    '});\n');
+
+  expect(await runTests({cwd: projDir, platforms: ["node"], timeout: 30000})).toBe(false);
+
+  await removeTempDir(testDir);
+});
+
+test("node backend it.each registers one test per row (#23)", async () => {
+  const testDir = await createTempDir("node-each");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+  await FS.writeFile(Path.join(projDir, "package.json"), JSON.stringify({name: "p", version: "1.0.0"}));
+  await FS.mkdir(Path.join(projDir, "node_modules", "@b9g"), {recursive: true});
+  await FS.symlink(Path.resolve(import.meta.dir, "../dist"), Path.join(projDir, "node_modules", "@b9g", "libuild"));
+
+  // The API that bit crank: it.each inside describe(), on node where
+  // node:test has no .each. The shim registers per-row through the ordinary
+  // block; the failing row proves the bodies actually execute (a suite whose
+  // rows never ran would be green).
+  await FS.writeFile(Path.join(projDir, "test", "each.test.ts"),
+    'import {describe, it, expect} from "@b9g/libuild/test";\n' +
+    'describe("adds", () => {\n' +
+    '  it.each([[1, 1, 2], [2, 2, 4], [3, 3, 7]])("%i + %i = %i", (a: number, b: number, sum: number) => {\n' +
+    '    expect(a + b).toBe(sum);\n' +
+    '  });\n' +
+    '});\n');
+
+  // The third row is wrong on purpose: 3 + 3 != 7. Two rows pass, one fails -
+  // and the run is red, proving per-row registration AND execution.
+  expect(await runTests({cwd: projDir, platforms: ["node"], timeout: 30000})).toBe(false);
+
+  await removeTempDir(testDir);
 });
 
 test("each test file runs in its own process — default isolation (#16)", async () => {
