@@ -285,3 +285,71 @@ test("verify extraArgs extraction logic", () => {
     expect(extraArgs).toEqual(testCase.expected);
   }
 });
+
+// ---------------------------------------------------------------------------
+// libuild stage: a separate command, not a publish variant - the artifact
+// does not go live, and a human approves it later with `npm stage approve`.
+// ---------------------------------------------------------------------------
+
+test("npmSupportsStaging: 11.15.0 is the floor", async () => {
+  const {npmSupportsStaging} = await import("../src/libuild.ts");
+  expect(npmSupportsStaging("11.15.0")).toBe(true);
+  expect(npmSupportsStaging("11.16.2")).toBe(true);
+  expect(npmSupportsStaging("12.0.0")).toBe(true);
+  expect(npmSupportsStaging("11.14.9")).toBe(false);
+  expect(npmSupportsStaging("11.8.0")).toBe(false);
+  expect(npmSupportsStaging("10.99.0")).toBe(false);
+  expect(npmSupportsStaging("")).toBe(false);
+  expect(npmSupportsStaging("garbage")).toBe(false);
+});
+
+test("stage refuses with a clear error when npm is too old (or explains staging)", async () => {
+  const testDir = await createTempDir("stage-npm-version");
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), 'export const x = 1;');
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "stage-version-test", version: "1.0.0", type: "module", private: true,
+  }));
+
+  const proc = spawn("bun", ["run", Path.join(process.cwd(), "src/cli.ts"), "stage", "--dry-run"], {
+    cwd: testDir, stdio: "pipe",
+  });
+  let output = "";
+  proc.stdout?.on("data", (d) => output += d.toString());
+  proc.stderr?.on("data", (d) => output += d.toString());
+  const exitCode = await new Promise<number>((resolve) => proc.on("close", (c) => resolve(c || 0)));
+
+  // Preflights run before the build, so the refusal must be immediate and
+  // named - never npm's own confusing "unknown command" failure. Which
+  // preflight fires depends on the machine's npm:
+  //  - npm < 11.15.0 -> the version gate, naming both versions
+  //  - npm >= 11.15.0 -> the never-published gate for this fake package
+  expect(exitCode).toBe(1);
+  expect(output).toMatch(/staged publishing needs npm 11\.15\.0|has never been published/);
+  expect(output).not.toMatch(/Unknown command/i);
+
+  await removeTempDir(testDir);
+});
+
+test("stage is dispatched with the same whitelist parser as publish", async () => {
+  const testDir = await createTempDir("stage-whitelist");
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), 'export const x = 1;');
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "stage-whitelist-test", version: "1.0.0", type: "module", private: true,
+  }));
+
+  // An unsafe flag must be dropped with a warning by the shared whitelist -
+  // BEFORE any preflight refusal exits the process.
+  const proc = spawn("bun", ["run", Path.join(process.cwd(), "src/cli.ts"), "stage", "--ignore-scripts", "--dry-run"], {
+    cwd: testDir, stdio: "pipe",
+  });
+  let output = "";
+  proc.stdout?.on("data", (d) => output += d.toString());
+  proc.stderr?.on("data", (d) => output += d.toString());
+  await new Promise<number>((resolve) => proc.on("close", (c) => resolve(c || 0)));
+
+  expect(output).toContain("Ignoring unknown/unsafe npm flag: --ignore-scripts");
+
+  await removeTempDir(testDir);
+});

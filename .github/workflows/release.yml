@@ -1,0 +1,63 @@
+name: Release
+
+# The only way @b9g/libuild reaches npm - and CI can only STAGE, never make a
+# version live.
+#
+# Trigger it by publishing a GitHub Release, which creates the tag, or from
+# Actions -> Release -> Run workflow. The job then parks on the `npm`
+# environment until a required reviewer approves it. What it runs is
+# `libuild stage`: the version is uploaded to the registry in a
+# not-installable state, and only a human running `npm stage approve <id>`
+# (which always prompts for 2FA, CLI or website) makes it live. The npm
+# trusted publisher for this repo should be restricted to stage-only, so a
+# compromised workflow cannot skip the human.
+#
+# Staging goes through `libuild stage`, not `npm stage publish` directly. The
+# root package.json carries a prepublishOnly guard that libuild itself
+# installs, so a direct npm publish from the root is meant to fail. libuild
+# builds, then runs npm inside dist/, adding --access public for scoped names.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm 11.5.1+, and staged publishing 11.15.0+
+      # (libuild stage checks and says so). libuild spawns `npm`, so the
+      # upgraded binary has to be the one on PATH.
+      - run: npm install -g npm@latest
+
+      - run: bun install
+
+      - run: bun test
+
+      # A mistyped tag would otherwise publish whatever the manifest says, and
+      # the GitHub Release would then claim a version npm never received.
+      - name: Check the tag matches the version
+        if: github.event_name == 'release'
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "Tag $TAG does not match package version $PKG"
+            exit 1
+          fi
+
+      - run: bun run src/cli.ts stage --provenance

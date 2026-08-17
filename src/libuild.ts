@@ -1802,10 +1802,20 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   return {distPkg: fixedDistPkg, rootPkg};
 }
 
-export async function publish(cwd: string, save: boolean = true, extraArgs: string[] = []) {
+/**
+ * Build, then hand the dist to npm. Shared by `publish` (live) and `stage`
+ * (uploaded but not installable until a human runs `npm stage approve`, which
+ * always prompts for 2FA - that unautomatable approval is the point).
+ */
+async function releaseToNpm(
+  cwd: string,
+  save: boolean,
+  extraArgs: string[],
+  mode: "publish" | "stage"
+): Promise<void> {
   await build(cwd, save);
 
-  console.info("\nPublishing to npm...");
+  console.info(mode === "stage" ? "\nStaging on npm..." : "\nPublishing to npm...");
 
   const distDir = Path.join(cwd, "dist");
   const distPkgPath = Path.join(distDir, "package.json");
@@ -1817,13 +1827,14 @@ export async function publish(cwd: string, save: boolean = true, extraArgs: stri
   // Read the package.json to check if it's a scoped package
   const distPkg = JSON.parse(await FS.readFile(distPkgPath, "utf-8")) as PackageJSON;
 
-  // Run npm publish in dist directory
+  // Run npm in the dist directory. Staging is npm's own subcommand
+  // (`npm stage publish`), taking the same flags publish does.
   // Note: If package has private: true, npm will reject the publish
-  const publishArgs = ["publish"];
+  const publishArgs = mode === "stage" ? ["stage", "publish"] : ["publish"];
   if (distPkg.name.startsWith("@")) {
     publishArgs.push("--access", "public");
   }
-  
+
   // Add any extra arguments passed from CLI
   publishArgs.push(...extraArgs);
 
@@ -1836,10 +1847,82 @@ export async function publish(cwd: string, save: boolean = true, extraArgs: stri
     proc.on("close", resolve);
   });
 
-  if (exitCode === 0) {
-    const distPkg = JSON.parse(await FS.readFile(distPkgPath, "utf-8")) as PackageJSON;
-    console.info(`\nPublished ${distPkg.name}@${distPkg.version}!`);
-  } else {
-    throw new Error("npm publish failed");
+  if (exitCode !== 0) {
+    throw new Error(`npm ${publishArgs[0] === "stage" ? "stage publish" : "publish"} failed`);
   }
+  const finalPkg = JSON.parse(await FS.readFile(distPkgPath, "utf-8")) as PackageJSON;
+  if (mode === "stage") {
+    // Staged is not published: say so, and say what makes it live.
+    console.info(`\nStaged ${finalPkg.name}@${finalPkg.version} (not installable until approved).`);
+    console.info(`Review with 'npm stage list', then 'npm stage approve <stage-id>' (prompts for 2FA).`);
+  } else {
+    console.info(`\nPublished ${finalPkg.name}@${finalPkg.version}!`);
+  }
+}
+
+export async function publish(cwd: string, save: boolean = true, extraArgs: string[] = []) {
+  return releaseToNpm(cwd, save, extraArgs, "publish");
+}
+
+/** Minimum npm for `npm stage` (staged publishing shipped in 11.15.0). */
+export function npmSupportsStaging(version: string): boolean {
+  const parts = version.trim().split(".").map((n) => parseInt(n, 10));
+  if (parts.length < 3 || parts.some(Number.isNaN)) return false;
+  const [major, minor] = parts;
+  return major > 11 || (major === 11 && minor >= 15);
+}
+
+/** Run `npm <args>` capturing output; resolves {code, output}. */
+function npmCapture(args: string[], cwd: string): Promise<{ code: number; output: string }> {
+  return new Promise((resolve) => {
+    const proc = spawn("npm", args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    proc.stdout?.on("data", (d) => { output += d.toString(); });
+    proc.stderr?.on("data", (d) => { output += d.toString(); });
+    proc.on("close", (code) => resolve({ code: code ?? 1, output }));
+    proc.on("error", (err) => resolve({ code: 1, output: String(err) }));
+  });
+}
+
+export async function stage(cwd: string, save: boolean = true, extraArgs: string[] = []) {
+  // Preflights run BEFORE the build - both produce clearer errors than the
+  // npm failures they preempt, and neither needs a dist to answer.
+
+  // 1. npm >= 11.15.0, checked against the same `npm` we will spawn.
+  const versionResult = await npmCapture(["--version"], cwd);
+  const npmVersion = versionResult.output.trim();
+  if (versionResult.code !== 0 || !npmSupportsStaging(npmVersion)) {
+    throw new Error(
+      `staged publishing needs npm 11.15.0 or later (found ${npmVersion || "no npm"}).\n` +
+      `Upgrade with: npm install -g npm@latest`
+    );
+  }
+
+  // 2. Staging only works for a package that already exists on the registry -
+  // a FIRST release must be a normal publish. Honor a forwarded --registry so
+  // this check and the stage can't disagree about where "exists" is decided.
+  const rootPkg = JSON.parse(await FS.readFile(Path.join(cwd, "package.json"), "utf-8")) as PackageJSON;
+  const registryFlag: string[] = [];
+  const registryIndex = extraArgs.findIndex((a) => a === "--registry" || a.startsWith("--registry="));
+  if (registryIndex !== -1) {
+    registryFlag.push(extraArgs[registryIndex]);
+    if (extraArgs[registryIndex] === "--registry" && extraArgs[registryIndex + 1]) {
+      registryFlag.push(extraArgs[registryIndex + 1]);
+    }
+  }
+  const viewResult = await npmCapture(["view", rootPkg.name, "version", ...registryFlag], cwd);
+  if (viewResult.code !== 0) {
+    if (/E404|404 Not Found/i.test(viewResult.output)) {
+      throw new Error(
+        `${rootPkg.name} has never been published, and staging requires an existing package.\n` +
+        `Make the first release a normal 'libuild publish'; stage from the second release on.`
+      );
+    }
+    // Network or auth trouble: warn and let `npm stage publish` be the one to
+    // fail (or succeed) - the preflight must not turn an offline registry
+    // check into a false refusal.
+    console.warn(`Warning: could not verify ${rootPkg.name} exists on the registry; continuing.`);
+  }
+
+  return releaseToNpm(cwd, save, extraArgs, "stage");
 }
