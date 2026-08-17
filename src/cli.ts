@@ -2,7 +2,7 @@
 import { Command } from "commander";
 import * as FS from "fs/promises";
 import * as Path from "path";
-import { build, publish } from "./libuild.ts";
+import { build, publish, stage } from "./libuild.ts";
 import { resolveTestTargets, runTests, type Platform } from "./_test-runner.ts";
 
 // =============================================================================
@@ -33,10 +33,10 @@ async function isDirectory(path: string): Promise<boolean> {
   }
 }
 
-async function runPublish(argv: string[]): Promise<void> {
-  // Remove the "publish" command token (first occurrence only)
+async function runPublish(argv: string[], command: "publish" | "stage" = "publish"): Promise<void> {
+  // Remove the command token (first occurrence only)
   const args = [...argv];
-  args.splice(args.indexOf("publish"), 1);
+  args.splice(args.indexOf(command), 1);
 
   let save = true;
   let directory: string | undefined;
@@ -81,7 +81,7 @@ async function runPublish(argv: string[]): Promise<void> {
 
   const cwd = Path.resolve(directory ?? ".");
   try {
-    await publish(cwd, save, extraArgs);
+    await (command === "stage" ? stage : publish)(cwd, save, extraArgs);
   } catch (error: any) {
     console.error("Error:", error?.message ?? error);
     process.exit(1);
@@ -129,6 +129,22 @@ program
     // Publish uses whitelist-validated manual parsing (see runPublish) so
     // unknown/unsafe npm flags are filtered with warnings instead of erroring.
     await runPublish(process.argv.slice(2));
+  });
+
+program
+  .command("stage")
+  .description("Build and stage on npm (uploaded but not installable until 'npm stage approve')")
+  .argument("[directory]", "Directory to build and stage", ".")
+  .option("--no-save", "Skip package.json updates")
+  .option("--dry-run", "Perform a dry run")
+  .option("--tag <tag>", "Stage with a specific dist-tag")
+  .option("--registry <url>", "Use a specific registry")
+  .option("--provenance", "Generate provenance statement")
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .action(async () => {
+    // Same whitelist-validated manual parsing as publish (see dispatch below).
+    await runPublish(process.argv.slice(2), "stage");
   });
 
 program
@@ -189,15 +205,16 @@ program
     process.exit(success ? 0 : 1);
   });
 
-// Dispatch: the publish command bypasses commander's strict parsing so that
+// Dispatch: the publish and stage commands bypass commander's strict parsing so that
 // unknown/unsafe npm flags, stray arguments, and libuild flags in any position
 // (e.g. `libuild --save publish ...`) are handled by the whitelist validation
 // in runPublish. Everything else (build, test, help, version) uses commander.
+// stage shares publish's parser: same whitelist, different npm subcommand.
 const cliArgs = process.argv.slice(2);
 const commandToken = cliArgs.find((arg) => !arg.startsWith("-"));
 
-if (commandToken === "publish" && !cliArgs.includes("--help") && !cliArgs.includes("-h")) {
-  runPublish(cliArgs).catch((error: any) => {
+if ((commandToken === "publish" || commandToken === "stage") && !cliArgs.includes("--help") && !cliArgs.includes("-h")) {
+  runPublish(cliArgs, commandToken).catch((error: any) => {
     console.error("Error:", error?.message ?? error);
     process.exit(1);
   });
