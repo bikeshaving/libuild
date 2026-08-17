@@ -430,6 +430,64 @@ function resolveLibuildDir(cwd: string): string | null {
   }
 }
 
+// Loader by extension, for plugins that read source files themselves.
+function loaderFor(path: string): ESBuild.Loader {
+  const ext = Path.extname(path).toLowerCase();
+  return ext === ".ts" || ext === ".mts" ? "ts"
+    : ext === ".tsx" ? "tsx"
+    : ext === ".jsx" ? "jsx"
+    : "js";
+}
+
+/**
+ * Keep `import.meta.url` / `.dirname` / `.filename` pointing at each SOURCE
+ * file instead of the bundle. Bundling collapses every module's location to
+ * `.libuild-test/bundle-*.js`, which silently breaks the
+ * fixtures-next-to-the-test pattern (`new URL("./fixtures/x.json",
+ * import.meta.url)`, `import.meta.dirname`) with failures that read as bugs
+ * in the code under test - fold lost 3 of 20 files to this and the symptoms
+ * looked like formatter defects.
+ *
+ * esbuild has no per-file define, so the standard sidestep: `define` maps the
+ * three member expressions to bare identifiers, and this plugin prepends a
+ * one-line `var` declaration binding them to the source file's real location
+ * in every in-bundle file that mentions `import.meta`. One line, appended
+ * BEFORE the original first line without a newline, so line numbers in stack
+ * traces don't shift. esbuild renames the vars per module, so each file keeps
+ * its own values. Only `import.meta` files pay; everything else loads
+ * natively. (`import.meta` used bare, or other properties, still see the
+ * bundle - only the three path-shaped members are redirected.)
+ */
+const IMPORT_META_DEFINE = {
+  "import.meta.url": "__libuild_import_meta_url",
+  "import.meta.dirname": "__libuild_import_meta_dirname",
+  "import.meta.filename": "__libuild_import_meta_filename",
+};
+
+function makeImportMetaPlugin(): ESBuild.Plugin {
+  return {
+    name: "libuild-import-meta",
+    setup(build) {
+      build.onLoad({ filter: /\.(ts|tsx|mts|js|jsx|mjs)$/ }, async (args) => {
+        // node_modules is external on node/bun, so this only ever sees the
+        // consumer's own files plus the generated entry.
+        const contents = await FS.readFile(args.path, "utf-8");
+        if (!contents.includes("import.meta")) return undefined; // load natively
+        const url = new URL(`file://${args.path.replace(/\\/g, "/")}`).href;
+        const prefix =
+          `var __libuild_import_meta_url = ${JSON.stringify(url)}, ` +
+          `__libuild_import_meta_dirname = ${JSON.stringify(Path.dirname(args.path))}, ` +
+          `__libuild_import_meta_filename = ${JSON.stringify(args.path)}; `;
+        return {
+          contents: prefix + contents,
+          loader: loaderFor(args.path),
+          resolveDir: Path.dirname(args.path),
+        };
+      });
+    },
+  };
+}
+
 /**
  * Bundle tests for a specific platform.
  * Exported for tests that assert externalization behavior.
@@ -495,12 +553,16 @@ const require = createRequire(import.meta.url);
     // the browser branch never does.
     ...(isBrowser
       ? { plugins: [makeBrowserStubPlugin(resolveLibuildDir(cwd))] }
-      : { packages: "external" as const }),
+      : { packages: "external" as const, plugins: [makeImportMetaPlugin()] }),
     // Inject require shim for node/bun to handle CJS deps like expect/chalk
     ...(isBrowser ? {} : { banner: { js: requireShim } }),
-    // Define for dead code elimination
+    // Define for dead code elimination; on node/bun also redirect the three
+    // path-shaped import.meta members to per-file bindings (see
+    // makeImportMetaPlugin). Browser bundles keep the bundle-relative
+    // meaning - there is no source filesystem in a page.
     define: {
       "process.env.NODE_ENV": '"test"',
+      ...(isBrowser ? {} : IMPORT_META_DEFINE),
     },
     logLevel: "warning",
   };
@@ -525,7 +587,7 @@ const TAP_DIRECTIVE = /(?<!\\)#\s*(TODO|SKIP)\b/i;
  * the counts; fall back to a directive-aware per-test tally if they're absent.
  * Exported for unit testing.
  */
-export function parseTapOutput(output: string): { passed: number; failed: number; errors: Array<{ name: string; error: string }>; skipped: number; todo: number; completed: boolean } {
+export function parseTapOutput(output: string, syntheticName?: string): { passed: number; failed: number; errors: Array<{ name: string; error: string }>; skipped: number; todo: number; completed: boolean } {
   output = stripAnsi(output); // forced color must not corrupt the TAP tokens
   const errors: Array<{ name: string; error: string }> = [];
 
@@ -549,9 +611,22 @@ export function parseTapOutput(output: string): { passed: number; failed: number
   // as it used to - `failureType` and `error` come after it in the block.
   let current: { name: string; notOk: boolean; type?: string; failureType?: string; error?: string } | null = null;
 
+  // When a file registers NO tests, node fabricates one passing test entry
+  // named with the file's path and reports "# pass 1" - so a shared helper
+  // picked up by the test glob shows as "1 passed" (fold's tests/helpers.js).
+  // Files with real tests never get the synthetic entry (or every file would
+  // inflate its count by one). The caller passes the bundle's basename;
+  // a passing test whose name ends with it is the fabrication, not a test.
+  let syntheticSeen = 0;
+
   const finalize = () => {
     if (!current) return;
     if (current.type === "test") {
+      if (syntheticName && !current.notOk && current.name.endsWith(syntheticName)) {
+        syntheticSeen++;
+        current = null;
+        return;
+      }
       const directive = current.name.match(TAP_DIRECTIVE);
       const kind = directive ? directive[1].toUpperCase() : null;
       if (kind === "SKIP") {
@@ -613,7 +688,9 @@ export function parseTapOutput(output: string): { passed: number; failed: number
     || (tallyPassed + tallyFailed + tallySkipped + tallyTodo + suiteFailed) > 0;
 
   return {
-    passed: summary("pass") ?? tallyPassed,
+    // The synthetic file-entry (if seen) is inside node's own "# pass" count
+    // too, so it is subtracted from the summary path as well as the tally.
+    passed: Math.max(0, (summary("pass") ?? tallyPassed + syntheticSeen) - syntheticSeen),
     failed: (summary("fail") ?? tallyFailed) + suiteFailed,
     skipped: summary("skipped") ?? tallySkipped,
     todo: summary("todo") ?? tallyTodo,
@@ -746,7 +823,7 @@ async function runNodeTests(bundlePath: string, timeout: number): Promise<ShardR
     };
   }
 
-  const { passed, failed, errors, skipped, todo, completed } = parseTapOutput(stdout);
+  const { passed, failed, errors, skipped, todo, completed } = parseTapOutput(stdout, Path.basename(bundlePath));
   const reason = shardFailure({
     completed, code, signal, timedOut, failed, timeout,
     finished: passed + failed + skipped + todo,
