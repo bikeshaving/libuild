@@ -752,6 +752,69 @@ test("registration counting covers only/skip/todo/each (denominator accuracy)", 
   }
 });
 
+test("import.meta.url/dirname/filename point at the source file, not the bundle", async () => {
+  const testDir = await createTempDir("import-meta");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "tests", "fixtures"), {recursive: true});
+  await FS.writeFile(Path.join(projDir, "package.json"),
+    JSON.stringify({name: "p", version: "1.0.0", type: "module"}));
+  await FS.writeFile(Path.join(projDir, "tests", "fixtures", "data.json"), '{"answer": 42}\n');
+  // The mainstream pattern bundling used to break silently: fixtures next to
+  // the test, addressed via import.meta. Failures surfaced deep inside the
+  // code under test ("0 files parsed") and read as its bugs, not libuild's.
+  await FS.writeFile(Path.join(projDir, "tests", "paths.test.js"),
+    'import {test} from "node:test";\n' +
+    'import assert from "node:assert/strict";\n' +
+    'import {readFileSync} from "node:fs";\n' +
+    'test("dirname is the source dir", () => {\n' +
+    '  assert.ok(!import.meta.dirname.includes(".libuild-test"), import.meta.dirname);\n' +
+    '  assert.ok(import.meta.filename.endsWith("paths.test.js"), import.meta.filename);\n' +
+    '});\n' +
+    'test("fixture loads relative to the test file", () => {\n' +
+    '  const data = JSON.parse(readFileSync(new URL("./fixtures/data.json", import.meta.url), "utf-8"));\n' +
+    '  assert.equal(data.answer, 42);\n' +
+    '});\n');
+
+  expect(await runTests({cwd: projDir, platforms: ["node"], timeout: 30000})).toBe(true);
+
+  await removeTempDir(testDir);
+});
+
+test("a helper file that registers no tests counts as 0 passed, not 1", () => {
+  // node fabricates one passing test named with the file path when a file
+  // registers nothing, and includes it in "# pass" - so shared helpers under
+  // the test glob showed as "1 passed". The synthetic entry is recognized by
+  // the bundle basename and excluded from both the tally and the summary.
+  const tap = `TAP version 13
+# Subtest: /tmp/x/.libuild-test/bundle-node-3.js
+ok 1 - /tmp/x/.libuild-test/bundle-node-3.js
+  ---
+  duration_ms: 20
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 21
+`;
+  const r = parseTapOutput(tap, "bundle-node-3.js");
+  expect(r.passed).toBe(0);
+  expect(r.failed).toBe(0);
+  expect(r.completed).toBe(true); // an empty file is still a completed run
+
+  // Without the synthetic name (bun path, or older transcripts), behavior is
+  // unchanged; and a REAL test file's counts are untouched because node emits
+  // no synthetic entry when actual tests exist.
+  expect(parseTapOutput(tap).passed).toBe(1);
+  expect(parseTapOutput(NODE_TAP, "bundle-node-0.js").passed).toBe(1);
+  expect(parseTapOutput(NODE_TAP, "bundle-node-0.js").failed).toBe(2);
+});
+
 test("a describe-callback throw fails the node run end-to-end (#23)", async () => {
   const testDir = await createTempDir("suite-throw-e2e");
   const projDir = Path.join(testDir, "proj");

@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.20] - 2026-08-17
+
+### Fixed
+- **`import.meta.url` / `.dirname` / `.filename` point at the source test file, not the bundle** (reported by the fold migration). Bundling collapsed every module's location to `.libuild-test/bundle-*.js`, silently breaking the fixtures-next-to-the-test pattern (`new URL("./fixtures/x.json", import.meta.url)`) with failures that read as bugs in the code under test. On node/bun bundles, esbuild's `define` now maps the three path-shaped members to per-file bindings injected (one line, no line-number shift) into each file that mentions `import.meta`. Browser bundles are unchanged - a page has no source filesystem. (`import.meta` used bare, or other properties, still see the bundle.)
+- **A file that registers no tests counts as `0 passed`, not `1`** (fold's `tests/helpers.js`). node fabricates one passing test named with the file's path when a file registers nothing, and includes it in `# pass`; the synthetic entry is now recognized and excluded, so shared helpers swept up by the test glob report honestly.
+
+### Changed
+- **`typescript` peer range widened to `^5.0.0 || ^6.0.0`** - installs alongside TypeScript 6 no longer ERESOLVE.
+
 ## [0.2.19] - 2026-08-12
 
 ### Fixed

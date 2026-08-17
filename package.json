@@ -1,6 +1,6 @@
 {
   "name": "@b9g/libuild",
-  "version": "0.2.19",
+  "version": "0.2.20",
   "description": "Zero-config library builds",
   "main": "./dist/libuild.cjs",
   "bin": {
@@ -21,7 +21,7 @@
     "pretty-format": "^30.4.1"
   },
   "peerDependencies": {
-    "typescript": "^5.0.0",
+    "typescript": "^5.0.0 || ^6.0.0",
     "playwright": "^1.40.0"
   },
   "peerDependenciesMeta": {
