@@ -1,7 +1,7 @@
 import {test, expect, beforeEach, afterEach} from "bun:test";
 import * as FS from "fs/promises";
 import * as Path from "path";
-import {build} from "../src/libuild.ts";
+import {build} from "../src/internal/libuild.ts";
 
 let testDir: string;
 
@@ -54,7 +54,7 @@ export {};
   const originalContent = await FS.readFile(Path.join(testDir, "src", "global.d.ts"), "utf-8");
   const copiedContent = await FS.readFile(distDtsPath, "utf-8");
   expect(copiedContent).toBe(originalContent);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("copies multiple ambient .d.ts files", async () => {
   // Create package.json
@@ -94,7 +94,7 @@ test("copies multiple ambient .d.ts files", async () => {
 
   expect(assetsExists).toBe(true);
   expect(envExists).toBe(true);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("works correctly when no ambient .d.ts files exist", async () => {
   // Create package.json
@@ -122,7 +122,7 @@ test("works correctly when no ambient .d.ts files exist", async () => {
   const distIndexDts = Path.join(testDir, "dist", "index.d.ts");
   const exists = await FS.stat(distIndexDts).then(() => true, () => false);
   expect(exists).toBe(true);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("works with bin-only package (empty src directory)", async () => {
   // Create package.json - bin-only packages need proper bin path
@@ -154,7 +154,7 @@ test("works with bin-only package (empty src directory)", async () => {
   const distBinCli = Path.join(testDir, "dist", "bin", "cli.js");
   const exists = await FS.stat(distBinCli).then(() => true, () => false);
   expect(exists).toBe(true);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("preserves ambient .d.ts with complex module declarations", async () => {
   // Create package.json
@@ -217,7 +217,7 @@ declare global {
   const distDtsPath = Path.join(testDir, "dist", "types.d.ts");
   const copiedContent = await FS.readFile(distDtsPath, "utf-8");
   expect(copiedContent).toBe(complexAmbient);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("adds ambient .d.ts files to exports map with --save", async () => {
   // Create package.json
@@ -265,4 +265,4 @@ test("adds ambient .d.ts files to exports map with --save", async () => {
 
   // Build again to verify validation passes with the new exports
   await build(testDir, true);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load

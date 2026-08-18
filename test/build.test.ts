@@ -1,7 +1,7 @@
 import {test, expect} from "bun:test";
 import * as FS from "fs/promises";
 import * as Path from "path";
-import {build} from "../src/libuild.ts";
+import {build} from "../src/internal/libuild.ts";
 import {createTempDir, removeTempDir, copyFixture, readJSON, fileExists} from "./test-utils.ts";
 
 // =============================================================================
@@ -48,7 +48,7 @@ test("simple library build", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("multi-entry library build", async () => {
   const testDir = await createTempDir("multi-entry");
@@ -87,7 +87,7 @@ test("multi-entry library build", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("root package.json is updated correctly", async () => {
   const testDir = await createTempDir("root-pkg-test");
@@ -114,7 +114,7 @@ test("root package.json is updated correctly", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 // =============================================================================
 // UMD BUILD FUNCTIONALITY
@@ -147,7 +147,7 @@ test("UMD build", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("UMD build works with ESM-only mode", async () => {
   const testDir = await createTempDir("umd-esm-only");
@@ -186,7 +186,7 @@ test("UMD build works with ESM-only mode", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("UMD build works with dual mode", async () => {
   const testDir = await createTempDir("umd-dual");
@@ -221,7 +221,7 @@ test("UMD build works with dual mode", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 // =============================================================================
 // CONDITIONAL BUILDS (ESM-ONLY VS DUAL FORMAT)
@@ -264,7 +264,7 @@ test("ESM-only build when no main field", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("Dual build when main field exists", async () => {
   const testDir = await createTempDir("dual-build");
@@ -303,7 +303,7 @@ test("Dual build when main field exists", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 // =============================================================================
 // EXPORT MERGING AND CUSTOM EXPORTS
@@ -362,7 +362,7 @@ test("Export merging preserves user-defined exports", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("ESM-only export merging (no main field)", async () => {
   const testDir = await createTempDir("esm-export-merging");
@@ -422,7 +422,7 @@ test("ESM-only export merging (no main field)", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("Custom main entry via exports field", async () => {
   const testDir = await createTempDir("custom-main-export");
@@ -475,7 +475,7 @@ test("Custom main entry via exports field", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("custom main entry detection", async () => {
   const testDir = await createTempDir("custom-main-test");
@@ -510,7 +510,7 @@ test("custom main entry detection", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 // =============================================================================
 // EXPORT VALIDATION
@@ -593,7 +593,7 @@ test("validates that exports only reference valid entrypoints", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 // =============================================================================
 // MAIN ENTRY DETECTION TESTS
@@ -626,7 +626,7 @@ test("main entry detection: package.json main field", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("main entry detection: single entry becomes main", async () => {
   const testDir = await createTempDir("single-entry-test");
@@ -652,7 +652,7 @@ test("main entry detection: single entry becomes main", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("main entry detection: use package name as entry", async () => {
   const testDir = await createTempDir("pkg-name-test");
@@ -679,7 +679,7 @@ test("main entry detection: use package name as entry", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("main entry detection: scoped package name", async () => {
   const testDir = await createTempDir("scoped-pkg-test");
@@ -705,7 +705,7 @@ test("main entry detection: scoped package name", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("main entry detection: invalid package name error", async () => {
   const testDir = await createTempDir("invalid-name-test");
@@ -728,7 +728,7 @@ test("main entry detection: invalid package name error", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("main entry detection: default to first entry alphabetically", async () => {
   const testDir = await createTempDir("default-first-test");
@@ -757,7 +757,7 @@ test("main entry detection: default to first entry alphabetically", async () => 
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("main entry detection: module field", async () => {
   const testDir = await createTempDir("module-field-test");
@@ -785,7 +785,7 @@ test("main entry detection: module field", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 // =============================================================================
 // ERROR HANDLING TESTS
@@ -805,7 +805,7 @@ test("build error: no src directory", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("build error: no entry points found", async () => {
   const testDir = await createTempDir("no-entries-test");
@@ -823,7 +823,7 @@ test("build error: no entry points found", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 // =============================================================================
 // SHEBANG PRESERVATION TESTS
 // =============================================================================
@@ -876,7 +876,7 @@ export function add(a: number, b: number): number {
   expect(runtimeLine).toContain("npm_config_user_agent");
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("CLI shebang with complex file structure", async () => {
   const testDir = await createTempDir("complex-cli");
@@ -940,7 +940,7 @@ export function process() {
   expect(processContent).toContain('function process');
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 // =============================================================================
 // TEST FILE IGNORING TESTS
@@ -993,7 +993,7 @@ test("ignores common test file patterns", async () => {
   expect(distPkg.exports["./api.spec"]).toBeUndefined();
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("ignores test directories", async () => {
   const testDir = await createTempDir("test-dir-ignore");
@@ -1040,7 +1040,7 @@ test("ignores test directories", async () => {
   expect(Object.keys(distPkg.exports)).toHaveLength(6); // ".", "./index", "./api", "./index.js", "./api.js", "./package.json"
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("test ignoring works with mixed valid and test files", async () => {
   const testDir = await createTempDir("mixed-files");
@@ -1100,7 +1100,7 @@ test("test ignoring works with mixed valid and test files", async () => {
   expect(distPkg.exports["./component.spec"]).toBeUndefined();
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test('build refuses "type": "commonjs" packages (ESM-only policy, #21)', async () => {
   const testDir = await createTempDir("cjs-build-refusal");
@@ -1128,4 +1128,4 @@ test('build refuses "type": "commonjs" packages (ESM-only policy, #21)', async (
   expect(await fileExists(Path.join(projDir, "dist"))).toBe(true);
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load

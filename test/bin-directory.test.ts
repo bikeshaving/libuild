@@ -1,7 +1,7 @@
 import {test, expect} from "bun:test";
 import * as FS from "fs/promises";
 import * as Path from "path";
-import {build} from "../src/libuild.ts";
+import {build} from "../src/internal/libuild.ts";
 import {createTempDir, removeTempDir, readJSON, fileExists} from "./test-utils.ts";
 
 // =============================================================================
@@ -98,7 +98,7 @@ test("bin directory detection and build", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("bin directory --save updates package.json correctly", async () => {
   const testDir = await createTempDir("bin-save");
@@ -147,7 +147,7 @@ test("bin directory --save updates package.json correctly", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("mixed src and bin entries with exports", async () => {
   const testDir = await createTempDir("mixed-entries");
@@ -247,7 +247,7 @@ test("mixed src and bin entries with exports", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("bin entry externalizes entry point imports but bundles non-entries", async () => {
   const testDir = await createTempDir("bin-externalization");
@@ -308,7 +308,7 @@ console.log(helper());`
   expect(binContent).toContain('function helper'); // Should BE bundled
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("src file referenced in package.json bin gets dual runtime shebang", async () => {
   const testDir = await createTempDir("src-bin-shebang");
@@ -358,7 +358,7 @@ test("src file referenced in package.json bin gets dual runtime shebang", async 
   expect((cliStat.mode & 0o111) !== 0).toBe(true);
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("bin-only package without src files", async () => {
   const testDir = await createTempDir("bin-only");
@@ -433,7 +433,7 @@ test("bin-only package without src files", async () => {
   expect(distPkg.exports["."]).toBeUndefined();
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 // TODO: Support bin-only projects (without src directory)
 // Currently libuild requires src/ directory to exist
@@ -478,7 +478,7 @@ test("dual runtime shell script injection for bin entries", async () => {
   expect(lines[1]).toContain("command -v node");
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("dual runtime respects engines.bun field", async () => {
   const testDir = await createTempDir("engines-bun");
@@ -514,7 +514,7 @@ test("dual runtime respects engines.bun field", async () => {
   expect(toolContent).toContain("|| true");
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("shebang replacement for bin entries", async () => {
   const testDir = await createTempDir("shebang-replace");
@@ -561,5 +561,5 @@ test("shebang replacement for bin entries", async () => {
   }
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 

@@ -1,7 +1,7 @@
 import {test, expect} from "bun:test";
 import * as FS from "fs/promises";
 import * as Path from "path";
-import {build} from "../src/libuild.ts";
+import {build} from "../src/internal/libuild.ts";
 import {createTempDir, removeTempDir, readJSON, fileExists} from "./test-utils.ts";
 
 // =============================================================================
@@ -70,7 +70,7 @@ export const version = "1.0.0";
   expect(mainContent).toContain("import(");
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("dynamic import in bin creates chunk files", async () => {
   const testDir = await createTempDir("bin-splitting");
@@ -151,7 +151,7 @@ main();
   expect(cliContent).toContain("import(");
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("runtime execution with code splitting works", async () => {
   const testDir = await createTempDir("splitting-runtime");
@@ -210,7 +210,7 @@ test("runtime execution with code splitting works", async () => {
   expect(result).toBe(5);
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("multiple dynamic imports create multiple chunks", async () => {
   const testDir = await createTempDir("multi-chunks");
@@ -281,4 +281,4 @@ export async function loadFeatureC() {
   expect(chunkFiles.length).toBeGreaterThanOrEqual(3);
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load

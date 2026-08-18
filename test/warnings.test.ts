@@ -1,7 +1,7 @@
 import {test, expect} from "bun:test";
 import * as FS from "fs/promises";
 import * as Path from "path";
-import {build} from "../src/libuild.ts";
+import {build} from "../src/internal/libuild.ts";
 import {createTempDir, removeTempDir, copyFixture, readJSON} from "./test-utils.ts";
 
 test("warns when package.json lacks publish protection", async () => {
@@ -29,7 +29,7 @@ test("warns when package.json lacks publish protection", async () => {
     console.warn = originalWarn;
     await removeTempDir(testDir);
   }
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("warns when dist/ is not in .gitignore", async () => {
   const testDir = await createTempDir("warn-gitignore");
@@ -54,7 +54,7 @@ test("warns when dist/ is not in .gitignore", async () => {
     console.warn = originalWarn;
     await removeTempDir(testDir);
   }
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("no gitignore warning when dist/ is properly ignored", async () => {
   const testDir = await createTempDir("good-gitignore");
@@ -79,7 +79,7 @@ test("no gitignore warning when dist/ is properly ignored", async () => {
     console.warn = originalWarn;
     await removeTempDir(testDir);
   }
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("detects various dist/ gitignore patterns", async () => {
   const testDir = await createTempDir("gitignore-patterns");
@@ -114,4 +114,4 @@ test("detects various dist/ gitignore patterns", async () => {
   }
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load

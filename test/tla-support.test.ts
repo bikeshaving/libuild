@@ -1,7 +1,7 @@
 import {test, expect} from "bun:test";
 import * as FS from "fs/promises";
 import * as Path from "path";
-import {build} from "../src/libuild.ts";
+import {build} from "../src/internal/libuild.ts";
 import {createTempDir, removeTempDir, readJSON, fileExists} from "./test-utils.ts";
 
 // =============================================================================
@@ -58,7 +58,7 @@ export const data = config;
   expect(distPkg.main).toBeUndefined();
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("TLA in some files disables all CJS generation", async () => {
   const testDir = await createTempDir("tla-mixed");
@@ -116,7 +116,7 @@ test("TLA in some files disables all CJS generation", async () => {
   expect(distPkg.exports["./async-config"]?.require).toBeUndefined();
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("TLA with --save doesn't add main field", async () => {
   const testDir = await createTempDir("tla-save");
@@ -153,7 +153,7 @@ test("TLA with --save doesn't add main field", async () => {
   expect(rootPkg.types).toBe("./dist/index.d.ts");
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("Non-TLA project still generates CJS normally", async () => {
   const testDir = await createTempDir("no-tla");
@@ -193,4 +193,4 @@ test("Non-TLA project still generates CJS normally", async () => {
   expect(distPkg.main).toBe("index.cjs");
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load

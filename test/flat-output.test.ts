@@ -1,7 +1,7 @@
 import {test, expect} from "bun:test";
 import * as FS from "fs/promises";
 import * as Path from "path";
-import {build} from "../src/libuild.ts";
+import {build} from "../src/internal/libuild.ts";
 import {createTempDir, removeTempDir, copyFixture, readJSON, fileExists} from "./test-utils.ts";
 
 // =============================================================================
@@ -39,7 +39,7 @@ test("flat layout: modules at root, no src/ directory in output", async () => {
   expect(distPkg.exports["./utils"].import).toBe("./utils.js");
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("flat layout: root modules resolve at runtime (CDN-literal simulation)", async () => {
   const testDir = await createTempDir("flat-runtime");
@@ -55,7 +55,7 @@ test("flat layout: root modules resolve at runtime (CDN-literal simulation)", as
   expect(esm.add(2, 3)).toBe(5);
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("flat layout: internal-module .d.ts and augmentations relocate together (#1 guard)", async () => {
   const testDir = await createTempDir("flat-augmentation");
@@ -83,7 +83,7 @@ test("flat layout: internal-module .d.ts and augmentations relocate together (#1
   expect(tableDts).toContain('declare module "node:events"');
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("flat layout: UMD builds to root, siblings not wrapped", async () => {
   const testDir = await createTempDir("flat-umd");
@@ -104,7 +104,7 @@ test("flat layout: UMD builds to root, siblings not wrapped", async () => {
   expect(index).toContain("export");
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("flat layout: --save root bin points at the flat executable", async () => {
   const testDir = await createTempDir("flat-save-bin");
@@ -121,7 +121,7 @@ test("flat layout: --save root bin points at the flat executable", async () => {
   expect(real.startsWith("#!")).toBe(true);
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("flat layout: npm pack ships root modules, no src/ paths", async () => {
   const testDir = await createTempDir("flat-pack");
@@ -164,7 +164,7 @@ test("flat layout: npm pack ships root modules, no src/ paths", async () => {
   expect(packed.some((p: string) => p.startsWith("src/"))).toBe(false);
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test(".tsx entry points are discovered and built (#6)", async () => {
   const testDir = await createTempDir("tsx-entry");
@@ -210,7 +210,7 @@ test(".tsx entry points are discovered and built (#6)", async () => {
   }
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("UMD bundle works via require() and as a browser global (0.2.2)", async () => {
   const testDir = await createTempDir("umd-modes");
@@ -241,7 +241,7 @@ test("UMD bundle works via require() and as a browser global (0.2.2)", async () 
   expect(fakeRoot.Umdlib.createWidget("w").name).toBe("w");
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
 
 test("relocated subdirectory declarations ship in the tarball (#11)", async () => {
   const testDir = await createTempDir("nested-dts-pack");
@@ -302,4 +302,4 @@ test("relocated subdirectory declarations ship in the tarball (#11)", async () =
   expect(packed).toContain("extra.txt");
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
