@@ -146,7 +146,12 @@ test("flat layout: npm pack ships root modules, no src/ paths", async () => {
   // bare "undefined is not an object" (first seen on the first-ever CI run).
   let packed: string[];
   try {
-    packed = JSON.parse(out)[0].files.map((f: any) => f.path);
+    // npm pack --json emits an ARRAY of results up through 11.19 and an
+    // OBJECT keyed by package name on newer npm (first seen on CI's
+    // npm@latest) - accept both shapes.
+    const parsed = JSON.parse(out);
+    const entry = Array.isArray(parsed) ? parsed[0] : (Object.values(parsed)[0] as any);
+    packed = entry.files.map((f: any) => f.path);
   } catch (error: any) {
     throw new Error(`npm pack --json output unparseable (exit ${proc.exitCode}): ${error?.message}\nstdout:\n${out}\nstderr:\n${errOut}`);
   }
@@ -281,7 +286,12 @@ test("relocated subdirectory declarations ship in the tarball (#11)", async () =
   // bare "undefined is not an object" (first seen on the first-ever CI run).
   let packed: string[];
   try {
-    packed = JSON.parse(out)[0].files.map((f: any) => f.path);
+    // npm pack --json emits an ARRAY of results up through 11.19 and an
+    // OBJECT keyed by package name on newer npm (first seen on CI's
+    // npm@latest) - accept both shapes.
+    const parsed = JSON.parse(out);
+    const entry = Array.isArray(parsed) ? parsed[0] : (Object.values(parsed)[0] as any);
+    packed = entry.files.map((f: any) => f.path);
   } catch (error: any) {
     throw new Error(`npm pack --json output unparseable (exit ${proc.exitCode}): ${error?.message}\nstdout:\n${out}\nstderr:\n${errOut}`);
   }
