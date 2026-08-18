@@ -395,9 +395,11 @@ test("private field behavior with --save", async () => {
   // Build with --save
   await build(testDir, true);
 
-  // Check that prepublishOnly guard is added
+  // The publish guard --save installs is private: true - npm's own refusal,
+  // no script, nothing executable (a quoting slip in a hand-rolled script
+  // guard once EXECUTED a release command mid-edit; one word can't).
   const rootPkg = await readJSON(Path.join(testDir, "package.json"));
-  expect(rootPkg.scripts?.prepublishOnly).toContain("exit 1");
+  expect(rootPkg.private).toBe(true);
 
   // Cleanup
   await removeTempDir(testDir);
