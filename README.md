@@ -261,3 +261,23 @@ Builds and publishes to npm:
 ## License
 
 MIT
+
+## Testing: `libuild test`
+
+Runs your suite across runtimes with one command and one set of test files:
+
+```sh
+libuild test                        # bun, current directory
+libuild test tests -p bun -p node   # both runtimes
+libuild test -p chromium            # real browser via Playwright
+libuild test path/to/one.test.ts    # single-file loop
+```
+
+Import the portable API from `@b9g/libuild/test` (`describe`/`test`/`it`/`expect`, hooks, `test.concurrent`, `.each`, and a cross-runtime `toMatchSnapshot`). Files run in per-file isolated processes with dependencies resolved from your `node_modules`; `import.meta.url`/`.dirname`/`.filename` and `__dirname`/`__filename` point at your source files, not the bundles.
+
+Flags: `--timeout <ms>` is the per-file budget, and on bun it is also applied as the per-test timeout (bun defaults to 5s per test; without this, slow tests die before the file budget matters). `--concurrency <n>` caps how many files run at once — lower it for suites whose tests spawn their own processes. `--filter <glob>` selects files; `-u` updates snapshots; `--debug` keeps the browser open and preserves the bundle directory.
+
+Runtime notes:
+
+- **bun cannot nest `test()` inside `test()`** (oven-sh/bun#5090). Notably, ESLint's `RuleTester` registers nested subtests, so rule suites hit `NotImplementedError` on bun — either run those with `-p node`, or flatten RuleTester's hooks (`RuleTester.describe = (_n, fn) => fn()` inside one enclosing test) to stay portable.
+- libuild is ESM-only: packages declaring `"type": "commonjs"` are refused (packages with no `type` field are fine). CJS is produced only as the build's `main`-field fallback.
