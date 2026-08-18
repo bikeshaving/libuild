@@ -1070,14 +1070,13 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   }
 
   // Check for unsafe publishing conditions
-  // `private: true` is the canonical guard; a prepublishOnly script that
-  // exits nonzero is honored as a legacy equivalent.
+  // Accept either private: true OR prepublishOnly with "exit 1"
   const hasPublishGuard = pkg.private || pkg.scripts?.prepublishOnly?.includes("exit 1");
 
   // Only warn if we're not about to fix it with --save
   if (!hasPublishGuard && !save) {
     console.warn("⚠️  WARNING: Root package.json lacks publish protection - this could lead to accidental publishing");
-    console.warn("   Run 'libuild build --save' to set it, or add '\"private\": true' to package.json yourself");
+    console.warn("   Run 'libuild build --save' to add publish protection, or manually add a prepublishOnly script");
   }
 
   // Check if dist directory is gitignored
@@ -1623,12 +1622,11 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     console.info("  Updating root package.json...");
     const rootPkg = {...pkg};
 
-    // Guard against accidental `npm publish` at the root (the root tarball
-    // would carry docs and no code). `private: true` is the whole mechanism:
-    // npm itself refuses to publish private packages - no script, no shell
-    // quoting, nothing executable. (A pre-existing prepublishOnly script is
-    // still honored by the detection for older manifests.)
-    rootPkg.private = true;
+    // Add prepublishOnly guard to prevent accidental publishing from root
+    if (!rootPkg.scripts) {
+      rootPkg.scripts = {};
+    }
+    rootPkg.scripts.prepublishOnly = "echo 'ERROR: Cannot publish from root directory. Use libuild publish instead.' && exit 1";
 
     // Update main/module/types to point to dist (flat layout)
     if (options.formats.cjs) {
