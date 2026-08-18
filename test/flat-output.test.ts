@@ -1,6 +1,7 @@
-import {test, expect} from "bun:test";
+import {test, expect} from "../src/test.ts";
 import * as FS from "fs/promises";
 import * as Path from "path";
+import {spawn} from "child_process";
 import {build} from "../src/internal/libuild.ts";
 import {createTempDir, removeTempDir, copyFixture, readJSON, fileExists} from "./test-utils.ts";
 
@@ -137,10 +138,12 @@ test("flat layout: npm pack ships root modules, no src/ paths", async () => {
   delete distPkg.private;
   await FS.writeFile(Path.join(distDir, "package.json"), JSON.stringify(distPkg, null, 2));
 
-  const proc = Bun.spawn(["npm", "pack", "--dry-run", "--json"], {cwd: distDir, stdout: "pipe", stderr: "pipe"});
-  const out = await new Response(proc.stdout).text();
-  const errOut = await new Response(proc.stderr).text();
-  await proc.exited;
+  const proc = spawn("npm", ["pack", "--dry-run", "--json"], {cwd: distDir, stdio: ["ignore", "pipe", "pipe"]});
+  let out = "";
+  let errOut = "";
+  proc.stdout?.on("data", (d) => out += d.toString());
+  proc.stderr?.on("data", (d) => errOut += d.toString());
+  await new Promise((resolve) => proc.on("close", resolve));
   // Parse defensively and fail LOUD: an environment problem (auth-poisoned
   // .npmrc, npm output-format change) must show npm's actual output, not a
   // bare "undefined is not an object" (first seen on the first-ever CI run).
@@ -277,10 +280,12 @@ test("relocated subdirectory declarations ship in the tarball (#11)", async () =
   const distPkg = await readJSON(Path.join(distDir, "package.json"));
   expect(distPkg.files).toContain("internal/");
 
-  const proc = Bun.spawn(["npm", "pack", "--dry-run", "--json"], {cwd: distDir, stdout: "pipe", stderr: "pipe"});
-  const out = await new Response(proc.stdout).text();
-  const errOut = await new Response(proc.stderr).text();
-  await proc.exited;
+  const proc = spawn("npm", ["pack", "--dry-run", "--json"], {cwd: distDir, stdio: ["ignore", "pipe", "pipe"]});
+  let out = "";
+  let errOut = "";
+  proc.stdout?.on("data", (d) => out += d.toString());
+  proc.stderr?.on("data", (d) => errOut += d.toString());
+  await new Promise((resolve) => proc.on("close", resolve));
   // Parse defensively and fail LOUD: an environment problem (auth-poisoned
   // .npmrc, npm output-format change) must show npm's actual output, not a
   // bare "undefined is not an object" (first seen on the first-ever CI run).

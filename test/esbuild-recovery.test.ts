@@ -1,4 +1,4 @@
-import {describe, expect, test} from "bun:test";
+import {describe, expect, test} from "../src/test.ts";
 import * as FS from "fs/promises";
 import * as Path from "path";
 import {execSync} from "child_process";

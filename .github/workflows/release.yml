@@ -50,7 +50,10 @@ jobs:
       # at ./dist, which is gitignored - build it or those tests dangle.
       - run: bun run src/cli.ts
 
-      - run: bun test
+      # Self-hosted: libuild's own runner executes the suite on BOTH runtimes,
+      # so "libuild works under node" is a gate, not a claim. (`bun run test`
+      # resolves to the same script consumers of this repo run locally.)
+      - run: bun run test
 
       # A mistyped tag would otherwise publish whatever the manifest says, and
       # the GitHub Release would then claim a version npm never received.

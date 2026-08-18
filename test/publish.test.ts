@@ -1,4 +1,4 @@
-import {test, expect} from "bun:test";
+import {test, expect} from "../src/test.ts";
 import * as FS from "fs/promises";
 import * as Path from "path";
 import {spawn} from "child_process";
@@ -42,7 +42,7 @@ test("publish() error case: no src directory", async () => {
   }));
 
   // Build (which publish calls first) should fail
-  expect(build(testDir, true)).rejects.toThrow("No src/ directory found");
+  await expect(build(testDir, true)).rejects.toThrow("No src/ directory found");
 
   // Cleanup
   await removeTempDir(testDir);
@@ -56,7 +56,7 @@ test("publish() error case: no package.json", async () => {
   await FS.writeFile(Path.join(testDir, "src", "index.ts"), 'export const hello = "world";');
 
   // Build (which publish calls first) should fail
-  expect(build(testDir, true)).rejects.toThrow();
+  await expect(build(testDir, true)).rejects.toThrow();
 
   // Cleanup
   await removeTempDir(testDir);

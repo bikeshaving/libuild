@@ -1,4 +1,4 @@
-import {test, expect} from "bun:test";
+import {test, expect} from "../src/test.ts";
 import * as FS from "fs/promises";
 import * as Path from "path";
 import {build} from "../src/internal/libuild.ts";
@@ -724,7 +724,7 @@ test("main entry detection: invalid package name error", async () => {
   await FS.writeFile(Path.join(testDir, "src", "utils.ts"), 'export const utils = "helper";');
   await FS.writeFile(Path.join(testDir, "src", "other.ts"), 'export const other = "helper";');
 
-  expect(build(testDir, false)).rejects.toThrow("Invalid package name: @/");
+  await expect(build(testDir, false)).rejects.toThrow("Invalid package name: @/");
 
   // Cleanup
   await removeTempDir(testDir);
@@ -819,7 +819,7 @@ test("build error: no entry points found", async () => {
 
   await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
 
-  expect(build(testDir)).rejects.toThrow("No entry points found in src/");
+  await expect(build(testDir)).rejects.toThrow("No entry points found in src/");
 
   // Cleanup
   await removeTempDir(testDir);

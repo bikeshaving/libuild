@@ -155,12 +155,14 @@ program
   .option("--debug", "Keep browser open for debugging")
   .option("--filter <patterns...>", "Glob pattern(s) selecting which test files to run")
   .option("--timeout <ms>", "Per-file test timeout in milliseconds", "60000")
+  .option("--concurrency <n>", "Max test files running at once per platform (default: CPU count - 1)")
   .option("-u, --update-snapshots", "Write/update snapshot files instead of comparing")
   .action(async (targets: string[], options: {
     platform?: string[];
     debug?: boolean;
     filter?: string[];
     timeout?: string;
+    concurrency?: string;
     updateSnapshots?: boolean;
   }) => {
     // A target may be a directory (the root), specific test files, or an
@@ -199,6 +201,7 @@ program
       platforms,
       debug: options.debug || false,
       timeout: parseInt(options.timeout || "60000", 10),
+      concurrency: options.concurrency ? parseInt(options.concurrency, 10) : undefined,
       updateSnapshots: options.updateSnapshots || false,
     });
 
