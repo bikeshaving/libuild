@@ -908,7 +908,15 @@ export function parseBunOutput(output: string): { passed: number; failed: number
  */
 async function runBunTests(bundlePath: string, timeout: number): Promise<ShardRun> {
   const { stdout, stderr, code, signal, timedOut, error } =
-    await spawnShard("bun", ["test", bundlePath], timeout);
+    // Pass the budget through as bun's PER-TEST timeout too: bun defaults to
+    // 5s per test, so without this a legitimately slow test dies inside the
+    // shard long before the per-file budget matters - "--timeout 60000"
+    // silently didn't apply to the failures users actually saw (fold's
+    // corpus tests). A single test can never legitimately exceed its file's
+    // budget, so one number serves both. (node has no default per-test cap,
+    // and its --test-timeout flag postdates our supported floor, so node is
+    // governed by the file budget alone.)
+    await spawnShard("bun", ["test", "--timeout", String(timeout), bundlePath], timeout);
 
   if (error) {
     return {
