@@ -1626,7 +1626,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     if (!rootPkg.scripts) {
       rootPkg.scripts = {};
     }
-    rootPkg.scripts.prepublishOnly = "echo 'ERROR: Cannot publish from root directory. Use libuild publish instead.' && exit 1";
+    rootPkg.scripts.prepublishOnly = "echo 'ERROR: Cannot publish from root directory. Use libuild to publish or stage the package.' && exit 1";
 
     // Update main/module/types to point to dist (flat layout)
     if (options.formats.cjs) {
