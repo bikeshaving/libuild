@@ -1864,8 +1864,47 @@ async function releaseToNpm(
   }
 }
 
+/** owner/repo parsed from a manifest's repository field, or null. Exported
+ * for unit tests. */
+export function repoSlugFrom(pkg: PackageJSON): string | null {
+  const url = typeof (pkg as any).repository === "string"
+    ? (pkg as any).repository
+    : (pkg as any).repository?.url;
+  if (typeof url !== "string") return null;
+  const m = url.match(/github\.com[/:]([^/]+\/[^/.]+)/);
+  return m ? m[1] : null;
+}
+
 export async function publish(cwd: string, save: boolean = true, extraArgs: string[] = []) {
-  return releaseToNpm(cwd, save, extraArgs, "publish");
+  // Detect a FIRST publish (non-blocking - offline just skips the hint): the
+  // first publish is the unique moment the CI-staging bootstrap becomes
+  // possible, because BOTH later steps - `npm trust` and `npm stage publish` -
+  // require the package to already exist on the registry. Nobody discovers
+  // the stage-only grant on their own; say it exactly once, exactly when it
+  // first can work.
+  let firstPublish = false;
+  let pkgName: string | undefined;
+  let slug: string | null = null;
+  try {
+    const rootPkg = JSON.parse(await FS.readFile(Path.join(cwd, "package.json"), "utf-8")) as PackageJSON;
+    pkgName = rootPkg.name;
+    const view = await npmCapture(["view", rootPkg.name, "version"], cwd);
+    firstPublish = view.code !== 0 && /E404|404 Not Found/i.test(view.output);
+    if (firstPublish) slug = repoSlugFrom(rootPkg);
+  } catch {
+    // No hint is fine; never block a publish on hint plumbing.
+  }
+
+  await releaseToNpm(cwd, save, extraArgs, "publish");
+
+  if (firstPublish && pkgName) {
+    const repo = slug ?? "<owner>/<repo>";
+    console.info(`
+First publish! To enable staged releases from CI (uploads that cannot go`);
+    console.info(`live without your 2FA approval), grant a stage-only trusted publisher:`);
+    console.info(`  npm trust github ${pkgName} --repo ${repo} --file release.yml --allow-stage-publish`);
+    console.info(`then run 'libuild stage --provenance' from that workflow.`);
+  }
 }
 
 /** Minimum npm for `npm stage` (staged publishing shipped in 11.15.0). */

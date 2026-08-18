@@ -353,3 +353,11 @@ test("stage is dispatched with the same whitelist parser as publish", async () =
 
   await removeTempDir(testDir);
 }, 60000);  // spawns the full CLI (build + npm) - far beyond bun's 5s default under load
+
+test("repoSlugFrom parses github remotes in their common shapes", async () => {
+  const {repoSlugFrom} = await import("../src/internal/libuild.ts");
+  expect(repoSlugFrom({name: "x", version: "1", repository: {type: "git", url: "git+https://github.com/bikeshaving/libuild.git"}} as any)).toBe("bikeshaving/libuild");
+  expect(repoSlugFrom({name: "x", version: "1", repository: "git@github.com:owner/repo.git"} as any)).toBe("owner/repo");
+  expect(repoSlugFrom({name: "x", version: "1", repository: {url: "https://gitlab.com/o/r"}} as any)).toBeNull();
+  expect(repoSlugFrom({name: "x", version: "1"} as any)).toBeNull();
+});
