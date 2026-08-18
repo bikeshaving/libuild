@@ -258,10 +258,6 @@ Builds and publishes to npm:
 - **TypeScript** (optional, for .d.ts generation)
 - No runtime requirements for library consumers
 
-## License
-
-MIT
-
 ## Testing: `libuild test`
 
 Runs your suite across runtimes with one command and one set of test files:
@@ -281,3 +277,7 @@ Runtime notes:
 
 - **bun cannot nest `test()` inside `test()`** (oven-sh/bun#5090). Notably, ESLint's `RuleTester` registers nested subtests, so rule suites hit `NotImplementedError` on bun — either run those with `-p node`, or flatten RuleTester's hooks (`RuleTester.describe = (_n, fn) => fn()` inside one enclosing test) to stay portable.
 - libuild is ESM-only: packages declaring `"type": "commonjs"` are refused (packages with no `type` field are fine). CJS is produced only as the build's `main`-field fallback.
+
+## License
+
+MIT
