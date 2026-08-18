@@ -37,10 +37,18 @@ const red = (s: string) => paint("31", s);
 const yellow = (s: string) => paint("33", s);
 const dim = (s: string) => paint("2", s);
 
-// Env for spawned runners: inherit, plus FORCE_COLOR when we've chosen color.
-const CHILD_ENV: NodeJS.ProcessEnv | undefined = USE_COLOR
-  ? { ...process.env, FORCE_COLOR: "1" }
-  : undefined;
+// Env for spawned runners: inherit, plus FORCE_COLOR when we've chosen color -
+// minus node:test's context markers. When THIS process runs inside a
+// `node --test` (a consumer invoking libuild test from another harness, or
+// libuild's own self-hosted suite), the spawned `node --test` child would
+// inherit NODE_TEST_CONTEXT, decide it's being called recursively, and exit 0
+// having run NOTHING - "skipping running files", no summary, false-empty runs.
+const CHILD_ENV: NodeJS.ProcessEnv = (() => {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  if (USE_COLOR) env.FORCE_COLOR = "1";
+  return env;
+})();
 
 const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
 const stripAnsi = (s: string): string => s.replace(ANSI_PATTERN, "");
@@ -101,6 +109,13 @@ export interface TestRunnerOptions {
   debug: boolean;
   /** Per-file test timeout in ms (each file runs in its own process) */
   timeout: number;
+  /**
+   * Max test files running at once per platform (default: cpus - 1). The
+   * default suits suites whose tests are compute-light; a suite whose every
+   * test spawns its own processes (builds, servers) multiplies at full
+   * parallelism and starves itself - libuild's own suite needs 4.
+   */
+  concurrency?: number;
   /** Write/overwrite snapshots instead of comparing (toMatchSnapshot) */
   updateSnapshots: boolean;
 }
@@ -462,6 +477,11 @@ const IMPORT_META_DEFINE = {
   "import.meta.url": "__libuild_import_meta_url",
   "import.meta.dirname": "__libuild_import_meta_dirname",
   "import.meta.filename": "__libuild_import_meta_filename",
+  // The CJS globals too: raw bun provides them even in transpiled TS, so
+  // jest-heritage suites are full of them - and an ESM bundle has neither.
+  // Same per-file identity, same rewrite.
+  "__dirname": "__libuild_import_meta_dirname",
+  "__filename": "__libuild_import_meta_filename",
 };
 
 function makeImportMetaPlugin(): ESBuild.Plugin {
@@ -472,7 +492,9 @@ function makeImportMetaPlugin(): ESBuild.Plugin {
         // node_modules is external on node/bun, so this only ever sees the
         // consumer's own files plus the generated entry.
         const contents = await FS.readFile(args.path, "utf-8");
-        if (!contents.includes("import.meta")) return undefined; // load natively
+        if (!contents.includes("import.meta") && !contents.includes("__dirname") && !contents.includes("__filename")) {
+          return undefined; // load natively
+        }
         const url = new URL(`file://${args.path.replace(/\\/g, "/")}`).href;
         const prefix =
           `var __libuild_import_meta_url = ${JSON.stringify(url)}, ` +
@@ -520,9 +542,14 @@ export async function bundleTests(
   await FS.writeFile(entryPath, entryContent);
 
   // For Node/Bun, inject a require shim for CJS interop of external deps.
+  // Namespaced import: a plain \`import { createRequire }\` collides with any
+  // consumer file that imports createRequire itself (found self-hosting our
+  // own suite - its test file imports this very module). \`require\` stays
+  // \`require\`: that name IS the shim's purpose, and esbuild scope-renames
+  // consumer declarations away from bundle top level.
   const requireShim = `
-import { createRequire } from "module";
-const require = createRequire(import.meta.url);
+import * as __libuild_node_module from "module";
+const require = __libuild_node_module.createRequire(import.meta.url);
 `;
 
   const buildOptions: ESBuild.BuildOptions = {
@@ -926,10 +953,11 @@ async function runShardedPlatform(
   cwd: string,
   timeout: number,
   setupFile: string | null,
-  updateSnapshots: boolean
+  updateSnapshots: boolean,
+  maxConcurrency?: number
 ): Promise<TestResult> {
   const runShard = platform === "bun" ? runBunTests : runNodeTests;
-  const concurrency = Math.max(1, Math.min((OS.cpus().length || 2) - 1, files.length));
+  const concurrency = Math.max(1, Math.min(maxConcurrency ?? ((OS.cpus().length || 2) - 1), files.length));
 
   const agg: TestResult = { platform, passed: 0, failed: 0, errors: [], skipped: 0, todo: 0 };
   let next = 0;
@@ -1287,7 +1315,7 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
         // Per-file process isolation is the default: each file runs in its own
         // process (frees native memory between files, runs them in parallel).
         console.log(`\nRunning ${testFiles.length} file(s) on ${platform} (per-file isolation)...`);
-        result = await runShardedPlatform(platform, testFiles, tempDir, opts.cwd, opts.timeout, setupFile, opts.updateSnapshots);
+        result = await runShardedPlatform(platform, testFiles, tempDir, opts.cwd, opts.timeout, setupFile, opts.updateSnapshots, opts.concurrency);
       } else {
         // Browser runs the combined bundle in a Playwright page (its own
         // isolation model - a separate browser process).

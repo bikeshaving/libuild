@@ -1,4 +1,4 @@
-import {test, expect} from "bun:test";
+import {test, expect} from "../src/test.ts";
 import * as FS from "fs/promises";
 import * as Path from "path";
 import {spawn} from "child_process";

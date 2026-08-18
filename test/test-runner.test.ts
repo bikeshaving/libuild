@@ -1,4 +1,4 @@
-import {test, expect} from "bun:test";
+import {test, expect} from "../src/test.ts";
 import * as FS from "fs/promises";
 import * as FSSync from "fs";
 import * as Path from "path";
@@ -555,7 +555,7 @@ test("browser bundle parses and contains no live node/bun imports", async () => 
   // lived in: `@b9g/libuild/test` selecting its backend with top-level await.
   await FS.writeFile(Path.join(projDir, "package.json"), JSON.stringify({name: "p", version: "1.0.0"}));
   await FS.mkdir(Path.join(projDir, "node_modules", "@b9g"), {recursive: true});
-  await FS.symlink(Path.resolve(import.meta.dir, "../dist"), Path.join(projDir, "node_modules", "@b9g", "libuild"));
+  await FS.symlink(Path.resolve(import.meta.dirname, "../dist"), Path.join(projDir, "node_modules", "@b9g", "libuild"));
   await FS.writeFile(Path.join(projDir, "test", "a.test.ts"),
     'import {test, expect} from "@b9g/libuild/test";\ntest("a", () => { expect(1).toBe(1); });\n');
 
@@ -658,8 +658,8 @@ test("browser stubs are scoped: a consumer's own pretty-format import bundles fo
   await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
   await FS.writeFile(Path.join(projDir, "package.json"), JSON.stringify({name: "p", version: "1.0.0"}));
   await FS.mkdir(Path.join(projDir, "node_modules", "@b9g"), {recursive: true});
-  await FS.symlink(Path.resolve(import.meta.dir, "../dist"), Path.join(projDir, "node_modules", "@b9g", "libuild"));
-  await FS.symlink(Path.resolve(import.meta.dir, "../node_modules/pretty-format"), Path.join(projDir, "node_modules", "pretty-format"));
+  await FS.symlink(Path.resolve(import.meta.dirname, "../dist"), Path.join(projDir, "node_modules", "@b9g", "libuild"));
+  await FS.symlink(Path.resolve(import.meta.dirname, "../node_modules/pretty-format"), Path.join(projDir, "node_modules", "pretty-format"));
 
   // The consumer imports pretty-format for THEMSELVES; only libuild's own
   // internal import may be stubbed.
@@ -851,7 +851,7 @@ test("node backend it.each registers one test per row (#23)", async () => {
   await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
   await FS.writeFile(Path.join(projDir, "package.json"), JSON.stringify({name: "p", version: "1.0.0"}));
   await FS.mkdir(Path.join(projDir, "node_modules", "@b9g"), {recursive: true});
-  await FS.symlink(Path.resolve(import.meta.dir, "../dist"), Path.join(projDir, "node_modules", "@b9g", "libuild"));
+  await FS.symlink(Path.resolve(import.meta.dirname, "../dist"), Path.join(projDir, "node_modules", "@b9g", "libuild"));
 
   // The API that bit crank: it.each inside describe(), on node where
   // node:test has no .each. The shim registers per-row through the ordinary
@@ -1009,7 +1009,7 @@ async function realConsumer(name: string, files: Record<string, string>) {
   await FS.writeFile(Path.join(projDir, "package.json"),
     JSON.stringify({name: "consumer", version: "1.0.0", type: "module"}));
   await FS.mkdir(Path.join(projDir, "node_modules", "@b9g"), {recursive: true});
-  const root = Path.resolve(import.meta.dir, "..");
+  const root = Path.resolve(import.meta.dirname, "..");
   await FS.symlink(Path.join(root, "dist"), Path.join(projDir, "node_modules", "@b9g", "libuild"));
   // The dispatcher and the snapshot chunk resolve these from the consumer.
   for (const dep of ["@b9g/async-context", "expect", "pretty-format"]) {

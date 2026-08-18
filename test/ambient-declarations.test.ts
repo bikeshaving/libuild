@@ -1,4 +1,4 @@
-import {test, expect, beforeEach, afterEach} from "bun:test";
+import {test, expect, beforeEach, afterEach} from "../src/test.ts";
 import * as FS from "fs/promises";
 import * as Path from "path";
 import {build} from "../src/internal/libuild.ts";
