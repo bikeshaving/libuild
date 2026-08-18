@@ -46,6 +46,10 @@ jobs:
 
       - run: bun install
 
+      # The suite's consumer-project fixtures symlink node_modules/@b9g/libuild
+      # at ./dist, which is gitignored - build it or those tests dangle.
+      - run: bun run src/cli.ts
+
       - run: bun test
 
       # A mistyped tag would otherwise publish whatever the manifest says, and

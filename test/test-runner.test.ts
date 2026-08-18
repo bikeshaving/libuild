@@ -1155,12 +1155,24 @@ test("wrapTestApi works against the REAL bun:test object, not just a mock (#14)"
   const bunTest: any = await import("bun:test");
   const api = wrapTestApi({describe: bunTest.describe, test: bunTest.test, it: bunTest.it});
 
-  // Reading a branded getter (the primary bug) would throw right here.
+  // Reading a branded getter (the primary bug) would throw right here. One
+  // deliberate exception: newer bun makes reading `.only` THROW under CI
+  // ("disabled in CI environments") - the proxy must preserve that exactly as
+  // native, so under CI the assertion is "throws bun's message", not "is a
+  // function".
+  const expectSubMethod = (obj: any, key: string) => {
+    try {
+      expect(typeof obj[key]).toBe("function");
+    } catch (error: any) {
+      if (key === "only" && /disabled in CI/i.test(error?.message ?? "")) return;
+      throw error;
+    }
+  };
   for (const key of ["todo", "skip", "only", "skipIf", "todoIf", "each"]) {
-    expect(typeof (api.test as any)[key]).toBe("function");
+    expectSubMethod(api.test, key);
   }
   for (const key of ["skip", "only", "each"]) {
-    expect(typeof (api.describe as any)[key]).toBe("function");
+    expectSubMethod(api.describe, key);
   }
   // `.each` is branded at CALL time too; building a registrar from an EMPTY table
   // exercises that path without registering any tests.

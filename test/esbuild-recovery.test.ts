@@ -143,13 +143,22 @@ describe("esbuild service restart (integration, real service)", () => {
       // Healthy build first - this is what spawns the service child.
       await build(opts);
 
-      // Kill only OUR OWN service child (`pgrep -P <this pid>`), never a
-      // machine-wide `pgrep -f esbuild`: under per-file isolation, sibling
-      // shard processes have their own services, and killing theirs would
-      // make this test the very cascade-failure it exists to prevent.
-      const pids = execSync(`pgrep -P ${process.pid} -f esbuild || true`, {encoding: "utf-8"})
-        .trim().split("\n").filter(Boolean);
-      expect(pids.length).toBeGreaterThan(0);
+      // Kill only OUR OWN service child, never a machine-wide match: under
+      // per-file isolation, sibling shard processes have their own services,
+      // and killing theirs would make this test the very cascade-failure it
+      // exists to prevent. `ps` rather than `pgrep -P`: portable across
+      // macOS/Linux (pgrep -P -f missed the child on ubuntu CI), and the raw
+      // table makes a zero-match failure diagnosable instead of a bare count.
+      const psOut = execSync("ps -ax -o pid=,ppid=,command=", {encoding: "utf-8"});
+      const pids = psOut.split("\n")
+        .map((line) => line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/))
+        .filter((m): m is RegExpMatchArray =>
+          m != null && parseInt(m[2], 10) === process.pid && m[3].includes("esbuild"))
+        .map((m) => m[1]);
+      if (pids.length === 0) {
+        throw new Error(`no esbuild service child of pid ${process.pid} found; children:\n` +
+          psOut.split("\n").filter((l) => l.trim().split(/\s+/)[1] === String(process.pid)).join("\n"));
+      }
       for (const pid of pids) process.kill(parseInt(pid, 10), "SIGKILL");
       // Give esbuild's JS side a beat to observe the closed streams.
       await new Promise((r) => setTimeout(r, 300));
