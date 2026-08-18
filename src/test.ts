@@ -5,10 +5,10 @@
  * right backend: `bun:test` on Bun, `node:test` + the `expect` package on Node,
  * and a built-in runner on browsers. The backends are never exported - bun/node
  * use their own runtime builtins directly, and the browser runner is an internal
- * module (`_test-browser`, a chunk). From the package's perspective the only
+ * module (`internal/test-browser`, a chunk). From the package's perspective the only
  * visible test export is this file.
  *
- * On bun/node it also installs a PORTABLE `toMatchSnapshot` (see `_snapshot`)
+ * On bun/node it also installs a PORTABLE `toMatchSnapshot` (see `internal/snapshot`)
  * that overrides each runtime's native/absent snapshot support so `.snap` files
  * are identical across platforms, and wraps describe/test/it to track the
  * current test name for snapshot keys. Browsers have no filesystem, so the
@@ -52,7 +52,7 @@ async function loadNode() {
 const backend = isBun
   ? await import("bun:test")
   : isBrowser
-    ? await import("./_test-browser.js")
+    ? await import("./internal/test-browser.js")
     : await loadNode();
 
 let describe = backend.describe;
@@ -65,7 +65,7 @@ let it = backend.it;
 // there's nothing to install (guarding the dynamic import keeps the browser
 // bundle from ever loading the fs-using snapshot chunk).
 if (!isBrowser) {
-  const { installSnapshotMatcher, wrapTestApi } = await import("./_snapshot.js");
+  const { installSnapshotMatcher, wrapTestApi } = await import("./internal/snapshot.js");
   await installSnapshotMatcher(backend.expect);
   const wrapped = wrapTestApi({ describe, test, it });
   describe = wrapped.describe;

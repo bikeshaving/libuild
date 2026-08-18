@@ -2,7 +2,7 @@ import {describe, expect, test} from "bun:test";
 import * as FS from "fs/promises";
 import * as Path from "path";
 import {execSync} from "child_process";
-import {build} from "../src/_esbuild.ts";
+import {build} from "../src/internal/esbuild.ts";
 import {createTempDir, removeTempDir} from "./test-utils.ts";
 
 // esbuild keeps one long-lived service child per module instance and never

@@ -6,13 +6,13 @@
  * own format/location - so a snapshot written on one runtime won't verify on the
  * other. This module overrides `toMatchSnapshot` on BOTH with one portable
  * implementation, so the `.snap` files and behavior are identical across bun and
- * node. (Browsers have no filesystem; `_test-browser` provides a throwing stub.)
+ * node. (Browsers have no filesystem; `internal/test-browser` provides a throwing stub.)
  *
  * Three things a snapshot matcher needs, and how we get them without a host
  * runner:
  *  - Which file: injected per-shard as `globalThis.__LIBUILD_SNAPSHOT_FILE__`
  *    (each file runs in its own process, so there's exactly one - see
- *    `_test-runner` `generateTestEntry`).
+ *    `internal/test-runner` `generateTestEntry`).
  *  - Which key: we wrap describe/test/it (see `wrapTestApi`) to track the current
  *    jest-style test name; the key is `<name> <n>` with a per-test counter.
  *  - Read/write: sync `node:fs`, loaded dynamically at install time (a static
@@ -88,7 +88,7 @@ function withArity<T extends Function>(wrapper: T, original: Function): T {
 // the total on stdout, where the parent parses it back out - giving a timeout
 // message a denominator ("12 of 47 finished") instead of a bare numerator.
 //
-// Wire format shared with `_test-runner.ts` (REGISTERED_MARKER there); keep the
+// Wire format shared with `internal/test-runner.ts` (REGISTERED_MARKER there); keep the
 // two literals in sync. node's TAP reporter re-emits child stdout as a "# ..."
 // comment, so the parser tolerates a leading prefix.
 // ---------------------------------------------------------------------------
