@@ -139,8 +139,17 @@ test("flat layout: npm pack ships root modules, no src/ paths", async () => {
 
   const proc = Bun.spawn(["npm", "pack", "--dry-run", "--json"], {cwd: distDir, stdout: "pipe", stderr: "pipe"});
   const out = await new Response(proc.stdout).text();
+  const errOut = await new Response(proc.stderr).text();
   await proc.exited;
-  const packed = JSON.parse(out)[0].files.map((f: any) => f.path);
+  // Parse defensively and fail LOUD: an environment problem (auth-poisoned
+  // .npmrc, npm output-format change) must show npm's actual output, not a
+  // bare "undefined is not an object" (first seen on the first-ever CI run).
+  let packed: string[];
+  try {
+    packed = JSON.parse(out)[0].files.map((f: any) => f.path);
+  } catch (error: any) {
+    throw new Error(`npm pack --json output unparseable (exit ${proc.exitCode}): ${error?.message}\nstdout:\n${out}\nstderr:\n${errOut}`);
+  }
 
   // Canonical modules at the tarball root (clean CDN URLs: <pkg>/index.js)
   expect(packed).toContain("index.js");
@@ -265,8 +274,17 @@ test("relocated subdirectory declarations ship in the tarball (#11)", async () =
 
   const proc = Bun.spawn(["npm", "pack", "--dry-run", "--json"], {cwd: distDir, stdout: "pipe", stderr: "pipe"});
   const out = await new Response(proc.stdout).text();
+  const errOut = await new Response(proc.stderr).text();
   await proc.exited;
-  const packed = JSON.parse(out)[0].files.map((f: any) => f.path);
+  // Parse defensively and fail LOUD: an environment problem (auth-poisoned
+  // .npmrc, npm output-format change) must show npm's actual output, not a
+  // bare "undefined is not an object" (first seen on the first-ever CI run).
+  let packed: string[];
+  try {
+    packed = JSON.parse(out)[0].files.map((f: any) => f.path);
+  } catch (error: any) {
+    throw new Error(`npm pack --json output unparseable (exit ${proc.exitCode}): ${error?.message}\nstdout:\n${out}\nstderr:\n${errOut}`);
+  }
 
   // The relocated declaration referenced by index.d.ts actually ships
   expect(packed).toContain("internal/helper.d.ts");
