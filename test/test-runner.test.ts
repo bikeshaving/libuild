@@ -716,6 +716,7 @@ test("registration counting covers only/skip/todo/each (denominator accuracy)", 
     test.todo = (_n: string, _f?: () => void) => {};
     test.only = (_n: string, _f: () => void) => {};
     test.each = (_table: unknown[]) => (_n: string, _f: (...a: any[]) => void) => {};
+    test.concurrent = (_n: string, _f: () => void) => {};
     return test;
   };
   const api = wrapTestApi({describe: fake(), test: fake(), it: fake()});
@@ -732,9 +733,10 @@ test("registration counting covers only/skip/todo/each (denominator accuracy)", 
     api.test.todo("todo");                            // +1
     api.test.only("only", () => {});                  // +1
     api.test.each([1, 2, 3])("row %i", () => {});     // +3 (one per row)
+    api.test.concurrent("conc", () => {});            // +1 (body runs, tracked)
     api.describe("suite", () => { api.it("inner", () => {}); }); // +1, describe itself +0
     const after = await currentRegisteredTotal(emitted);
-    expect(after - before).toBe(8);
+    expect(after - before).toBe(9);
     // Drain any pending debounced emit while capture is still on, so no
     // marker line leaks into the suite's own output after restore.
     await new Promise((r) => setTimeout(r, 0));
@@ -987,6 +989,47 @@ function takeSnapshot(opts: {
   else api.test(opts.test, body);
   return result;
 }
+
+test("interleaved concurrent bodies attribute snapshots to their own names", async () => {
+  // The reason tracking is an AsyncContext.Variable and not a global: two
+  // concurrent bodies interleave across awaits, and each matcher call must
+  // see ITS test's name. With the old global, whichever body resumed last
+  // owned the name and both snapshots filed under it.
+  const testDir = await createTempDir("snap-concurrent");
+  const file = Path.join(testDir, "conc.test.ts");
+  (globalThis as any).__LIBUILD_SNAPSHOT_FILE__ = file;
+  (globalThis as any).__LIBUILD_UPDATE_SNAPSHOTS__ = true;
+
+  const api = wrapTestApi({
+    describe: (_n: string, fn: () => void) => fn(),
+    test: (_n: string, fn: any) => fn(), // returns the body's promise
+    it: (_n: string, fn: any) => fn(),
+  });
+
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const alpha = api.test("alpha", async () => {
+    await sleep(20);
+    snapMatcher.call({}, "A-ONE");
+    await sleep(20);
+    snapMatcher.call({}, "A-TWO");
+  });
+  const beta = api.test("beta", async () => {
+    await sleep(10);
+    snapMatcher.call({}, "B-ONE");
+    await sleep(25);
+    snapMatcher.call({}, "B-TWO");
+  });
+  await Promise.all([alpha, beta]);
+
+  const {path: snapPath} = snapshotPathFor(file);
+  const saved = parseSnapshots(await FS.readFile(snapPath, "utf-8"));
+  expect(saved.get("alpha 1")).toBe("A-ONE");
+  expect(saved.get("alpha 2")).toBe("A-TWO");
+  expect(saved.get("beta 1")).toBe("B-ONE");
+  expect(saved.get("beta 2")).toBe("B-TWO");
+
+  await removeTempDir(testDir);
+});
 
 test("snapshot .snap format round-trips values with backticks, ${, backslashes, newlines (#14)", () => {
   const map = new Map<string, string>([

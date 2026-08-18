@@ -354,7 +354,7 @@ function isBrowserPlatform(platform: Platform): platform is "chromium" | "firefo
 //   are stubbed; a consumer's own `import {format} from "pretty-format"`
 //   resolves normally (bundling the real package, or failing with esbuild's
 //   ordinary resolution error - either way, correctly attributed).
-const GLOBAL_BROWSER_STUBS = ["bun:test", "node:test", "fs", "node:fs", "module", "node:module"];
+const GLOBAL_BROWSER_STUBS = ["bun:test", "node:test", "fs", "node:fs", "module", "node:module", "async_hooks", "node:async_hooks"];
 const SCOPED_BROWSER_STUBS = ["expect", "pretty-format"];
 
 /**
