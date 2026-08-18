@@ -1129,3 +1129,31 @@ test('build refuses "type": "commonjs" packages (ESM-only policy, #21)', async (
 
   await removeTempDir(testDir);
 }, 60000);  // builds a fixture (and may spawn npm) - beyond bun's 5s default under load
+
+test("relative JSON imports bundle into dist - never a specifier above the package root", async () => {
+  const testDir = await createTempDir("json-bundling");
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "json-bundling-test", version: "1.0.0", type: "module", private: true,
+  }));
+  // JSON OUTSIDE src/, the shape that shipped broken: externalized, the emitted
+  // "../dictionary.json" resolved above the published package root (dist IS
+  // the package), so builds and publishes succeeded and only consumers broke.
+  await FS.writeFile(Path.join(testDir, "dictionary.json"), '{"hello": "world"}\n');
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"),
+    'import dictionary from "../dictionary.json" with { type: "json" };\n' +
+    'export function greet(): string { return dictionary.hello; }\n');
+
+  await build(testDir, false);
+
+  const js = await FS.readFile(Path.join(testDir, "dist", "index.js"), "utf-8");
+  // Inlined, and no relative .json specifier that could escape the package
+  expect(js).toContain('"world"');
+  expect(js).not.toMatch(/from\s*"[^"]*\.json"|import\("[^"]*\.json"\)/);
+
+  // The decisive check: the built entry actually LOADS and runs
+  const {greet} = await import(Path.join(testDir, "dist", "index.js"));
+  expect(greet()).toBe("world");
+
+  await removeTempDir(testDir);
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
