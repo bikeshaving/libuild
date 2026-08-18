@@ -998,48 +998,111 @@ function takeSnapshot(opts: {
   return result;
 }
 
-test("wrapped blocks keep their chained sub-methods (test.concurrent.each)", () => {
-  // The get trap used to rebuild sub-methods as bare functions, carrying none
-  // of the target's properties - so every CHAIN died with a TypeError at
-  // registration, aborting the rest of the file's registrations while the run
-  // could still report green. Recursive wrapping is what keeps chains alive.
-  const make = () => {
-    const block: any = (_n: string, _f?: any, _g?: any) => {};
-    block.concurrent = (_n: string, _f?: any) => {};
-    block.skip = (_n: string, _f?: any) => {};
-    block.only = (_n: string, _f?: any) => {};
-    return block;
-  };
-  const api = wrapTestApi({describe: make(), test: make(), it: make()});
-  for (const chain of ["concurrent", "skip", "only"]) {
-    expect(typeof (api.test as any)[chain]).toBe("function");
-    // .each hangs off every sub-method, synthesized when absent
-    expect(typeof (api.test as any)[chain].each).toBe("function");
-    expect(typeof (api.test as any)[chain].each([[1]])).toBe("function");
+// A real consumer project wired to the built dist - the only way these
+// behaviors are actually observable. Fakes would have missed every bug the
+// review found: bun's branded sub-methods, the runtimes' arity dispatch, and
+// the fact that registering inside an AsyncLocalStorage scope hangs bun.
+async function realConsumer(name: string, files: Record<string, string>) {
+  const testDir = await createTempDir(name);
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+  await FS.writeFile(Path.join(projDir, "package.json"),
+    JSON.stringify({name: "consumer", version: "1.0.0", type: "module"}));
+  await FS.mkdir(Path.join(projDir, "node_modules", "@b9g"), {recursive: true});
+  const root = Path.resolve(import.meta.dir, "..");
+  await FS.symlink(Path.join(root, "dist"), Path.join(projDir, "node_modules", "@b9g", "libuild"));
+  // The dispatcher and the snapshot chunk resolve these from the consumer.
+  for (const dep of ["@b9g/async-context", "expect", "pretty-format"]) {
+    const target = Path.join(root, "node_modules", dep);
+    if (await FS.stat(target).then(() => true).catch(() => false)) {
+      await FS.mkdir(Path.dirname(Path.join(projDir, "node_modules", dep)), {recursive: true});
+      await FS.symlink(target, Path.join(projDir, "node_modules", dep));
+    }
   }
-});
+  for (const [file, contents] of Object.entries(files)) {
+    await FS.writeFile(Path.join(projDir, "test", file), contents);
+  }
+  return {testDir, projDir};
+}
 
-test("registration bodies are tracked wherever they sit, with arity preserved", () => {
-  // node dispatches callback-style on fn.length, so a rest-args wrapper
-  // reporting 0 makes a callback test pass WITHOUT running. And the body may
-  // sit after an options object - missing that left concurrent node bodies
-  // untracked, the exact misattribution this tracking prevents.
-  const seen: Array<{args: any[]; length: number}> = [];
-  const block: any = (...args: any[]) => {
-    const fn = args.find((a, i) => i >= 1 && typeof a === "function");
-    seen.push({args, length: fn ? fn.length : -1});
-  };
-  const api = wrapTestApi({describe: block, test: block, it: block});
+test("chained sub-methods and .each rows work on the real runtimes", async () => {
+  // The get trap used to rebuild sub-methods as bare functions carrying none
+  // of the target's properties, so every CHAIN threw at registration - and a
+  // registration-time throw takes the rest of the file's registrations with
+  // it while the run can still report green. Only the real runtimes expose
+  // this (bun's sub-methods are branded getters).
+  const {testDir, projDir} = await realConsumer("real-chains", {
+    "chain.test.ts":
+      'import {test, describe, expect} from "@b9g/libuild/test";\n' +
+      'test.concurrent.each([[1, 1, 2], [2, 3, 5]])("conc each %i+%i=%i", (a: number, b: number, s: number) => {\n' +
+      '  expect(a + b).toBe(s);\n' +
+      '});\n' +
+      'test.skip.each([[9]])("skipped row %i", () => { throw new Error("must not run"); });\n' +
+      'describe.concurrent("suite", () => { test("inside", () => { expect(1).toBe(1); }); });\n',
+  });
 
-  api.test("plain", (_a: any, _b: any) => {});
-  expect(seen[0].length).toBe(2); // arity preserved
+  // Both runtimes, since the failure modes differ per runtime.
+  expect(await runTests({cwd: projDir, platforms: ["bun"], timeout: 60000})).toBe(true);
+  expect(await runTests({cwd: projDir, platforms: ["node"], timeout: 60000})).toBe(true);
 
-  api.test("options form", {concurrency: true}, (_a: any, _b: any) => {});
-  // The body is still at index 2 (options untouched) and still wrapped
-  expect(typeof seen[1].args[2]).toBe("function");
-  expect(seen[1].args[1]).toEqual({concurrency: true});
-  expect(seen[1].length).toBe(2);
-});
+  await removeTempDir(testDir);
+}, 180000);
+
+test("each row gets its own snapshot key, and interleaving cannot swap them", async () => {
+  // Rows used to share one bucket numbered in EXECUTION order: fine
+  // sequentially, silently order-dependent once rows interleave. The rows
+  // here finish in reverse registration order on purpose.
+  const {testDir, projDir} = await realConsumer("real-each-snapshots", {
+    "rows.test.ts":
+      'import {test, expect} from "@b9g/libuild/test";\n' +
+      'test.concurrent.each([["alpha", 40], ["beta", 5]])("row %s", async (label: string, delay: number) => {\n' +
+      '  await new Promise((r) => setTimeout(r, delay));\n' +
+      '  expect(`CONTENT-${label}`).toMatchSnapshot();\n' +
+      '});\n',
+  });
+
+  // Write, then verify against what was written - on BOTH runtimes, which is
+  // what makes wrong attribution fail loudly rather than round-trip.
+  expect(await runTests({cwd: projDir, platforms: ["bun"], timeout: 60000, updateSnapshots: true})).toBe(true);
+  const snap = await FS.readFile(
+    Path.join(projDir, "test", "__snapshots__", "rows.test.ts.snap"), "utf-8");
+  expect(snap).toContain("`row alpha 1`");
+  expect(snap).toContain("`row beta 1`");
+  expect(snap).not.toContain("<unknown>");
+  // Each key holds ITS row's content, not the other's.
+  expect(parseSnapshots(snap).get("row alpha 1")).toBe("CONTENT-alpha");
+  expect(parseSnapshots(snap).get("row beta 1")).toBe("CONTENT-beta");
+
+  expect(await runTests({cwd: projDir, platforms: ["bun"], timeout: 60000})).toBe(true);
+  expect(await runTests({cwd: projDir, platforms: ["node"], timeout: 60000})).toBe(true);
+
+  await removeTempDir(testDir);
+}, 180000);
+
+test("callback-style bodies really run (arity is preserved through wrapping)", async () => {
+  // Both runtimes dispatch callback-style on fn.length, so a rest-args
+  // wrapper reporting 0 makes node call the body promise-style and finish the
+  // test IMMEDIATELY - the body's async continuation never completes before
+  // the shard exits. Asserting only "the run went red" would not discriminate
+  // (the broken shape also goes red, via a stray uncaughtException), so the
+  // test observes a side effect that exists ONLY if node actually waited: a
+  // marker file written from inside the callback's continuation.
+  const {testDir, projDir} = await realConsumer("real-callback-arity", {});
+  const marker = Path.join(projDir, "callback-ran.marker");
+  await FS.writeFile(Path.join(projDir, "test", "cb.test.ts"),
+    'import {test} from "@b9g/libuild/test";\n' +
+    'import {writeFileSync} from "node:fs";\n' +
+    'test("callback body must run to completion", {concurrency: true}, (_t: any, done: any) => {\n' +
+    `  setTimeout(() => { writeFileSync(${JSON.stringify(marker)}, "ran"); done(); }, 25);\n` +
+    '});\n');
+
+  expect(await runTests({cwd: projDir, platforms: ["node"], timeout: 60000})).toBe(true);
+  // The continuation completed before the shard exited - only possible if the
+  // preserved arity made node wait for `done`.
+  expect(await FS.stat(marker).then(() => true).catch(() => false)).toBe(true);
+
+  await removeTempDir(testDir);
+}, 180000);
 
 test("interleaved concurrent bodies attribute snapshots to their own names", async () => {
   // The reason tracking is an AsyncContext.Variable and not a global: two
