@@ -2,7 +2,6 @@
   "name": "@b9g/libuild",
   "version": "0.2.20",
   "description": "Zero-config library builds",
-  "main": "./dist/libuild.cjs",
   "bin": {
     "libuild": "./dist/cli.js"
   },
@@ -57,13 +56,7 @@
     "url": "https://github.com/bikeshaving/libuild/issues"
   },
   "license": "MIT",
-  "module": "./dist/libuild.js",
-  "types": "./dist/libuild.d.ts",
   "exports": {
-    ".": {
-      "types": "./dist/libuild.d.ts",
-      "import": "./dist/libuild.js"
-    },
     "./cli": {
       "types": "./dist/cli.d.ts",
       "import": "./dist/cli.js"
@@ -71,14 +64,6 @@
     "./cli.js": {
       "types": "./dist/cli.d.ts",
       "import": "./dist/cli.js"
-    },
-    "./libuild": {
-      "types": "./dist/libuild.d.ts",
-      "import": "./dist/libuild.js"
-    },
-    "./libuild.js": {
-      "types": "./dist/libuild.d.ts",
-      "import": "./dist/libuild.js"
     },
     "./package.json": "./dist/package.json",
     "./test": {

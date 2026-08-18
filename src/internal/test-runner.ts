@@ -12,7 +12,7 @@ import * as ESBuild from "esbuild";
 // All builds go through this wrapper so a dead esbuild service recovers instead
 // of cascading into every later build (see internal/esbuild.ts).
 import { build as esbuildBuild } from "./esbuild.ts";
-import { packageTypeRefusalMessage } from "../libuild.ts";
+import { packageTypeRefusalMessage } from "./libuild.ts";
 import { createRequire } from "module";
 
 // ---------------------------------------------------------------------------

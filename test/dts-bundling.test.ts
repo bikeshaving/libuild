@@ -1,7 +1,7 @@
 import {test, expect, beforeEach, afterEach} from "bun:test";
 import * as FS from "fs/promises";
 import * as Path from "path";
-import {build} from "../src/libuild.ts";
+import {build} from "../src/internal/libuild.ts";
 
 let testDir: string;
 
@@ -47,7 +47,7 @@ export function main() { return "main"; }`
   // Check index.d.ts references impl
   const indexDts = await FS.readFile(Path.join(testDir, "dist", "index.d.ts"), "utf-8");
   expect(indexDts).toContain("./impl/utils.js");
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("includes module augmentation in generated .d.ts", async () => {
   await FS.writeFile(
@@ -91,7 +91,7 @@ declare module "some-external-lib" {
   );
   expect(augmentDts).toContain('declare module "some-external-lib"');
   expect(augmentDts).toContain("extended: boolean");
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("generates .d.ts for deeply nested modules", async () => {
   await FS.writeFile(
@@ -141,7 +141,7 @@ export function levelB() { return "b"; }`
     const exists = await FS.stat(Path.join(testDir, p)).then(() => true, () => false);
     expect(exists).toBe(true);
   }
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("handles multiple entry points with shared internal modules", async () => {
   await FS.writeFile(
@@ -187,7 +187,7 @@ export function utils() { return "utils"; }`
   expect(indexDts).toContain("./shared/common.js");
   expect(utilsDts).toContain("./shared/common.js");
   expect(sharedDts).toContain("export declare function shared");
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("preserves declare global in generated .d.ts", async () => {
   await FS.writeFile(
@@ -229,7 +229,7 @@ declare global {
   );
   expect(globalsDts).toContain("declare global");
   expect(globalsDts).toContain("myLib");
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("bin importing from src does not emit .d.ts to src directory", async () => {
   await FS.writeFile(
@@ -276,4 +276,4 @@ console.log(helper());
     Path.join(testDir, "dist", "bin", "cli.d.ts")
   ).then(() => true, () => false);
   expect(binDtsExists).toBe(true);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load

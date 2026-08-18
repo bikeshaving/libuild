@@ -4,10 +4,10 @@ import {spawn} from "child_process";
 
 // All builds go through this wrapper so a dead esbuild service recovers instead
 // of cascading into every later build (see internal/esbuild.ts).
-import { build as esbuildBuild } from "./internal/esbuild.ts";
-import {umdPlugin} from "./plugins/umd.js";
-import {externalEntrypointsPlugin} from "./plugins/external.js";
-import {dtsPlugin} from "./plugins/dts.js";
+import { build as esbuildBuild } from "./esbuild.ts";
+import {umdPlugin} from "../plugins/umd.js";
+import {externalEntrypointsPlugin} from "../plugins/external.js";
+import {dtsPlugin} from "../plugins/dts.js";
 
 // Generate runtime detection banner for bin entries
 function generateRuntimeBanner(pkg: PackageJSON): string {
@@ -215,8 +215,12 @@ function detectMainEntry(pkg: PackageJSON, entries: string[]): string | undefine
     return pkgName;
   }
 
-  // 7. Default to first entry alphabetically (or undefined if no entries)
-  return entries[0]; // May be undefined if entries is empty
+  // 7. Nothing declared and nothing inferable: NO main entry, and therefore
+  // no "." export. Guessing (the old behavior: first entry alphabetically)
+  // invented a root API the author never designed - for a CLI-plus-subpaths
+  // package like libuild itself, "." would have silently become the cli
+  // module. A package with no declared main is a package with no root import.
+  return undefined;
 }
 
 function checkIfExportIsStale(exportKey: string, exportValue: any, entries: string[]): boolean {
@@ -1170,7 +1174,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   const mainEntry = detectMainEntry(pkg, srcEntries);
 
   console.info("  Found entries:", entries.join(", "));
-  console.info("  Main entry:", mainEntry);
+  console.info("  Main entry:", mainEntry ?? "(none - no root export)");
   if (options.formats.cjs) {
     console.info("  Formats: ESM, CJS" + (options.formats.umd ? ", UMD" : ""));
   } else {

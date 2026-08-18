@@ -1,7 +1,7 @@
 import {test, expect} from "bun:test";
 import * as FS from "fs/promises";
 import * as Path from "path";
-import {build} from "../src/libuild.ts";
+import {build} from "../src/internal/libuild.ts";
 import {createTempDir, removeTempDir, copyFixture, readJSON} from "./test-utils.ts";
 
 // =============================================================================
@@ -50,7 +50,7 @@ test("exports field generation for multi-entry library", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("exports field generation with --save mode", async () => {
   const testDir = await createTempDir("exports-save-test");
@@ -89,7 +89,7 @@ test("exports field generation with --save mode", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 
 // Export validation tests
@@ -117,7 +117,7 @@ test("export expansion: invalid string export path", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("export expansion: object with invalid import path", async () => {
   const testDir = await createTempDir("invalid-object-export");
@@ -145,7 +145,7 @@ test("export expansion: object with invalid import path", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 // Export cleanup tests
 test("export cleanup warns about stale exports and removes them", async () => {
@@ -209,7 +209,7 @@ test("export cleanup warns about stale exports and removes them", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("export cleanup with --save removes stale exports from root package.json", async () => {
   const testDir = await createTempDir("export-cleanup-save");
@@ -270,7 +270,7 @@ test("export cleanup with --save removes stale exports from root package.json", 
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("export cleanup preserves system exports like package.json", async () => {
   const testDir = await createTempDir("export-cleanup-system");
@@ -306,7 +306,7 @@ test("export cleanup preserves system exports like package.json", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("export cleanup handles alias exports correctly", async () => {
   const testDir = await createTempDir("export-cleanup-aliases");
@@ -348,7 +348,7 @@ test("export cleanup handles alias exports correctly", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 // Save behavior tests
 test("files field behavior with --save", async () => {
@@ -380,7 +380,7 @@ test("files field behavior with --save", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("private field behavior with --save", async () => {
   const testDir = await createTempDir("private-test");
@@ -401,7 +401,7 @@ test("private field behavior with --save", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 // =============================================================================
 // PATH MAPPING TESTS
 // =============================================================================
@@ -444,7 +444,7 @@ test("path mapping fixes for dist package.json exports", async () => {
   });
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("no path mapping regressions in dist package.json", async () => {
   const testDir = await createTempDir("no-regressions");
@@ -468,7 +468,7 @@ test("no path mapping regressions in dist package.json", async () => {
   expect(distPkg.types).toBe("index.d.ts");
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("root package.json path mapping with --save", async () => {
   const testDir = await createTempDir("root-path-mapping");
@@ -495,7 +495,7 @@ test("root package.json path mapping with --save", async () => {
   expect(rootPkg.private).toBe(true);
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("'.' export gets import field even when author declared types-only (#7)", async () => {
   const testDir = await createTempDir("dot-import-field");
@@ -525,7 +525,7 @@ test("'.' export gets import field even when author declared types-only (#7)", a
   expect(distPkg.exports["."].import).toBe("./crank-editable.js");
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("UMD-only subpath export never fabricates a types path (0.2.1 hotfix)", async () => {
   const testDir = await createTempDir("umd-subpath-types");
@@ -555,7 +555,7 @@ test("UMD-only subpath export never fabricates a types path (0.2.1 hotfix)", asy
   expect(JSON.stringify(distPkg)).not.toContain("undefined");
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("author-specified condition order is preserved - browser stays before import (0.2.3)", async () => {
   const testDir = await createTempDir("condition-order");
@@ -606,7 +606,7 @@ test("author-specified condition order is preserved - browser stays before impor
   expect(Object.keys(dot.browser)).toEqual(["types", "import", "require"]);
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("--save preserves author-added conditions in root exports (0.2.4)", async () => {
   const testDir = await createTempDir("save-custom-conditions");
@@ -662,4 +662,4 @@ test("--save preserves author-added conditions in root exports (0.2.4)", async (
   expect(rootPkg2.exports["."]).toEqual(dot);
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load

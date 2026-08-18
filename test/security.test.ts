@@ -2,7 +2,7 @@ import {test, expect} from "bun:test";
 import * as FS from "fs/promises";
 import * as Path from "path";
 import {spawn} from "child_process";
-import {build} from "../src/libuild.ts";
+import {build} from "../src/internal/libuild.ts";
 import {createTempDir, removeTempDir, copyFixture, readJSON, fileExists} from "./test-utils.ts";
 
 // =============================================================================
@@ -30,7 +30,7 @@ test("rejects path traversal in files field", async () => {
   await expect(build(testDir, false)).rejects.toThrow("Path traversal is not allowed");
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("rejects absolute paths in files field", async () => {
   const testDir = await createTempDir("absolute-path-test");
@@ -53,7 +53,7 @@ test("rejects absolute paths in files field", async () => {
   await expect(build(testDir, false)).rejects.toThrow("Absolute paths are not allowed");
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("filters dangerous npm flags", async () => {
   const testDir = await createTempDir("dangerous-flags-test");
@@ -93,7 +93,7 @@ test("filters dangerous npm flags", async () => {
   expect(output).toContain("npm notice");
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("only allows whitelisted npm flags", async () => {
   const testDir = await createTempDir("whitelist-test");
@@ -133,7 +133,7 @@ test("only allows whitelisted npm flags", async () => {
   expect(output).toContain("with tag beta");
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("validates flag-value pairs correctly", async () => {
   const testDir = await createTempDir("flag-value-test");
@@ -172,4 +172,4 @@ test("validates flag-value pairs correctly", async () => {
   expect(output).not.toContain("Warning:");
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load

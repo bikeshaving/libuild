@@ -1,7 +1,7 @@
 import {test, expect} from "bun:test";
 import * as FS from "fs/promises";
 import * as Path from "path";
-import {build} from "../src/libuild.ts";
+import {build} from "../src/internal/libuild.ts";
 import {createTempDir, removeTempDir, copyFixture, readJSON, fileExists} from "./test-utils.ts";
 
 // =============================================================================
@@ -120,7 +120,7 @@ test("handles comprehensive package.json fields", async () => {
   
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("npm lifecycle scripts are preserved", async () => {
   const testDir = await createTempDir("lifecycle-scripts-test");
@@ -154,7 +154,7 @@ test("npm lifecycle scripts are preserved", async () => {
   
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 // =============================================================================
 // Files Field Error Handling Tests
@@ -181,7 +181,7 @@ test("file copy error: pattern with non-existent base directory", async () => {
   
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("file copy error: missing file in files field", async () => {
   const testDir = await createTempDir("missing-file-test");
@@ -204,7 +204,7 @@ test("file copy error: missing file in files field", async () => {
   
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("files field with invalid entry type", async () => {
   const testDir = await createTempDir("invalid-files-test");
@@ -227,7 +227,7 @@ test("files field with invalid entry type", async () => {
   
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 // =============================================================================
 // Save Behavior Tests (--save flag functionality)
@@ -249,7 +249,7 @@ test("build without --save does not modify root package.json", async () => {
   
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("build with --save updates all package.json fields correctly", async () => {
   const testDir = await createTempDir("save-test");
@@ -279,7 +279,7 @@ test("build with --save updates all package.json fields correctly", async () => 
   
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("adding new entry point updates exports in subsequent --save builds", async () => {
   const testDir = await createTempDir("add-entry-test");
@@ -313,7 +313,7 @@ test("adding new entry point updates exports in subsequent --save builds", async
   
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("removing entry point removes it from exports in subsequent --save builds", async () => {
   const testDir = await createTempDir("remove-entry-test");
@@ -372,7 +372,7 @@ test("removing entry point removes it from exports in subsequent --save builds",
   
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 // =============================================================================
 // Source Path Transformation Tests
@@ -410,7 +410,7 @@ test("complex bin field transformations", async () => {
   
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("files field src transformations", async () => {
   const testDir = await createTempDir("files-transform");
@@ -448,7 +448,7 @@ test("files field src transformations", async () => {
   
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("dev scripts should be filtered out in dist (only npm lifecycle scripts preserved)", async () => {
   const testDir = await createTempDir("scripts-test");
@@ -474,7 +474,7 @@ test("dev scripts should be filtered out in dist (only npm lifecycle scripts pre
   
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("repository field src transformations", async () => {
   const testDir = await createTempDir("repo-transform");
@@ -497,11 +497,11 @@ test("repository field src transformations", async () => {
   
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("transformSrcToDist edge cases", async () => {
   // Import the transform function directly to test edge cases
-  const { transformSrcToDist } = await import("../src/libuild.ts");
+  const { transformSrcToDist } = await import("../src/internal/libuild.ts");
   
   // Test various src patterns (structure-preserving)
   expect(transformSrcToDist("./src/file.js")).toBe("./src/file.js");
@@ -539,7 +539,7 @@ test("transformSrcToDist edge cases", async () => {
   expect(transformSrcToDist(undefined)).toBe(undefined);
   expect(transformSrcToDist(42)).toBe(42);
   expect(transformSrcToDist(true)).toBe(true);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("bin field with string value (not object)", async () => {
   const testDir = await createTempDir("string-bin");
@@ -569,7 +569,7 @@ test("bin field with string value (not object)", async () => {
   
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 // =============================================================================
 // SCOPED PACKAGE TESTS
 // =============================================================================
@@ -613,7 +613,7 @@ export const version = "1.0.0";
   expect(distPkg.types).toBe("index.d.ts");
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("comprehensive build verification for multi-entry project", async () => {
   const testDir = await createTempDir("comprehensive-build");
@@ -671,7 +671,7 @@ test("comprehensive build verification for multi-entry project", async () => {
   expect(utilsContent).toContain('export');
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 // =============================================================================
 // Bin Path Transformations Tests
@@ -711,7 +711,7 @@ test("bin paths follow npm conventions (no ./ prefix)", async () => {
   
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("bin paths work correctly in --save mode (no double dist/ prefix)", async () => {
   const testDir = await createTempDir("bin-save-mode");
@@ -753,7 +753,7 @@ test("bin paths work correctly in --save mode (no double dist/ prefix)", async (
   
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("bin paths with multiple binaries work correctly", async () => {
   const testDir = await createTempDir("multiple-bins");
@@ -793,7 +793,7 @@ test("bin paths with multiple binaries work correctly", async () => {
   
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("bin paths handle string format (single binary)", async () => {
   const testDir = await createTempDir("string-bin");
@@ -822,7 +822,7 @@ test("bin paths handle string format (single binary)", async () => {
   
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("bin paths work in --save mode with string format", async () => {
   const testDir = await createTempDir("string-bin-save");
@@ -854,7 +854,7 @@ test("bin paths work in --save mode with string format", async () => {
   
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 // =============================================================================
 // BIN PATH VALIDATION TESTS
@@ -895,7 +895,7 @@ test("bin path validation: throws error for dist/ paths", async () => {
   }
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("bin path validation: throws error for ./dist/ paths", async () => {
   const testDir = await createTempDir("bin-validation-dotdist");
@@ -930,7 +930,7 @@ test("bin path validation: throws error for ./dist/ paths", async () => {
   }
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("bin path validation: accepts src/ paths", async () => {
   const testDir = await createTempDir("bin-validation-src");
@@ -955,7 +955,7 @@ test("bin path validation: accepts src/ paths", async () => {
   await build(testDir);
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("bin path validation: accepts ./src/ paths", async () => {
   const testDir = await createTempDir("bin-validation-dotsrc");
@@ -978,4 +978,4 @@ test("bin path validation: accepts ./src/ paths", async () => {
   await build(testDir);
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load

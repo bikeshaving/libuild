@@ -1,7 +1,7 @@
 import {test, expect} from "bun:test";
 import * as FS from "fs/promises";
 import * as Path from "path";
-import {build} from "../src/libuild.ts";
+import {build} from "../src/internal/libuild.ts";
 import {createTempDir, removeTempDir, copyFixture, readJSON, fileExists} from "./test-utils.ts";
 
 // Core smart dependency resolution tests
@@ -58,7 +58,7 @@ test("smart dependency resolution - entry points don't inline other entry points
   expect(utilsContent).toContain('function add');
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("build performance - no duplicate code between entry points", async () => {
   const testDir = await createTempDir("perf");
@@ -85,7 +85,7 @@ test("build performance - no duplicate code between entry points", async () => {
   expect(apiJS).not.toContain('function add(');
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("significantly reduced bundle sizes with smart dependency resolution", async () => {
   const testDir = await createTempDir("bundle-sizes");
@@ -114,7 +114,7 @@ test("significantly reduced bundle sizes with smart dependency resolution", asyn
   expect(versionMatches.length).toBe(1); // Only in utils.js
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 // External entry points plugin tests
 test("external entry points plugin handles different extensions correctly", async () => {
@@ -140,7 +140,7 @@ test("external entry points plugin handles different extensions correctly", asyn
   expect(cliCJS).not.toContain('./utils.ts');
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("runtime behavior - imports work correctly", async () => {
   const testDir = await createTempDir("runtime");
@@ -164,7 +164,7 @@ test("runtime behavior - imports work correctly", async () => {
   expect(cliCJSContent).toMatch(/require\s*\(\s*['"]\.\/utils\.cjs['"]\s*\)/);
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 // Plugin extraction and TypeScript tests
 test("plugins are properly extracted and organized", async () => {
@@ -184,7 +184,7 @@ test("plugins are properly extracted and organized", async () => {
   expect(await fileExists(Path.join(distDir, "utils.js"))).toBe(true);
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("TypeScript plugin only generates declarations for entry points", async () => {
   const testDir = await createTempDir("ts-plugin-scope");
@@ -216,7 +216,7 @@ test("TypeScript plugin only generates declarations for entry points", async () 
   }
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("UMD plugin functionality still works", async () => {
   const testDir = await createTempDir("umd-plugin");
@@ -239,7 +239,7 @@ test("UMD plugin functionality still works", async () => {
   expect(umdContent).toContain("root.");
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 // Shebang preservation tests
 test("shebang preservation in CLI builds", async () => {
@@ -264,7 +264,7 @@ test("shebang preservation in CLI builds", async () => {
   }
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 // Clean output structure tests
 test("no chunking - clean output matching src structure", async () => {
@@ -296,7 +296,7 @@ test("no chunking - clean output matching src structure", async () => {
   expect(chunkFiles).toEqual([]);
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 // Comprehensive integration tests
 test("all major features work together", async () => {
@@ -336,7 +336,7 @@ test("all major features work together", async () => {
   expect(cliCJS).toContain('"./utils.cjs"'); // CJS requires .cjs
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 // Backwards compatibility tests
 test("backwards compatibility - existing features unchanged", async () => {
@@ -362,7 +362,7 @@ test("backwards compatibility - existing features unchanged", async () => {
   });
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("plugin integration doesn't break existing functionality", async () => {
   const testDir = await createTempDir("plugin-integration");
@@ -394,7 +394,7 @@ test("plugin integration doesn't break existing functionality", async () => {
   }
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 // Error handling and edge cases
 test("no TypeScript compilation errors", async () => {
@@ -427,7 +427,7 @@ test("no TypeScript compilation errors", async () => {
   }
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("circular dependencies handled correctly", async () => {
   const testDir = await createTempDir("circular");
@@ -471,7 +471,7 @@ export function b() { return 'b'; }
   expect(bContent).toContain('function b'); // b.js should contain the b function
   
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 // =============================================================================
 // Shared Module Deduplication Tests
@@ -524,7 +524,7 @@ test("shared modules are deduplicated across entry points", async () => {
   
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("shared modules work with both ESM and CJS builds", async () => {
   const testDir = await createTempDir("shared-modules-dual");
@@ -563,7 +563,7 @@ test("shared modules work with both ESM and CJS builds", async () => {
   
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 test("peer dependencies are externalized in both ESM and CJS", async () => {
   const testDir = await createTempDir("peer-deps");
 
@@ -588,4 +588,4 @@ test("peer dependencies are externalized in both ESM and CJS", async () => {
   expect(cjs).toContain('require("@fictional-scope/peer-lib")');
 
   await removeTempDir(testDir);
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load

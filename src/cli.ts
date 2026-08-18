@@ -2,7 +2,7 @@
 import { Command } from "commander";
 import * as FS from "fs/promises";
 import * as Path from "path";
-import { build, publish, stage } from "./libuild.ts";
+import { build, publish, stage } from "./internal/libuild.ts";
 import { resolveTestTargets, runTests, type Platform } from "./internal/test-runner.ts";
 
 // =============================================================================

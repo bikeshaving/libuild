@@ -2,7 +2,7 @@ import {test, expect} from "bun:test";
 import * as FS from "fs/promises";
 import * as Path from "path";
 import {spawn} from "child_process";
-import {build} from "../src/libuild.ts";
+import {build} from "../src/internal/libuild.ts";
 import {createTempDir, removeTempDir, copyFixture, readJSON, fileExists} from "./test-utils.ts";
 
 // Test the parts of publish() we can test without mocking npm
@@ -292,7 +292,7 @@ test("verify extraArgs extraction logic", () => {
 // ---------------------------------------------------------------------------
 
 test("npmSupportsStaging: 11.15.0 is the floor", async () => {
-  const {npmSupportsStaging} = await import("../src/libuild.ts");
+  const {npmSupportsStaging} = await import("../src/internal/libuild.ts");
   expect(npmSupportsStaging("11.15.0")).toBe(true);
   expect(npmSupportsStaging("11.16.2")).toBe(true);
   expect(npmSupportsStaging("12.0.0")).toBe(true);
