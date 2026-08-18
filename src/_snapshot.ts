@@ -35,9 +35,18 @@ let prettyFormat: ((value: unknown, opts?: Record<string, unknown>) => string) |
 // ---------------------------------------------------------------------------
 // Current-test tracking (populated by the wrapped describe/test/it below).
 //
-// The DESCRIBE stack is a plain array: describe bodies run synchronously
-// during module evaluation, which is inherently sequential, so a global is
-// correct there.
+// The DESCRIBE prefix is a plain array, deliberately - NOT an AsyncVariable.
+// Registering a bun:test test from inside an AsyncLocalStorage scope makes
+// bun hang waiting for a `done` callback that never comes (verified against
+// bun 1.3.14, sequential and concurrent describes alike), so the prefix
+// cannot be scoped that way: describe bodies REGISTER, and registration must
+// stay outside async context. Test bodies only RUN, which is why currentTest
+// below can be an AsyncVariable.
+//
+// Known limitation this leaves: an ASYNC describe body suspends with its
+// prefix pushed, so a sibling describe registering during that suspension
+// inherits it ("A > B > y"). Sync describe bodies - every real-world case,
+// and all this repo's - are unaffected.
 //
 // The RUN-time "which test is executing" is an AsyncContext.Variable
 // (@b9g/async-context, AsyncLocalStorage under the hood): with concurrent
@@ -58,6 +67,17 @@ const counters = new Map<string, number>();
 function fullNameFor(name: unknown): string {
   const prefix = describeStack.join(" > ");
   return prefix ? `${prefix} > ${String(name)}` : String(name);
+}
+
+/**
+ * Preserve a wrapper's arity. node:test dispatches callback-style
+ * (`(t, done) => ...`) versus promise-style on `fn.length`, so a rest-args
+ * wrapper reporting length 0 makes a callback test PASS INSTANTLY without
+ * running its body - a silent false green.
+ */
+function withArity<T extends Function>(wrapper: T, original: Function): T {
+  Object.defineProperty(wrapper, "length", { value: original.length, configurable: true });
+  return wrapper;
 }
 
 // ---------------------------------------------------------------------------
@@ -113,29 +133,27 @@ function noteRegistration(n: number = 1): void {
  */
 function trackBody(name: unknown, fn: (...args: any[]) => any): (...args: any[]) => any {
   const fullName = fullNameFor(name);
-  return function (this: any, ...args: any[]) {
+  return withArity(function (this: any, ...args: any[]) {
     return currentTest.run(fullName, () => fn.apply(this, args));
-  };
+  }, fn);
 }
 
 /** Wrap a describe body so nested test names carry the describe prefix. */
 function trackSuite(name: unknown, fn: (...args: any[]) => any): (...args: any[]) => any {
-  return function (this: any, ...args: any[]) {
+  return withArity(function (this: any, ...args: any[]) {
     describeStack.push(String(name));
     let popped = false;
     const pop = () => { if (!popped) { popped = true; describeStack.pop(); } };
     try {
       const r = fn.apply(this, args);
-      if (r && typeof r.then === "function") {
-        return Promise.resolve(r).finally(pop);
-      }
+      if (r && typeof r.then === "function") return Promise.resolve(r).finally(pop);
       pop();
       return r;
     } catch (e) {
       pop();
       throw e;
     }
-  };
+  }, fn);
 }
 
 /**
@@ -157,78 +175,132 @@ function trackSuite(name: unknown, fn: (...args: any[]) => any): (...args: any[]
  * `test.each(table)` - throws at call time). node's sub-methods are plain data
  * properties, for which both steps are harmless no-ops.
  *
- * We intercept only two things:
- *  - apply: wrap the test body so its name is tracked while it runs.
- *  - get `.only`: its body DOES run, so return a tracking wrapper of it too.
- *    (`.skip`/`.todo` bodies never run; `.each` rows aren't tracked in v1.)
+ * We intercept two things:
+ *  - apply: wrap the registration body (wherever it sits in the argument
+ *    list) so its name is tracked while it runs, and count the registration.
+ *  - get: recursively wrap every function sub-method, so `.only`,
+ *    `.concurrent`, `.skip`, `.todo`, `.failing`, `.skipIf`, and anything a
+ *    future runtime adds all get the same treatment - including CHAINS like
+ *    `test.concurrent.each`. `.each` is special-cased (it returns a
+ *    registrar, and is synthesized when the runtime lacks it).
  *
- * `counts` marks the blocks that register a runnable test (`test`/`it`, not
- * `describe`) so the registration total covers tests that were actually going
- * to run - `.skip`/`.todo` reach the runner through the `get` trap, never here.
+ * `counts` marks the blocks that register a test (`test`/`it`, not
+ * `describe`). skip/todo count too: both runtimes REPORT them, so the "x of
+ * y" numerator includes them and an uncounted .skip would push the
+ * denominator below the numerator.
  */
-function wrapBlock(real: any, track: (name: unknown, fn: any) => any, counts = false): any {
-  return new Proxy(real, {
+function wrapBlock(
+  real: any,
+  track: (name: unknown, fn: any) => any,
+  counts = false,
+  boundThis: any = undefined
+): any {
+  const proxy: any = new Proxy(real, {
     apply(target, thisArg, args) {
-      const [name, body, ...rest] = args;
       if (counts) noteRegistration();
-      if (typeof body === "function") {
-        return Reflect.apply(target, thisArg, [name, track(name, body), ...rest]);
-      }
-      // node:test options form: test(name, {concurrency, ...}, fn) - the body
-      // sits after the options object and still needs tracking (concurrent
-      // node tests misattribute snapshots without it).
-      if (body != null && typeof body === "object" && typeof rest[0] === "function") {
-        return Reflect.apply(target, thisArg, [name, body, track(name, rest[0]), ...rest.slice(1)]);
-      }
-      return Reflect.apply(target, thisArg, args);
+      // `boundThis` carries the PARENT block when this proxy came from a
+      // sub-method read (see get): bun's sub-methods are branded and throw
+      // unless called against the object they were read from.
+      return Reflect.apply(target, boundThis ?? thisArg, trackArgs(args, track));
     },
     get(target, prop) {
+      // `.each` is synthesized when the runtime lacks it (node:test has none),
+      // so it is handled BEFORE the "is it a function" check.
+      if (prop === "each") return eachFor(proxy, Reflect.get(target, prop, target));
       // Resolve against target (not the proxy) so bun's branded getters accept
-      // `this`; a throwing getter (e.g. describe.failing) still throws only here,
-      // when the user actually reads it - exactly as the native block would.
+      // `this`; a throwing getter (e.g. describe.failing, or .only under CI)
+      // still throws only here, when the user actually reads it - exactly as
+      // the native block would.
       const value = Reflect.get(target, prop, target);
       if (typeof value !== "function") return value;
-      // Bind so the resolved sub-method sees `this === target` when called.
-      const bound = value.bind(target);
-      if (prop === "only" || prop === "concurrent") {
-        // .only and .concurrent both RUN their bodies -> track them.
-        // .concurrent especially: untracked, interleaved bodies would
-        // misattribute snapshots through each other (the AsyncVariable in
-        // trackBody is what makes the attribution hold - see currentTest).
-        return function (name: unknown, body: unknown, ...rest: any[]) {
-          if (counts) noteRegistration();
-          return typeof body === "function"
-            ? bound(name, track(name, body), ...rest)
-            : bound(name, body, ...rest);
-        };
-      }
-      // Registration counting for the sub-methods that register runnable or
-      // reported tests. skip/todo count because both runtimes REPORT them
-      // (node's TAP summary and bun's "N skip"/"N todo" lines), so the "x of
-      // y" numerator includes them - an uncounted .skip would push the
-      // denominator below the numerator. .each counts one per table row: each
-      // row becomes a reported test. Sub-methods we don't know about
-      // (runtime-specific variants like skipIf) fall through uncounted; the
-      // runner suppresses the denominator when the count is inconsistent, so
-      // an exotic path degrades the message rather than corrupting it.
-      if (counts && (prop === "skip" || prop === "todo" || prop === "failing")) {
-        return function (...args: any[]) {
-          noteRegistration();
-          return bound(...args);
-        };
-      }
-      if (counts && prop === "each") {
-        return function (table: unknown, ...tableRest: any[]) {
-          const registrar = bound(table, ...tableRest);
-          if (typeof registrar !== "function") return registrar;
-          return function (...args: any[]) {
-            noteRegistration(Array.isArray(table) ? table.length : 1);
-            return registrar(...args);
-          };
-        };
-      }
-      return bound;
+      // Recursively wrap, rather than rebuilding a bare function: a plain
+      // `function (name, body) {...}` carries none of the target's own
+      // properties, which silently destroyed every CHAIN (`test.concurrent
+      // .each`, `test.skip.each`) - a TypeError at registration, which aborts
+      // the rest of the file's registrations and can still report green.
+      // Recursion also means sub-methods nobody enumerated (skipIf, todoIf,
+      // future additions) get body tracking and registration counting for
+      // free, instead of silently falling through untracked.
+      return wrapBlock(value, track, counts, target);
     },
+  });
+  return proxy;
+}
+
+/**
+ * Wrap the registration BODY in an argument list, wherever it sits.
+ *
+ * Runtimes accept several shapes: `(name, fn)`, node's `(name, options, fn)`,
+ * and `(name)` alone for todo. The rule that covers all of them: the body is
+ * the first function argument after the name. Missing the options form left
+ * concurrent node bodies untracked - the exact misattribution this tracking
+ * exists to prevent.
+ */
+function trackArgs(args: any[], track: (name: unknown, fn: any) => any): any[] {
+  const bodyIndex = args.findIndex((a, i) => i >= 1 && typeof a === "function");
+  if (bodyIndex === -1) return args;
+  const copy = [...args];
+  copy[bodyIndex] = track(args[0], args[bodyIndex]);
+  return copy;
+}
+
+/**
+ * `.each`, implemented once for every runtime rather than delegated.
+ *
+ * Delegating to a native `.each` left its rows untracked: the runtime formats
+ * and registers them internally, so every row's snapshots keyed under one
+ * shared bucket, numbered in EXECUTION order - fine sequentially, silently
+ * order-dependent once rows interleave. Registering each row through this
+ * same wrapped block instead gives every row its formatted name, a tracked
+ * body, and an accurate registration count, identically on bun and node.
+ */
+function eachFor(block: any, _native: unknown) {
+  return (table: unknown, ...tableRest: unknown[]) => {
+    if (!Array.isArray(table)) {
+      throw new TypeError(
+        "libuild: each() expects an array table (template-literal tables are not supported)"
+      );
+    }
+    if (tableRest.length > 0) {
+      throw new TypeError("libuild: each() takes a single array table");
+    }
+    return (name: string, fn: (...args: any[]) => unknown, ...rest: any[]) => {
+      table.forEach((row, index) => {
+        const args = Array.isArray(row) ? row : [row];
+        // Arity EXCLUDING the row values: both runtimes read a body's
+        // declared length to decide whether it wants a `done` callback, and
+        // the row values are already bound here - reporting the raw
+        // `fn.length` made every row hang waiting for a done that never came.
+        const rowBody = function (this: any, ...runnerArgs: any[]) {
+          return fn.apply(this, [...args, ...runnerArgs]);
+        };
+        Object.defineProperty(rowBody, "length", {
+          value: Math.max(0, fn.length - args.length),
+          configurable: true,
+        });
+        block(formatEachName(String(name), args, index), rowBody, ...rest);
+      });
+    };
+  };
+}
+
+/**
+ * Format one `.each` row's name, jest-style. Positional printf tokens consume
+ * row values in order; `%#` is the row index; `%%` a literal percent.
+ * Unrecognized tokens and leftover values are left alone - names are labels,
+ * and a rough label beats a throw during registration.
+ */
+export function formatEachName(name: string, row: unknown[], index: number): string {
+  let i = 0;
+  return name.replace(/%[%#psdifjo]/g, (token) => {
+    if (token === "%%") return "%";
+    if (token === "%#") return String(index);
+    const value = i < row.length ? row[i++] : undefined;
+    if (token === "%p" || token === "%j" || token === "%o") {
+      try { return JSON.stringify(value) ?? String(value); } catch { return String(value); }
+    }
+    if (token === "%d" || token === "%i" || token === "%f") return String(Number(value));
+    return String(value);
   });
 }
 
@@ -314,7 +386,10 @@ export function snapshotPathFor(file: string): { dir: string; path: string } {
 }
 
 // In-memory cache per .snap path: loaded once, written through on each update.
-// Sequential execution within a file makes this race-free.
+// Race-free because `toMatchSnapshot` is synchronous end to end - the
+// read-modify-write never yields. (NOT because execution is sequential:
+// concurrent tests interleave. If any step here ever becomes async, this
+// needs real serialization.)
 const loaded = new Map<string, Map<string, string>>();
 
 function getSnapshots(path: string): Map<string, string> {

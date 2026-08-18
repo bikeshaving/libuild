@@ -382,6 +382,7 @@ test.todo = registerSkip;
 // (concurrency is an optimization, not a semantic guarantee), and the browser
 // runner is single-queue anyway.
 test.concurrent = test;
+(describe as any).concurrent = describe;
 describe.skip = function (_name: string, _fn?: () => void) {
   // The body is NOT evaluated, so inner tests neither run nor tally - we
   // can't count what never registers, and evaluating the body just to count

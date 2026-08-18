@@ -23,61 +23,16 @@ const isBun = typeof Bun !== "undefined";
 // (checking `window` would misfire for jsdom-based node tests).
 const isBrowser = typeof process === "undefined";
 
-/**
- * Format one `.each` row's test name, jest-style. Positional printf tokens
- * consume row values in order; `%#` is the row index; `%%` a literal percent.
- * Unrecognized tokens and leftover values are left alone (names are labels -
- * better a rough label than a throw during registration).
- */
-function formatEachName(name: string, row: unknown[], index: number): string {
-  let i = 0;
-  return name.replace(/%[%#psdifjo]/g, (token) => {
-    if (token === "%%") return "%";
-    if (token === "%#") return String(index);
-    const value = i < row.length ? row[i++] : undefined;
-    if (token === "%p" || token === "%j" || token === "%o") {
-      try { return JSON.stringify(value) ?? String(value); } catch { return String(value); }
-    }
-    if (token === "%d" || token === "%i" || token === "%f") return String(Number(value));
-    return String(value);
-  });
-}
-
-/**
- * `.each` for the node backend. bun:test/jest have it; node:test does not -
- * and its absence is the single most likely thing to bite a suite moving over
- * from `bun test`. Worse, the natural call sites sit inside describe()
- * callbacks, where the resulting `TypeError: it.each is not a function` used
- * to be swallowed entirely by node's TAP accounting (issue #23): nine call
- * sites in one real migration each registered zero tests, green. Each table
- * row registers one test through the given block, so downstream wrapping
- * (snapshot name-tracking, registration counting) sees ordinary calls.
- */
-function eachFor(block: (name: string, fn: (...args: any[]) => unknown) => unknown) {
-  return (table: unknown[]) => {
-    if (!Array.isArray(table)) {
-      throw new TypeError("each() expects an array table (template-literal tables are not supported)");
-    }
-    return (name: string, fn: (...args: any[]) => unknown) => {
-      table.forEach((row, index) => {
-        const args = Array.isArray(row) ? row : [row];
-        block(formatEachName(String(name), args, index), () => fn(...args));
-      });
-    };
-  };
-}
-
 async function loadNode() {
   const nodeTest = await import("node:test");
   const { expect } = await import("expect");
-  // node:test's blocks are plain extensible functions; attach `.each` and
-  // `.concurrent` only where the runtime lacks them, so a future node:test
-  // implementation wins. `.concurrent` registers plainly - sequential
-  // execution is a conforming implementation of concurrent semantics
-  // (concurrency is an optimization, not a guarantee), and it keeps
-  // bun-authored suites running unchanged on node.
+  // node:test's blocks are plain extensible functions. `.each` is supplied by
+  // the snapshot wrapper for every runtime (so rows are tracked and counted
+  // identically), but `.concurrent` is attached here where the runtime lacks
+  // it: registering plainly is a conforming implementation of concurrent
+  // semantics - concurrency is an optimization, not a guarantee - and it
+  // keeps bun-authored suites running unchanged on node.
   for (const block of [nodeTest.describe, nodeTest.test, nodeTest.it] as any[]) {
-    if (typeof block.each !== "function") block.each = eachFor(block);
     if (typeof block.concurrent !== "function") {
       block.concurrent = (...args: any[]) => (block as any)(...args);
     }
