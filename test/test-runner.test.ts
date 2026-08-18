@@ -582,7 +582,15 @@ test("browser bundle parses and contains no live node/bun imports", async () => 
   });
   expect(syntax).toBe(0);
 
-  expect(content).not.toMatch(/(import\(|from )"(bun:test|node:test|expect|node:fs|pretty-format)"/);
+  // Every stubbed specifier, not a sample: this PR added a static
+  // _snapshot -> @b9g/async-context -> node:async_hooks chain, and a live
+  // bare import of any of these kills the page at load while a `node --check`
+  // still passes (a live bare import is valid ESM).
+  for (const specifier of ["bun:test", "node:test", "expect", "fs", "node:fs",
+                           "module", "node:module", "pretty-format",
+                           "async_hooks", "node:async_hooks"]) {
+    expect(content).not.toMatch(new RegExp(`(import\\(|from )"${specifier.replace(":", "\\:")}"`));
+  }
   // The runner must start in a macrotask: a microtask fires before the
   // dispatcher's TLA continuations run test-file bodies -> zero tests register.
   expect(content).toMatch(/setTimeout\(async/);
@@ -989,6 +997,49 @@ function takeSnapshot(opts: {
   else api.test(opts.test, body);
   return result;
 }
+
+test("wrapped blocks keep their chained sub-methods (test.concurrent.each)", () => {
+  // The get trap used to rebuild sub-methods as bare functions, carrying none
+  // of the target's properties - so every CHAIN died with a TypeError at
+  // registration, aborting the rest of the file's registrations while the run
+  // could still report green. Recursive wrapping is what keeps chains alive.
+  const make = () => {
+    const block: any = (_n: string, _f?: any, _g?: any) => {};
+    block.concurrent = (_n: string, _f?: any) => {};
+    block.skip = (_n: string, _f?: any) => {};
+    block.only = (_n: string, _f?: any) => {};
+    return block;
+  };
+  const api = wrapTestApi({describe: make(), test: make(), it: make()});
+  for (const chain of ["concurrent", "skip", "only"]) {
+    expect(typeof (api.test as any)[chain]).toBe("function");
+    // .each hangs off every sub-method, synthesized when absent
+    expect(typeof (api.test as any)[chain].each).toBe("function");
+    expect(typeof (api.test as any)[chain].each([[1]])).toBe("function");
+  }
+});
+
+test("registration bodies are tracked wherever they sit, with arity preserved", () => {
+  // node dispatches callback-style on fn.length, so a rest-args wrapper
+  // reporting 0 makes a callback test pass WITHOUT running. And the body may
+  // sit after an options object - missing that left concurrent node bodies
+  // untracked, the exact misattribution this tracking prevents.
+  const seen: Array<{args: any[]; length: number}> = [];
+  const block: any = (...args: any[]) => {
+    const fn = args.find((a, i) => i >= 1 && typeof a === "function");
+    seen.push({args, length: fn ? fn.length : -1});
+  };
+  const api = wrapTestApi({describe: block, test: block, it: block});
+
+  api.test("plain", (_a: any, _b: any) => {});
+  expect(seen[0].length).toBe(2); // arity preserved
+
+  api.test("options form", {concurrency: true}, (_a: any, _b: any) => {});
+  // The body is still at index 2 (options untouched) and still wrapped
+  expect(typeof seen[1].args[2]).toBe("function");
+  expect(seen[1].args[1]).toEqual({concurrency: true});
+  expect(seen[1].length).toBe(2);
+});
 
 test("interleaved concurrent bodies attribute snapshots to their own names", async () => {
   // The reason tracking is an AsyncContext.Variable and not a global: two
