@@ -1207,9 +1207,14 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     throw error;
   }
 
-  // External only JSON files (npm deps handled by packages: "external", Node.js built-ins by platform: "node")
+  // npm deps are external via packages: "external"; Node builtins via
+  // platform: "node". JSON is deliberately NOT external: dist is the
+  // published package root, so an externalized relative JSON import emits a
+  // "../*.json" specifier that resolves above the package - the build and
+  // publish both succeed and only consumers break (silently shipped-broken).
+  // Bundling relative JSON (esbuild's native json loader, import attributes
+  // included) keeps every byte the package needs inside dist.
   const externalDeps = [
-    "*.json",  // Let Node.js handle JSON imports natively
     "esbuild",  // Explicit external to suppress require.resolve warning from esbuild's own code
     "bun:*",  // Bun built-ins (bun:test, bun:sqlite, etc.)
   ];
