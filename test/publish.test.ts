@@ -29,7 +29,7 @@ test("publish() prerequisite: build creates dist/package.json", async () => {
 
   // Cleanup
   await removeTempDir(testDir);
-});
+}, 60000);  // spawns the full CLI (build + npm) - far beyond bun's 5s default under load
 
 test("publish() error case: no src directory", async () => {
   const testDir = await createTempDir("publish-no-src");
@@ -98,7 +98,7 @@ test("publish command forwards basic flags to npm", async () => {
   expect(output).toContain("npm notice"); // npm --dry-run shows notices
 
   await removeTempDir(testDir);
-});
+}, 60000);  // spawns the full CLI (build + npm) - far beyond bun's 5s default under load
 
 test("publish command forwards multiple flags correctly", async () => {
   const testDir = await createTempDir("publish-multi-args-test");
@@ -133,7 +133,7 @@ test("publish command forwards multiple flags correctly", async () => {
   expect(output).toContain("npm notice");
 
   await removeTempDir(testDir);
-});
+}, 60000);  // spawns the full CLI (build + npm) - far beyond bun's 5s default under load
 
 test("publish handles conflicting access flags (user overrides libuild)", async () => {
   const testDir = await createTempDir("access-conflict-test");
@@ -172,7 +172,7 @@ test("publish handles conflicting access flags (user overrides libuild)", async 
   expect(output).toContain("restricted access");
 
   await removeTempDir(testDir);
-});
+}, 60000);  // spawns the full CLI (build + npm) - far beyond bun's 5s default under load
 
 test("publish handles unknown npm flags gracefully", async () => {
   const testDir = await createTempDir("invalid-flag-test");
@@ -210,7 +210,7 @@ test("publish handles unknown npm flags gracefully", async () => {
   expect(output).toContain("Warning: Ignoring unknown/unsafe npm flag: --invalid-flag");
 
   await removeTempDir(testDir);
-});
+}, 60000);  // spawns the full CLI (build + npm) - far beyond bun's 5s default under load
 
 test("publish handles complex flag combinations", async () => {
   const testDir = await createTempDir("complex-flags-test");
@@ -247,7 +247,7 @@ test("publish handles complex flag combinations", async () => {
   expect(output).toContain("with tag latest"); // Should use user's tag
 
   await removeTempDir(testDir);
-});
+}, 60000);  // spawns the full CLI (build + npm) - far beyond bun's 5s default under load
 
 // =============================================================================
 // Argument Parsing Logic Tests
@@ -329,7 +329,7 @@ test("stage refuses with a clear error when npm is too old (or explains staging)
   expect(output).not.toMatch(/Unknown command/i);
 
   await removeTempDir(testDir);
-});
+}, 60000);  // spawns the full CLI (build + npm) - far beyond bun's 5s default under load
 
 test("stage is dispatched with the same whitelist parser as publish", async () => {
   const testDir = await createTempDir("stage-whitelist");
@@ -352,4 +352,4 @@ test("stage is dispatched with the same whitelist parser as publish", async () =
   expect(output).toContain("Ignoring unknown/unsafe npm flag: --ignore-scripts");
 
   await removeTempDir(testDir);
-});
+}, 60000);  // spawns the full CLI (build + npm) - far beyond bun's 5s default under load
