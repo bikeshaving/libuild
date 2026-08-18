@@ -457,7 +457,7 @@ function loaderFor(path: string): ESBuild.Loader {
 /**
  * Keep `import.meta.url` / `.dirname` / `.filename` pointing at each SOURCE
  * file instead of the bundle. Bundling collapses every module's location to
- * `.libuild-test/bundle-*.js`, which silently breaks the
+ * the temp bundle dir, which silently breaks the
  * fixtures-next-to-the-test pattern (`new URL("./fixtures/x.json",
  * import.meta.url)`, `import.meta.dirname`) with failures that read as bugs
  * in the code under test - fold lost 3 of 20 files to this and the symptoms
@@ -1302,9 +1302,36 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
     console.log(`Using setup file: ${Path.relative(opts.cwd, setupFile)}`);
   }
 
-  // Create temp directory for bundles
-  const tempDir = Path.join(opts.cwd, ".libuild-test");
-  await FS.mkdir(tempDir, { recursive: true });
+  // Bundles live in the OS temp directory, NOT in the project - a cwd-local
+  // dir was annoying (gitignore noise, litter after a crashed run) and had a
+  // real collision: two simultaneous runs in one project shared it and each
+  // run's cleanup deleted the other's bundles. mkdtemp gives every run its
+  // own directory.
+  //
+  // The catch: bundles resolve their EXTERNALIZED packages by walking up from
+  // their own location, which is why the dir was under cwd in the first
+  // place. The up-walk is reproduced inside the temp dir instead: one nested
+  // level per ancestor of cwd that has a node_modules (outermost first), each
+  // level symlinking to the real thing - so a hoisted workspace member finds
+  // the root's node_modules exactly as it would from cwd, and everything in
+  // between is preserved in order.
+  const tempRoot = await FS.mkdtemp(Path.join(OS.tmpdir(), "libuild-test-"));
+  let tempDir = tempRoot;
+  {
+    const ancestors: string[] = [];
+    for (let dir = Path.resolve(opts.cwd); ; dir = Path.dirname(dir)) {
+      if (await FS.stat(Path.join(dir, "node_modules")).then((s) => s.isDirectory()).catch(() => false)) {
+        ancestors.unshift(Path.join(dir, "node_modules"));
+      }
+      if (dir === Path.dirname(dir)) break;
+    }
+    for (const nodeModules of ancestors) {
+      tempDir = Path.join(tempDir, "n");
+      await FS.mkdir(tempDir, { recursive: true });
+      // "junction" so Windows works without privileges; ignored elsewhere.
+      await FS.symlink(nodeModules, Path.join(tempDir, "node_modules"), "junction");
+    }
+  }
 
   const results: TestResult[] = [];
 
@@ -1330,9 +1357,11 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
 
     return printResults(results);
   } finally {
-    // Clean up temp directory (unless in debug mode)
+    // Clean up (unless in debug mode, where the bundles stay inspectable)
     if (!opts.debug) {
-      await FS.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+      await FS.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+    } else {
+      console.log(`Debug: bundles kept at ${tempDir}`);
     }
   }
 }

@@ -10,8 +10,8 @@
     "build": "bun run src/cli.ts",
     "publish": "bun run src/cli.ts publish",
     "prepublishOnly": "echo 'ERROR: Cannot publish from root directory. Use libuild publish instead.' && exit 1",
-    "test": "bun run src/cli.ts test 'test/*.test.ts' -p bun -p node --timeout 600000 --concurrency 4",
-    "test:bun": "bun test"
+    "test": "bun test",
+    "test:all": "bun run src/cli.ts test 'test/*.test.ts' -p bun -p node --timeout 600000 --concurrency 4"
   },
   "dependencies": {
     "@b9g/async-context": "^0.2.1",
