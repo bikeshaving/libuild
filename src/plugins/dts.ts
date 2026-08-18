@@ -32,6 +32,17 @@ export function dtsPlugin(options: TypeScriptPluginOptions): ESBuild.Plugin {
 
         // Try to import TypeScript
         let TS: typeof import("typescript");
+const immutableSourceFiles = new Map<string, any>();
+
+// -----------------------------------------------------------------------------
+// Immutable declaration inputs - TypeScript's own lib files and node_modules
+// types - parsed ONCE per process instead of once per createProgram. Every
+// build was re-parsing lib.d.ts and the dependency tree from scratch; in
+// libuild's own suite that meant 136 fresh programs each paying the full parse
+// cost, which dominated the suite's compute. Fixture/source files are never
+// cached (they change per build); SourceFile objects are immutable, and every
+// program here uses identical compiler options, so sharing is safe.
+// -----------------------------------------------------------------------------
         try {
           TS = await import("typescript");
         } catch (error) {
@@ -94,8 +105,22 @@ export function dtsPlugin(options: TypeScriptPluginOptions): ESBuild.Plugin {
             }
           }
 
-          // Create program with explicit config to avoid tsconfig.json interference
-          const program = TS.createProgram(resolvedTsFiles, compilerOptions);
+          // Create program with explicit config to avoid tsconfig.json
+          // interference, on a host that reuses parsed immutable inputs.
+          const host = TS.createCompilerHost(compilerOptions);
+          const realGetSourceFile = host.getSourceFile.bind(host);
+          host.getSourceFile = (fileName: string, languageVersion: any, ...rest: any[]) => {
+            const immutable = fileName.includes(`${Path.sep}node_modules${Path.sep}`) ||
+              /[\\/]typescript[\\/]lib[\\/]/.test(fileName);
+            if (!immutable) return realGetSourceFile(fileName, languageVersion, ...rest);
+            let cached = immutableSourceFiles.get(fileName);
+            if (!cached) {
+              cached = realGetSourceFile(fileName, languageVersion, ...rest);
+              if (cached) immutableSourceFiles.set(fileName, cached);
+            }
+            return cached;
+          };
+          const program = TS.createProgram(resolvedTsFiles, compilerOptions, host);
 
           // Custom writeFile to prevent emitting .d.ts files outside outDir
           // This can happen when files import from outside rootDir (e.g., bin importing from src)

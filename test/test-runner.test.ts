@@ -777,7 +777,7 @@ test("import.meta.url/dirname/filename point at the source file, not the bundle"
     'import assert from "node:assert/strict";\n' +
     'import {readFileSync} from "node:fs";\n' +
     'test("dirname is the source dir", () => {\n' +
-    '  assert.ok(!import.meta.dirname.includes(".libuild-test"), import.meta.dirname);\n' +
+    '  assert.ok(import.meta.dirname.endsWith("/tests"), import.meta.dirname);\n' +
     '  assert.ok(import.meta.filename.endsWith("paths.test.js"), import.meta.filename);\n' +
     '});\n' +
     'test("fixture loads relative to the test file", () => {\n' +
@@ -796,8 +796,8 @@ test("a helper file that registers no tests counts as 0 passed, not 1", () => {
   // the test glob showed as "1 passed". The synthetic entry is recognized by
   // the bundle basename and excluded from both the tally and the summary.
   const tap = `TAP version 13
-# Subtest: /tmp/x/.libuild-test/bundle-node-3.js
-ok 1 - /tmp/x/.libuild-test/bundle-node-3.js
+# Subtest: /tmp/libuild-test-x/n/bundle-node-3.js
+ok 1 - /tmp/libuild-test-x/n/bundle-node-3.js
   ---
   duration_ms: 20
   type: 'test'
