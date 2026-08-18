@@ -2,14 +2,14 @@ import {test, expect} from "bun:test";
 import * as FS from "fs/promises";
 import * as FSSync from "fs";
 import * as Path from "path";
-import {bundleTests, collectTests, packageTypeRefusal, parseBunOutput, parseRegistered, parseTapOutput, resolveTestTargets, shardFailure, stripRegistered, runTests} from "../src/_test-runner.ts";
+import {bundleTests, collectTests, packageTypeRefusal, parseBunOutput, parseRegistered, parseTapOutput, resolveTestTargets, shardFailure, stripRegistered, runTests} from "../src/internal/test-runner.ts";
 import {
   installSnapshotMatcher,
   wrapTestApi,
   parseSnapshots,
   formatSnapshots,
   snapshotPathFor,
-} from "../src/_snapshot.ts";
+} from "../src/internal/snapshot.ts";
 import {createTempDir, removeTempDir} from "./test-utils.ts";
 
 // A bundle-hostile CJS package that resolves a sibling file at load time,
@@ -715,7 +715,7 @@ test('libuild test refuses "type": "commonjs" packages on every platform (#21)',
 });
 
 test("registration counting covers only/skip/todo/each (denominator accuracy)", async () => {
-  const {wrapTestApi} = await import("../src/_snapshot.ts");
+  const {wrapTestApi} = await import("../src/internal/snapshot.ts");
 
   // Fake runner API shaped like bun's: sub-methods that register.
   const fake = () => {

@@ -3,8 +3,8 @@ import * as Path from "path";
 import {spawn} from "child_process";
 
 // All builds go through this wrapper so a dead esbuild service recovers instead
-// of cascading into every later build (see _esbuild.ts).
-import { build as esbuildBuild } from "./_esbuild.ts";
+// of cascading into every later build (see internal/esbuild.ts).
+import { build as esbuildBuild } from "./internal/esbuild.ts";
 import {umdPlugin} from "./plugins/umd.js";
 import {externalEntrypointsPlugin} from "./plugins/external.js";
 import {dtsPlugin} from "./plugins/dts.js";

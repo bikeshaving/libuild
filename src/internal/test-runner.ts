@@ -10,9 +10,9 @@ import * as OS from "os";
 import { createServer, type Server } from "http";
 import * as ESBuild from "esbuild";
 // All builds go through this wrapper so a dead esbuild service recovers instead
-// of cascading into every later build (see _esbuild.ts).
-import { build as esbuildBuild } from "./_esbuild.ts";
-import { packageTypeRefusalMessage } from "./libuild.ts";
+// of cascading into every later build (see internal/esbuild.ts).
+import { build as esbuildBuild } from "./esbuild.ts";
+import { packageTypeRefusalMessage } from "../libuild.ts";
 import { createRequire } from "module";
 
 // ---------------------------------------------------------------------------
@@ -46,7 +46,7 @@ const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
 const stripAnsi = (s: string): string => s.replace(ANSI_PATTERN, "");
 
 // ---------------------------------------------------------------------------
-// Registration total. `_snapshot.ts` counts the tests a file registers and
+// Registration total. `internal/snapshot.ts` counts the tests a file registers and
 // prints this marker on the child's stdout (see its REGISTERED_MARKER); we read
 // it back here so a timeout can say "12 of 47 finished" rather than just "12
 // finished". Wire format shared across the process boundary - keep in sync.
@@ -293,7 +293,7 @@ export async function resolveTestTargets(
 /**
  * Generate entry point that imports the setup file (if any) then all test files.
  * Also injects the two snapshot globals the portable toMatchSnapshot reads (see
- * `_snapshot`): the source file identifies the `.snap` file, and the update flag
+ * `internal/snapshot`): the source file identifies the `.snap` file, and the update flag
  * switches compare vs write. Both are read lazily at test-run time, so ESM
  * import hoisting placing them "after" the imports doesn't matter.
  */
@@ -1150,7 +1150,7 @@ ${bundleContent}
     let failed = results.failed;
 
     // Phase-aware uncaught errors, recorded IN the page (see noteUncaught in
-    // _test-browser.ts). Before the runner started: a test file's body
+    // internal/test-browser.ts). Before the runner started: a test file's body
     // aborted mid-registration, everything after it silently never
     // registered - fail. During the run: registration was already complete
     // (the runner starts on the entry's ready flag), so nothing was lost -
@@ -1169,7 +1169,7 @@ ${bundleContent}
     }
 
     // Zero tests out of discovered test files fails: the registration-loss
-    // class of bug (see the ready-flag comment in _test-browser.ts) produced
+    // class of bug (see the ready-flag comment in internal/test-browser.ts) produced
     // exactly this shape - files found, nothing registered, exit 0 - which
     // would merge as "suite silently disabled, CI green". A run that was
     // going to be empty never gets here (runTests returns early when no
