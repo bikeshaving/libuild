@@ -2,9 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.2.20] - 2026-08-17
+## [0.2.20] - 2026-08-18
 
 ### Added
+- **Concurrent tests with correct snapshot attribution, via AsyncContext.** Run-time current-test tracking is now an `AsyncContext.Variable` (`@b9g/async-context`, the TC39-shaped shim over `AsyncLocalStorage`) instead of a module global, so interleaved test bodies each see their own name: `toMatchSnapshot()` inside `test.concurrent` (bun) or options-form `test(name, {concurrency}, fn)` (node) files each snapshot under its own key - previously concurrent bodies would have silently misattributed each other's snapshots through the shared global, and `.concurrent` bodies weren't name-tracked or registration-counted at all. `test.concurrent` is also shimmed where the runtime lacks it (node backend, browser runner) as plain registration - sequential execution is a conforming implementation of concurrent semantics - so bun-authored concurrent suites run unchanged everywhere. Adds a `@b9g/async-context` dependency; `node:async_hooks` joins the browser-bundle stubs.
 - **`libuild stage`: staged publishing as its own command.** Builds and runs `npm stage publish` inside `dist/` - the version is uploaded to the registry in a not-installable state until a human runs `npm stage approve <stage-id>`, which always prompts for 2FA and therefore cannot be automated. A separate command rather than a `publish` flag: staging is a different operation, not a variant - the artifact does not go live. Shares publish's whitelist-validated flag parsing, `--access public` for scoped names, and `--save` semantics. Two preflights fail fast with clear errors before anything builds: staged publishing needs npm >= 11.15.0, and the package must already exist on the registry (a first release must be a normal `libuild publish`). The release workflow now runs `libuild stage --provenance`, so with a stage-only trusted publisher CI can never make a version live on its own.
 
 ### Fixed

@@ -70,10 +70,17 @@ function eachFor(block: (name: string, fn: (...args: any[]) => unknown) => unkno
 async function loadNode() {
   const nodeTest = await import("node:test");
   const { expect } = await import("expect");
-  // node:test's blocks are plain extensible functions; attach `.each` only
-  // where the runtime lacks it, so a future node:test implementation wins.
+  // node:test's blocks are plain extensible functions; attach `.each` and
+  // `.concurrent` only where the runtime lacks them, so a future node:test
+  // implementation wins. `.concurrent` registers plainly - sequential
+  // execution is a conforming implementation of concurrent semantics
+  // (concurrency is an optimization, not a guarantee), and it keeps
+  // bun-authored suites running unchanged on node.
   for (const block of [nodeTest.describe, nodeTest.test, nodeTest.it] as any[]) {
     if (typeof block.each !== "function") block.each = eachFor(block);
+    if (typeof block.concurrent !== "function") {
+      block.concurrent = (...args: any[]) => (block as any)(...args);
+    }
   }
   return {
     describe: nodeTest.describe,

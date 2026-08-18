@@ -378,6 +378,10 @@ function registerSkip(_name: string, _fn?: TestFn) {
 }
 test.skip = registerSkip;
 test.todo = registerSkip;
+// Sequential execution is a conforming implementation of `.concurrent`
+// (concurrency is an optimization, not a semantic guarantee), and the browser
+// runner is single-queue anyway.
+test.concurrent = test;
 describe.skip = function (_name: string, _fn?: () => void) {
   // The body is NOT evaluated, so inner tests neither run nor tally - we
   // can't count what never registers, and evaluating the body just to count

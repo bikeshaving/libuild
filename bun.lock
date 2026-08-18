@@ -5,6 +5,7 @@
     "": {
       "name": "libit",
       "dependencies": {
+        "@b9g/async-context": "^0.2.1",
         "commander": "^15.0.0",
         "esbuild": "^0.28.1",
         "expect": "^30.4.1",
@@ -17,7 +18,7 @@
       },
       "peerDependencies": {
         "playwright": "^1.40.0",
-        "typescript": "^5.0.0",
+        "typescript": "^5.0.0 || ^6.0.0",
       },
       "optionalPeers": [
         "playwright",
@@ -26,6 +27,8 @@
     },
   },
   "packages": {
+    "@b9g/async-context": ["@b9g/async-context@0.2.1", "", {}, "sha512-Pga+sVg8yVR1Z40BkeK/OWKNJeXlA2XhZWusx6g7dM956biRSTfdInS29Z3WIfvdXi8YsgSzTOiOhcQlD8U2pw=="],
+
     "@babel/code-frame": ["@babel/code-frame@7.27.1", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.27.1", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-cjQ7ZlQ0Mv3b47hABuTevyTuYN4i+loJKGeV9flcCgIK37cCXRh+L1bd3iBHlynerhQ7BhCkn2BPbQUL+rGqFg=="],
 
     "@babel/helper-validator-identifier": ["@babel/helper-validator-identifier@7.28.5", "", {}, "sha512-qSs4ifwzKJSV39ucNjsvc6WVHs6b7S03sOh2OcHF9UHfVPqWWALUsNUVzhSBiItjRZoLHx7nIarVjqKVusUZ1Q=="],

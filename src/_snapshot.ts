@@ -19,6 +19,11 @@
  *    import of the builtin would crash the browser bundle at load).
  */
 
+// The one static import this module allows itself: the AsyncContext shim,
+// needed at module init for the current-test variable. Browser bundles link
+// it against the node:async_hooks stub and never initialize this chunk.
+import {AsyncVariable} from "@b9g/async-context";
+
 // ---------------------------------------------------------------------------
 // Runtime deps, loaded dynamically on node/bun only (never on browser).
 // Cached so the sync matcher can use them without awaiting.
@@ -29,11 +34,23 @@ let prettyFormat: ((value: unknown, opts?: Record<string, unknown>) => string) |
 
 // ---------------------------------------------------------------------------
 // Current-test tracking (populated by the wrapped describe/test/it below).
-// Tests run sequentially within a file on both runtimes, so a plain stack /
-// single "current name" is sufficient (documented constraint).
+//
+// The DESCRIBE stack is a plain array: describe bodies run synchronously
+// during module evaluation, which is inherently sequential, so a global is
+// correct there.
+//
+// The RUN-time "which test is executing" is an AsyncContext.Variable
+// (@b9g/async-context, AsyncLocalStorage under the hood): with concurrent
+// tests (bun's test.concurrent, node's concurrency options) two interleaved
+// async bodies would otherwise misattribute each other's toMatchSnapshot()
+// keys through a shared global - silently writing the right snapshot under
+// the wrong name. Context propagation follows each body's own await chain,
+// so attribution holds no matter how tests interleave. This module only
+// loads on node/bun (test.ts gates it), where async_hooks exists; the
+// browser runner is sequential and has no snapshots.
 // ---------------------------------------------------------------------------
 const describeStack: string[] = [];
-let currentTestName: string | null = null;
+const currentTest = new AsyncVariable<string>({name: "libuild-current-test"});
 // key = test full name (+ optional hint); value = how many snapshots taken so
 // far in that test, so repeated toMatchSnapshot() calls get "name 1", "name 2".
 const counters = new Map<string, number>();
@@ -88,28 +105,16 @@ function noteRegistration(n: number = 1): void {
 }
 
 /**
- * Wrap a test body so that, while it runs, `currentTestName` reflects it. The
- * full name is captured HERE (at registration, when the describe stack is
- * populated), not when the body later runs. Handles sync and async bodies.
+ * Wrap a test body so that, while it runs, the current-test variable reflects
+ * it. The full name is captured HERE (at registration, when the describe stack
+ * is populated), not when the body later runs. The variable's value follows
+ * the body's own async chain, so concurrently-interleaved tests each see
+ * their own name (no restore bookkeeping - context exits with the scope).
  */
 function trackBody(name: unknown, fn: (...args: any[]) => any): (...args: any[]) => any {
   const fullName = fullNameFor(name);
   return function (this: any, ...args: any[]) {
-    const prev = currentTestName;
-    currentTestName = fullName;
-    let popped = false;
-    const restore = () => { if (!popped) { popped = true; currentTestName = prev; } };
-    try {
-      const r = fn.apply(this, args);
-      if (r && typeof r.then === "function") {
-        return Promise.resolve(r).finally(restore);
-      }
-      restore();
-      return r;
-    } catch (e) {
-      restore();
-      throw e;
-    }
+    return currentTest.run(fullName, () => fn.apply(this, args));
   };
 }
 
@@ -166,9 +171,16 @@ function wrapBlock(real: any, track: (name: unknown, fn: any) => any, counts = f
     apply(target, thisArg, args) {
       const [name, body, ...rest] = args;
       if (counts) noteRegistration();
-      return typeof body === "function"
-        ? Reflect.apply(target, thisArg, [name, track(name, body), ...rest])
-        : Reflect.apply(target, thisArg, args);
+      if (typeof body === "function") {
+        return Reflect.apply(target, thisArg, [name, track(name, body), ...rest]);
+      }
+      // node:test options form: test(name, {concurrency, ...}, fn) - the body
+      // sits after the options object and still needs tracking (concurrent
+      // node tests misattribute snapshots without it).
+      if (body != null && typeof body === "object" && typeof rest[0] === "function") {
+        return Reflect.apply(target, thisArg, [name, body, track(name, rest[0]), ...rest.slice(1)]);
+      }
+      return Reflect.apply(target, thisArg, args);
     },
     get(target, prop) {
       // Resolve against target (not the proxy) so bun's branded getters accept
@@ -178,8 +190,11 @@ function wrapBlock(real: any, track: (name: unknown, fn: any) => any, counts = f
       if (typeof value !== "function") return value;
       // Bind so the resolved sub-method sees `this === target` when called.
       const bound = value.bind(target);
-      if (prop === "only") {
-        // .only runs its body -> track it too.
+      if (prop === "only" || prop === "concurrent") {
+        // .only and .concurrent both RUN their bodies -> track them.
+        // .concurrent especially: untracked, interleaved bodies would
+        // misattribute snapshots through each other (the AsyncVariable in
+        // trackBody is what makes the attribution hold - see currentTest).
         return function (name: unknown, body: unknown, ...rest: any[]) {
           if (counts) noteRegistration();
           return typeof body === "function"
@@ -347,7 +362,7 @@ function toMatchSnapshot(this: any, received: unknown, hint?: string): MatcherRe
   }
   const update = (globalThis as any).__LIBUILD_UPDATE_SNAPSHOTS__ === true;
 
-  const testName = currentTestName ?? "<unknown>";
+  const testName = currentTest.get() ?? "<unknown>";
   const base = hint ? `${testName}: ${hint}` : testName;
   const n = (counters.get(base) ?? 0) + 1;
   counters.set(base, n);

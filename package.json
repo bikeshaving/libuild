@@ -14,6 +14,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@b9g/async-context": "^0.2.1",
     "commander": "^15.0.0",
     "esbuild": "^0.28.1",
     "expect": "^30.4.1",
