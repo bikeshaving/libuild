@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.21] - 2026-08-18
+
+### Fixed
+- **Relative JSON imports bundle into dist.** They were externalized without relocation, so the published package carried a `../*.json` specifier pointing above its own root - builds and publishes succeeded, only installed consumers broke. esbuild's JSON loader now bundles them (import attributes included).
+- **`--timeout` now also sets bun's per-test timeout.** bun's 5s per-test default was killing slow tests long before the per-file budget applied.
+
+### Changed
+- **No more `.libuild-test/` in your project.** Test bundles live in a per-run temp directory under the OS tmpdir, with your `node_modules` ancestry symlink-mirrored so dependency resolution (hoisted workspaces included) is unchanged. Also fixes litter after crashed runs and a collision between simultaneous runs.
+- **Builds are faster:** TypeScript's lib and dependency declarations are parsed once per process instead of once per build.
+- The publish-guard message now says "Use libuild to publish or stage the package" instead of naming one workflow.
+
+### Added
+- **First-publish hint:** publishing a never-published name prints the `npm trust ... --allow-stage-publish` command that enables staged releases from CI - both that grant and staging itself require the package to exist, so the first publish is the only moment to learn it.
+- README documentation for `libuild test` (flags, timeout semantics, runtime notes incl. bun's no-nested-test limitation).
+
 ## [0.2.20] - 2026-08-18
 
 ### Removed
