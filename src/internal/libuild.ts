@@ -1908,7 +1908,8 @@ export async function publish(cwd: string, save: boolean = true, extraArgs: stri
 First publish! To enable staged releases from CI (uploads that cannot go`);
     console.info(`live without your 2FA approval), grant a stage-only trusted publisher:`);
     console.info(`  npm trust github ${pkgName} --repo ${repo} --file release.yml --allow-stage-publish`);
-    console.info(`then run 'libuild stage --provenance' from that workflow.`);
+    console.info(`Grant BEFORE tagging: a release tag pushed now would fire the workflow`);
+    console.info(`with no grant and this version already on the registry. Publish, grant, tag.`);
   }
 }
 
