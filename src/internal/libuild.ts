@@ -1904,11 +1904,8 @@ export async function publish(cwd: string, save: boolean = true, extraArgs: stri
 
   if (firstPublish && pkgName) {
     const repo = slug ?? "<owner>/<repo>";
-    console.info(`
-First publish! To enable staged releases from CI (uploads that cannot go`);
-    console.info(`live without your 2FA approval), grant a stage-only trusted publisher:`);
+    console.info(`\nFirst publish! To enable staged releases from CI, grant the trusted publisher BEFORE tagging:`);
     console.info(`  npm trust github ${pkgName} --repo ${repo} --file release.yml --allow-stage-publish`);
-    console.info(`then run 'libuild stage --provenance' from that workflow.`);
   }
 }
 
