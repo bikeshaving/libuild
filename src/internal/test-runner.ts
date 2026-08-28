@@ -5,6 +5,7 @@
  */
 
 import * as FS from "fs/promises";
+import { rmSync } from "fs";
 import * as Path from "path";
 import * as OS from "os";
 import { createServer, type Server } from "http";
@@ -554,6 +555,9 @@ const require = __libuild_node_module.createRequire(import.meta.url);
 
   const buildOptions: ESBuild.BuildOptions = {
     entryPoints: [entryPath],
+    // Paths in the output are recorded relative to this, so the bundle's
+    // content does not carry the run's random temp directory name.
+    absWorkingDir: outDir,
     bundle: true,
     format: "esm",
     outfile: outPath,
@@ -1343,6 +1347,32 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
 
   const results: TestResult[] = [];
 
+  // `finally` below covers a thrown error, but a signal is not an error: Ctrl-C
+  // tears the process down with the whole temp tree still on disk, and these
+  // trees hold megabyte-scale bundles per run. Clean up from a handler too -
+  // synchronously, because an awaited unlink would not finish before the
+  // process goes away - then re-raise so the exit status stays conventional.
+  const removeTempRoot = () => {
+    try {
+      rmSync(tempRoot, { recursive: true, force: true });
+    } catch {
+      // Best-effort: a failed cleanup must never mask the signal.
+    }
+  };
+  const SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
+  const detachSignalHandlers = () => {
+    for (const signal of SIGNALS) process.removeListener(signal, onSignal);
+  };
+  const onSignal = (signal: NodeJS.Signals) => {
+    detachSignalHandlers();
+    if (!opts.debug) removeTempRoot();
+    process.kill(process.pid, signal); // default behavior, now that we're off
+  };
+  // Handlers are detached in `finally`: runTests is called repeatedly in one
+  // process by libuild's own suite, and leaving them attached would pile up
+  // listeners on every call.
+  for (const signal of SIGNALS) process.on(signal, onSignal);
+
   try {
     for (const platform of opts.platforms) {
       let result: TestResult;
@@ -1365,6 +1395,7 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
 
     return printResults(results);
   } finally {
+    detachSignalHandlers();
     // Clean up (unless in debug mode, where the bundles stay inspectable)
     if (!opts.debug) {
       await FS.rm(tempRoot, { recursive: true, force: true }).catch(() => {});

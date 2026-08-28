@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **Test bundles no longer poison bun's transpiler cache.** Every run wrote its generated entry into a fresh `mkdtemp` directory, and esbuild records each input's path as a comment - so a bundle whose code had not changed at all still differed by the six random characters of the temp directory name. Above bun's size threshold that cache is content-addressed with no eviction and no TTL, so an unchanged test file deposited a fresh ~1.7MB entry on every run, permanently, and `bun pm cache rm` does not reach it (that clears the install cache, a different directory). Bundling now runs with `absWorkingDir` set to the temp root, so recorded paths are relative and the output is byte-identical across runs - the cache hits instead of growing. Reported from a real 49G / 34,204-file cache.
+- **Interrupted runs no longer leave their temp trees behind.** Cleanup lived only in a `finally`, which a signal does not run, so every Ctrl-C stranded a full bundle directory. `SIGINT`/`SIGTERM`/`SIGHUP` now remove it synchronously and re-raise, leaving the exit status conventional.
+
 ## [0.2.21] - 2026-08-18
 
 ### Fixed
