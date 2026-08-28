@@ -563,3 +563,37 @@ test("shebang replacement for bin entries", async () => {
   await removeTempDir(testDir);
 }, 60000);  // builds a fixture - beyond bun's 5s default under load
 
+
+test("--save writes no main/module/types when there is no main entry", async () => {
+  // libuild's own shape: several src entries, none named `index` and none
+  // matching the package name, so detectMainEntry returns undefined and the
+  // package gets no root export (0.2.20 made that deliberate). Interpolating
+  // that absent entry wrote `"module": "./dist/undefined.js"` into the root
+  // manifest - a field pointing at a file that never exists, which anything
+  // resolving through it (a bundler, `npm link` against the repo) then fails
+  // on. The published manifest guarded this; the --save path did not.
+  const testDir = await createTempDir("no-main-entry-save");
+  try {
+    await FS.writeFile(
+      Path.join(testDir, "package.json"),
+      JSON.stringify({name: "no-main-entry", version: "0.0.1", type: "module"}, null, 2)
+    );
+    const srcDir = Path.join(testDir, "src");
+    await FS.mkdir(srcDir, {recursive: true});
+    await FS.writeFile(Path.join(srcDir, "alpha.ts"), "export const alpha = 1;\n");
+    await FS.writeFile(Path.join(srcDir, "beta.ts"), "export const beta = 2;\n");
+
+    await build(testDir, true);
+
+    const rootPkg = JSON.parse(
+      await FS.readFile(Path.join(testDir, "package.json"), "utf-8")
+    );
+    expect(rootPkg.module).toBeUndefined();
+    expect(rootPkg.main).toBeUndefined();
+    expect(rootPkg.types).toBeUndefined();
+    // Belt and braces: no field anywhere may carry a stringified undefined.
+    expect(JSON.stringify(rootPkg)).not.toContain("undefined");
+  } finally {
+    await removeTempDir(testDir);
+  }
+});

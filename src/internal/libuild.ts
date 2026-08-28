@@ -1636,16 +1636,20 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     }
     rootPkg.scripts.prepublishOnly = "echo 'ERROR: Cannot publish from root directory. Use libuild to publish or stage the package.' && exit 1";
 
-    // Update main/module/types to point to dist (flat layout)
-    if (options.formats.cjs) {
-      rootPkg.main = `./dist/${mainEntry}.cjs`;
-    }
-    rootPkg.module = `./dist/${mainEntry}.js`;
+    // Update main/module/types to point to dist (flat layout). Bin-only
+    // packages have no main entry - interpolating one that isn't there wrote
+    // a `./dist/undefined.js` into the manifest, pointing at nothing.
+    if (mainEntry) {
+      if (options.formats.cjs) {
+        rootPkg.main = `./dist/${mainEntry}.cjs`;
+      }
+      rootPkg.module = `./dist/${mainEntry}.js`;
 
-    // Only include types field if .d.ts file exists
-    const dtsPath = Path.join(distDir, `${mainEntry}.d.ts`);
-    if (await fileExists(dtsPath)) {
-      rootPkg.types = `./dist/${mainEntry}.d.ts`;
+      // Only include types field if .d.ts file exists
+      const dtsPath = Path.join(distDir, `${mainEntry}.d.ts`);
+      if (await fileExists(dtsPath)) {
+        rootPkg.types = `./dist/${mainEntry}.d.ts`;
+      }
     }
 
     if (rootPkg.typings && typeof rootPkg.typings === "string") {
