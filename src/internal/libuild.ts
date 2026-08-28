@@ -7,6 +7,7 @@ import {spawn} from "child_process";
 import { build as esbuildBuild } from "./esbuild.ts";
 import {umdPlugin} from "../plugins/umd.js";
 import {externalEntrypointsPlugin} from "../plugins/external.js";
+import {litestStripPlugin} from "../plugins/litest.js";
 import {dtsPlugin} from "../plugins/dts.js";
 
 // Generate runtime detection banner for bin entries
@@ -1316,6 +1317,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
         packages: "external",
         supported: { "import-attributes": true },
         plugins: [
+          litestStripPlugin(),
           externalEntrypointsPlugin({
             entryNames: allEntryNames,
             outputExtension: ".js"
@@ -1386,6 +1388,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
             packages: "external",
             supported: { "import-attributes": true },
             plugins: [
+              litestStripPlugin(),
               externalEntrypointsPlugin({
                 entryNames: srcEntryNames,
                 outputExtension: ".cjs"
@@ -1439,7 +1442,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       platform: "node",
       target: "node20",
       supported: { "import-attributes": true },
-      plugins: [umdPlugin({globalName})],
+      plugins: [litestStripPlugin(), umdPlugin({globalName})],
     });
   }
 

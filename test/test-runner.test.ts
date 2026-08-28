@@ -1366,3 +1366,30 @@ test("browser bundles target es2022 so the dispatcher's top-level await builds (
   await bundleTests([file], "chromium", dir, dir); // must not throw
   await removeTempDir(dir);
 });
+
+test("bundling the same file twice produces byte-identical output", async () => {
+  // The bundle's content must not carry the run's random temp directory name.
+  // esbuild records each input's path as a comment, so without absWorkingDir
+  // the mkdtemp suffix landed inside a ~1MB bundle, and bun's content-addressed
+  // transpiler cache - which has no eviction - stored a fresh ~1.7MB copy on
+  // every run of an unchanged test file.
+  const projDir = await createTempDir("bundle-determinism-proj");
+  const outA = await createTempDir("bundle-determinism-a");
+  const outB = await createTempDir("bundle-determinism-b");
+  try {
+    const testFile = Path.join(projDir, "same.test.ts");
+    await FS.writeFile(testFile, `export const value = 1;\n`);
+
+    const a = await FS.readFile(await bundleTests([testFile], "bun", outA, projDir, "0"), "utf-8");
+    const b = await FS.readFile(await bundleTests([testFile], "bun", outB, projDir, "0"), "utf-8");
+
+    expect(a).toBe(b);
+    // And specifically: neither temp directory's name is anywhere in it.
+    expect(a).not.toContain(Path.basename(outA));
+    expect(a).not.toContain(Path.basename(outB));
+  } finally {
+    await removeTempDir(projDir);
+    await removeTempDir(outA);
+    await removeTempDir(outB);
+  }
+});
