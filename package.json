@@ -74,7 +74,8 @@
     "./test.js": {
       "types": "./dist/test.d.ts",
       "import": "./dist/test.js"
-    }
+    },
+    "./litest.d.ts": "./dist/litest.d.ts"
   },
   "files": [
     "dist/",
