@@ -93,7 +93,7 @@ const program = new Command();
 program
   .name("libuild")
   .description("Zero-config library builds")
-  .version("0.1.22");
+  .version("0.2.22");
 
 program
   .command("build", { isDefault: true })
