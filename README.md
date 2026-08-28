@@ -273,6 +273,60 @@ Import the portable API from `@b9g/libuild/test` (`describe`/`test`/`it`/`expect
 
 Flags: `--timeout <ms>` is the per-file budget, and on bun it is also applied as the per-test timeout (bun defaults to 5s per test; without this, slow tests die before the file budget matters). `--concurrency <n>` caps how many files run at once — lower it for suites whose tests spawn their own processes. `--filter <glob>` selects files; `-u` updates snapshots; `--debug` keeps the browser open and preserves the bundle directory.
 
+### In-source tests
+
+Tests can live in the module they cover, the way Rust's `mod tests` does. They
+share the module's closure, so they can reach helpers and state that is never
+exported:
+
+```ts
+const SEEN = new Map<string, number>();
+
+function memoKey(a: number, b: number) { return `${a}:${b}`; }
+
+export function addMemo(a: number, b: number) {
+  const key = memoKey(a, b);
+  if (SEEN.has(key)) { return SEEN.get(key)!; }
+  const out = a + b;
+  SEEN.set(key, out);
+  return out;
+}
+
+if (import.meta.litest) {
+  const {test, expect} = import.meta.litest;
+
+  test("memoizes", () => {
+    expect(addMemo(1, 2)).toBe(3);
+    expect(SEEN.get(memoKey(1, 2))).toBe(3);   // never exported
+  });
+}
+```
+
+There is nothing to import: `import.meta.litest` **is** the test API, the same
+surface `@b9g/libuild/test` exports. `libuild test` injects it and runs these
+files alongside your `*.test.*` suite; any file under `src/` containing the
+guard is discovered.
+
+`libuild build` removes the block completely — the assertions, and any import
+only the test needed. Nothing about the published package reveals the tests
+were there, and consumers never need libuild installed to load your library.
+
+Two things worth knowing:
+
+- **Write the guard as `if (import.meta.litest)`.** Discovery looks for exactly
+  that, so a test block behind a different expression is stripped from the build
+  but never run.
+- **Files containing in-source tests are syntax-minified in `dist`** (`if`/`continue`
+  collapsed to `||`, and so on). Removing the block requires constant folding,
+  which libuild applies per file rather than turning it on for the whole build —
+  so modules without in-source tests keep byte-identical output.
+
+For TypeScript, add libuild's ambient declaration to your `tsconfig.json`:
+
+```json
+{"compilerOptions": {"types": ["@b9g/libuild/litest.d.ts"]}}
+```
+
 Runtime notes:
 
 - **bun cannot nest `test()` inside `test()`** (oven-sh/bun#5090). Notably, ESLint's `RuleTester` registers nested subtests, so rule suites hit `NotImplementedError` on bun — either run those with `-p node`, or flatten RuleTester's hooks (`RuleTester.describe = (_n, fn) => fn()` inside one enclosing test) to stay portable.

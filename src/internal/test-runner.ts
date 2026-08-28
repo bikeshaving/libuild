@@ -14,7 +14,9 @@ import * as ESBuild from "esbuild";
 // of cascading into every later build (see internal/esbuild.ts).
 import { build as esbuildBuild } from "./esbuild.ts";
 import { packageTypeRefusalMessage } from "./libuild.ts";
+import { LITEST_GUARD, LITEST_MARKER } from "../plugins/litest.ts";
 import { createRequire } from "module";
+import { fileURLToPath } from "url";
 
 // ---------------------------------------------------------------------------
 // Color output. Zero-config, following the de-facto conventions: honor NO_COLOR
@@ -230,9 +232,12 @@ export async function collectTests(
   patterns: string[],
   files: string[] = []
 ): Promise<{ testFiles: string[]; setupFile: string | null }> {
+  // Naming files explicitly means "run exactly these", so in-source discovery
+  // joins the glob-driven path only - the same condition that gates `patterns`.
   const selected = [
     ...files.map((f) => Path.resolve(cwd, f)),
     ...(patterns.length ? await findTestFiles(cwd, patterns) : []),
+    ...(patterns.length ? await findInSourceTestFiles(cwd) : []),
   ];
 
   // The setup file is itself a *.test.* match (see isSetupFile), so it's found
@@ -511,6 +516,74 @@ function makeImportMetaPlugin(): ESBuild.Plugin {
   };
 }
 
+const IN_SOURCE_PATTERNS = ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"];
+
+/**
+ * In-source tests live in ordinary source files, so the `*.test.*` globs never
+ * see them. Find them by scanning for the canonical guard (see LITEST_GUARD):
+ * cheap, no parsing, and narrow enough that a file merely mentioning the
+ * property in prose is not mistaken for a suite.
+ *
+ * Rooted at `src/` when it exists - that is the only tree libuild builds, so it
+ * bounds the scan instead of reading every file in the repository.
+ */
+export async function findInSourceTestFiles(cwd: string): Promise<string[]> {
+  const srcDir = Path.join(cwd, "src");
+  const root = await FS.stat(srcDir).then((st) => st.isDirectory(), () => false)
+    ? srcDir
+    : cwd;
+  const candidates = await findTestFiles(root, IN_SOURCE_PATTERNS);
+  const hits = await Promise.all(
+    candidates.map(async (file) => {
+      if (file.endsWith(".d.ts")) return null;
+      const contents = await FS.readFile(file, "utf-8").catch(() => "");
+      return LITEST_GUARD.test(contents) ? file : null;
+    })
+  );
+  return hits.filter((file): file is string => file !== null);
+}
+
+/** The identifier `import.meta.litest` becomes. */
+const LITEST_API_BINDING = "__libuild_litest_api";
+
+/**
+ * What the inject shim imports to get the test API.
+ *
+ * Consumers get the package specifier, which `packages: "external"` keeps
+ * external on node/bun exactly as it keeps the test files' own imports - the
+ * externalization reasoned about at the `plugins` option below applies
+ * unchanged. libuild's own repository has no self-link (nothing installs a
+ * package into itself), so there the shim falls back to this module's sibling
+ * `test` source, letting libuild run in-source tests on itself.
+ */
+async function litestApiSpecifier(cwd: string): Promise<string> {
+  // Ask the question the RUNTIME will ask, not the one `createRequire` answers:
+  // the bundle resolves this specifier from the temp dir, which mirrors cwd's
+  // node_modules chain (see runTests). A build-time resolve is not the same
+  // question - it finds bun's global install cache, which that mirror does not
+  // reproduce, and the bundle then fails to load.
+  for (let dir = Path.resolve(cwd); ; dir = Path.dirname(dir)) {
+    const installed = Path.join(dir, "node_modules", "@b9g", "libuild");
+    if (await FS.stat(installed).then((st) => st.isDirectory(), () => false)) {
+      return "@b9g/libuild/test";
+    }
+    if (dir === Path.dirname(dir)) break;
+  }
+  // Not installed anywhere above cwd: libuild running on its own repository.
+  for (const relative of ["../test.ts", "./test.js"]) {
+    const candidate = fileURLToPath(new URL(relative, import.meta.url));
+    if (await FS.stat(candidate).then(() => true, () => false)) return candidate;
+  }
+  return "@b9g/libuild/test"; // let esbuild report the resolution failure
+}
+
+function litestShim(specifier: string): string {
+  return (
+    `import * as api from ${JSON.stringify(specifier)};\n` +
+    `export const ${LITEST_API_BINDING} = api;\n`
+  );
+}
+
 /**
  * Bundle tests for a specific platform.
  * Exported for tests that assert externalization behavior.
@@ -541,6 +614,34 @@ export async function bundleTests(
     .catch(() => {});
 
   await FS.writeFile(entryPath, entryContent);
+
+  // The in-source test API (`import.meta.litest`), for shards that have one.
+  //
+  // It cannot ride in on a `banner`: banners are raw text spliced in AFTER
+  // bundling, so a bare specifier would survive unresolved into the browser
+  // bundle. `inject` runs the shim through the bundler like any other module
+  // and substitutes the binding into every file that mentions it, which is what
+  // lets one define reach modules that never imported anything.
+  //
+  // Gated, and that gate is load-bearing rather than an optimization: the shim
+  // imports libuild's test module, which has side effects and therefore cannot
+  // be tree-shaken back out of a bundle that turned out not to need it. Adding
+  // it everywhere pulled that module - and its dependencies - into every shard,
+  // and any project without libuild installed then had nothing for those
+  // externals to resolve against.
+  const hasInSourceTests = (
+    await Promise.all(
+      testFiles.map((file) =>
+        FS.readFile(file, "utf-8").then((c) => LITEST_GUARD.test(c), () => false)
+      )
+    )
+  ).some(Boolean);
+
+  const shimPath = Path.join(outDir, "litest-shim.ts");
+  if (hasInSourceTests) {
+    const shim = litestShim(await litestApiSpecifier(cwd));
+    await FS.writeFile(shimPath, shim, { flag: "wx" }).catch(() => {});
+  }
 
   // For Node/Bun, inject a require shim for CJS interop of external deps.
   // Namespaced import: a plain \`import { createRequire }\` collides with any
@@ -587,12 +688,17 @@ const require = __libuild_node_module.createRequire(import.meta.url);
       : { packages: "external" as const, plugins: [makeImportMetaPlugin()] }),
     // Inject require shim for node/bun to handle CJS deps like expect/chalk
     ...(isBrowser ? {} : { banner: { js: requireShim } }),
+    ...(hasInSourceTests ? { inject: [shimPath] } : {}),
     // Define for dead code elimination; on node/bun also redirect the three
     // path-shaped import.meta members to per-file bindings (see
     // makeImportMetaPlugin). Browser bundles keep the bundle-relative
     // meaning - there is no source filesystem in a page.
     define: {
       "process.env.NODE_ENV": '"test"',
+      // In-source tests: the guard that strips the block from a library build
+      // is the same expression that hands it the test API here. Computed, so
+      // this file does not contain the marker it scans other files for.
+      ...(hasInSourceTests ? { [LITEST_MARKER]: LITEST_API_BINDING } : {}),
       ...(isBrowser ? {} : IMPORT_META_DEFINE),
     },
     logLevel: "warning",
