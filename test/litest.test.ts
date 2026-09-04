@@ -6,7 +6,7 @@ import {findInSourceTestFiles} from "../src/internal/test-runner.ts";
 import {LITEST_GUARD, LITEST_MARKER} from "../src/plugins/litest.ts";
 import {createTempDir, removeTempDir} from "./test-utils.ts";
 
-// In-source tests: `if (import.meta.litest) { ... }` blocks written next to the
+// In-source tests: blocks guarded on the litest marker, written next to the
 // code they cover. The library build must erase them completely - the point of
 // the feature is that the published package cannot tell they were ever there.
 
@@ -91,7 +91,7 @@ test("build erases the in-source test block", async () => {
   } finally {
     await removeTempDir(dir);
   }
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("a module with no in-source tests keeps its unminified shape", async () => {
   const dir = await scaffold("insrc-untouched", {"plain.ts": WITHOUT_TESTS});
@@ -109,7 +109,7 @@ test("a module with no in-source tests keeps its unminified shape", async () => 
   } finally {
     await removeTempDir(dir);
   }
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("stripping reaches bundled modules, not just entrypoints", async () => {
   // Every top-level src file is its own entrypoint, so a nested module is what
@@ -129,7 +129,7 @@ test("stripping reaches bundled modules, not just entrypoints", async () => {
   } finally {
     await removeTempDir(dir);
   }
-});
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
 
 test("discovery finds source files carrying a guard", async () => {
   const dir = await scaffold("insrc-discovery", {
@@ -159,11 +159,13 @@ test("discovery ignores a file that only mentions the property in prose", async 
 });
 
 test("the guard matches its spellings and nothing else", () => {
-  expect(LITEST_GUARD.test("if (import.meta.litest) {")).toBe(true);
-  expect(LITEST_GUARD.test("if(import.meta.litest){")).toBe(true);
-  expect(LITEST_GUARD.test("if ( import.meta.litest ) {")).toBe(true);
-  expect(LITEST_GUARD.test("// see import.meta.litest for details")).toBe(false);
-  expect(LITEST_GUARD.test("const api = import.meta.litest;")).toBe(false);
+  // Spelled through the marker, never literally: a literal guard here makes
+  // this file discover itself (see the test below).
+  expect(LITEST_GUARD.test(`if (${LITEST_MARKER}) {`)).toBe(true);
+  expect(LITEST_GUARD.test(`if(${LITEST_MARKER}){`)).toBe(true);
+  expect(LITEST_GUARD.test(`if ( ${LITEST_MARKER} ) {`)).toBe(true);
+  expect(LITEST_GUARD.test(`// see ${LITEST_MARKER} for details`)).toBe(false);
+  expect(LITEST_GUARD.test(`const api = ${LITEST_MARKER};`)).toBe(false);
 });
 
 test("the modules implementing in-source tests are not themselves suites", async () => {
@@ -174,4 +176,15 @@ test("the modules implementing in-source tests are not themselves suites", async
   const names = found.map((f) => Path.relative(src, f));
   expect(names).not.toContain(Path.join("plugins", "litest.ts"));
   expect(names).not.toContain(Path.join("internal", "test-runner.ts"));
+});
+
+test("this file is not itself discovered as a suite", async () => {
+  // A literal guard here is enough to make the runner inject the litest shim
+  // into this file's own bundle. The shim imports the test API, which in this
+  // repository is a bundled path rather than an external package, so its
+  // top-level await waits on a module that is waiting on the shim: the run
+  // deadlocks under bun and exits unsettled under node. `bun test` never sees
+  // it - only the self-hosted `test:all` does.
+  const contents = await FS.readFile(new URL(import.meta.url).pathname, "utf-8");
+  expect(LITEST_GUARD.test(contents)).toBe(false);
 });
