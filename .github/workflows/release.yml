@@ -3,11 +3,15 @@ name: Release
 # The only way @b9g/libuild reaches npm - and CI can only STAGE, never make a
 # version live.
 #
-# Trigger it by publishing a GitHub Release, which creates the tag, or from
-# Actions -> Release -> Run workflow. The job then parks on the `npm`
-# environment until a required reviewer approves it. What it runs is
-# `libuild stage`: the version is uploaded to the registry in a
-# not-installable state, and only a human running `npm stage approve <id>`
+# Trigger it from Actions -> Release -> Run workflow, or by publishing a
+# GitHub Release, which creates the tag. Both entry points are real, and a
+# release usually hits both: the manual run stages, and the Release that
+# follows it re-runs the job against a version already on the registry. That
+# second run finds nothing to stage and says so instead of failing. The job
+# parks on the `npm` environment until a required reviewer approves it.
+#
+# What it runs is `libuild stage`: the version is uploaded to the registry in
+# a not-installable state, and only a human running `npm stage approve <id>`
 # (which always prompts for 2FA, CLI or website) makes it live. The npm
 # trusted publisher for this repo should be restricted to stage-only, so a
 # compromised workflow cannot skip the human.
@@ -67,4 +71,18 @@ jobs:
             exit 1
           fi
 
-      - run: bun run src/cli.ts stage --provenance
+      # Staging the same version twice is the normal shape of a release here,
+      # not a mistake: the manual run uploads it, then the GitHub Release fires
+      # this job again. Only npm's already-published error is swallowed - any
+      # other failure still fails the job.
+      - name: Stage
+        run: |
+          set +e
+          out="$(bun run src/cli.ts stage --provenance 2>&1)"
+          code=$?
+          printf '%s\n' "$out"
+          if [ $code -ne 0 ] && printf '%s' "$out" | grep -q "cannot publish over the previously published versions"; then
+            echo "::notice::Already on the registry - staged by an earlier run of this release. Nothing to do."
+            exit 0
+          fi
+          exit $code
