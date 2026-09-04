@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **A `"."` export naming its source file ships as the built module.** A root manifest can point `"."` at `./src/index.ts`, so that node resolves the package's own name to the source and the repository runs its examples without a build. The dist manifest carried the `.ts` path through as `./index.ts`, which no consumer could load. The source path now lands as `./index.js`, beside the `require` and `types` conditions the build fills in.
+
 ## [0.2.22] - 2026-08-27
 
 ### Fixed
