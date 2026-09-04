@@ -663,3 +663,32 @@ test("--save preserves author-added conditions in root exports (0.2.4)", async (
 
   await removeTempDir(testDir);
 }, 60000);  // builds a fixture - beyond bun's 5s default under load
+
+test("a '.' export naming the source file ships as the built module", async () => {
+  const testDir = await createTempDir("source-export");
+
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), "export const index = 1;");
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "source-export",
+    version: "0.1.0",
+    type: "module",
+    main: "./dist/index.cjs",
+    private: true,
+    // The package runs from src/ in its own repository: node resolves
+    // a self-import to the source, and no build is needed to try it.
+    exports: {
+      ".": "./src/index.ts",
+      "./package.json": "./package.json"
+    }
+  }, null, 2));
+
+  await build(testDir, false);
+
+  const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
+  expect(distPkg.exports["."].import).toBe("./index.js");
+  expect(distPkg.exports["."].require).toBe("./index.cjs");
+  expect(distPkg.exports["."].types).toBe("./index.d.ts");
+
+  await removeTempDir(testDir);
+}, 60000);

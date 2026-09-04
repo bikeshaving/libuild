@@ -754,6 +754,11 @@ function fixExportsForDist(obj: any): any {
         rest = rest.slice("src/".length);
         changed = true;
       }
+      // A source export names the file as it is on disk, so a package can
+      // run from src/ without a build; what ships is the built module.
+      if (changed && /\.[cm]?ts$/.test(rest) && !rest.endsWith(".d.ts")) {
+        rest = rest.replace(/ts$/, "js");
+      }
       if (changed && rest.length > 0) {
         return dotSlash + rest;
       }
