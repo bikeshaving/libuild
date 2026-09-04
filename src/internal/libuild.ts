@@ -756,7 +756,7 @@ function fixExportsForDist(obj: any): any {
       }
       // A source export names the file as it is on disk, so a package can
       // run from src/ without a build; what ships is the built module.
-      if (changed && /\.[cm]?ts$/.test(rest) && !rest.endsWith(".d.ts")) {
+      if (changed && /\.[cm]?ts$/.test(rest) && !/\.d\.[cm]?ts$/.test(rest)) {
         rest = rest.replace(/ts$/, "js");
       }
       if (changed && rest.length > 0) {
