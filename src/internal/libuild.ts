@@ -1635,6 +1635,21 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     console.info("  Updating root package.json...");
     const rootPkg = {...pkg};
 
+    // A root export naming a file under src/ means the package resolves its
+    // own name to source, so a checkout runs without a build. Rewriting those
+    // paths into dist/ takes that away, and there is no dist/package.json in a
+    // checkout at all. The file has to exist: a stale export left pointing into
+    // src/ is what --save is there to clean up, not a declaration of intent.
+    const runsFromSource = (
+      await Promise.all(
+        Object.values(pkg.exports ?? {}).map(async (value) =>
+          typeof value === "string" &&
+          value.startsWith("./src/") &&
+          await fileExists(Path.join(cwd, value))
+        )
+      )
+    ).some(Boolean);
+
     // Add prepublishOnly guard to prevent accidental publishing from root
     if (!rootPkg.scripts) {
       rootPkg.scripts = {};
@@ -1650,9 +1665,12 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       }
       rootPkg.module = `./dist/${mainEntry}.js`;
 
-      // Only include types field if .d.ts file exists
+      // Only include types field if .d.ts file exists. A package running from
+      // source has no types condition on its "." export, so a top-level types
+      // is what TypeScript falls back to - pointing it into dist/ sends the
+      // checker to a build that goes stale on every edit to src/.
       const dtsPath = Path.join(distDir, `${mainEntry}.d.ts`);
-      if (await fileExists(dtsPath)) {
+      if (!runsFromSource && await fileExists(dtsPath)) {
         rootPkg.types = `./dist/${mainEntry}.d.ts`;
       }
     }
@@ -1699,6 +1717,15 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
 
     const rootExports: any = {};
     for (const [key, value] of Object.entries(cleanedPkg.exports)) {
+      if (runsFromSource) {
+        // Keep what the author wrote, and add nothing: a generated dist path
+        // beside a source export points at a build the source export exists to
+        // avoid. Stale keys are already gone from cleanedPkg.exports.
+        if (pkg.exports && key in pkg.exports) {
+          rootExports[key] = pkg.exports[key];
+        }
+        continue;
+      }
       const cleanedValue = await toRootExport(value);
       if (cleanedValue !== undefined) {
         rootExports[key] = cleanedValue;

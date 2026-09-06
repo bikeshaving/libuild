@@ -692,3 +692,38 @@ test("a '.' export naming the source file ships as the built module", async () =
 
   await removeTempDir(testDir);
 }, 60000);
+
+test("--save keeps a '.' export that names the source file", async () => {
+  const testDir = await createTempDir("source-export-save");
+
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), "export const index = 1;");
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "source-export-save",
+    version: "0.1.0",
+    type: "module",
+    main: "./dist/index.cjs",
+    private: true,
+    exports: {
+      ".": "./src/index.ts",
+      "./package.json": "./package.json"
+    }
+  }, null, 2));
+
+  await build(testDir, true);
+
+  // Rewriting these into dist/ is what --save does for every other package,
+  // and it is exactly what a package running from source cannot have: the
+  // build it points at goes stale on every edit, and a checkout has no
+  // dist/package.json to resolve at all.
+  const rootPkg = await readJSON(Path.join(testDir, "package.json"));
+  expect(rootPkg.exports["."]).toBe("./src/index.ts");
+  expect(rootPkg.exports["./package.json"]).toBe("./package.json");
+  expect(rootPkg.types).toBeUndefined();
+  expect(rootPkg.scripts.prepublishOnly).toBeDefined();
+
+  const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
+  expect(distPkg.exports["."].import).toBe("./index.js");
+
+  await removeTempDir(testDir);
+}, 60000);  // builds a fixture - beyond bun's 5s default under load
