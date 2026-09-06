@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.2.24] - 2026-09-05
 
 ### Fixed
 - **`--save` keeps a root export that names a source file.** A manifest whose `"."` is `./src/index.ts` resolves the package's own name to source, so a checkout runs its examples and tests without a build. `--save` rewrote that export to `./dist/index.js`, and `"./package.json"` to `./dist/package.json`, which does not exist in a checkout at all - so saving undid the thing the source export is for. A manifest that names a source file now keeps its exports as written, and gets no top-level `types` pointing into dist, which is what TypeScript would otherwise fall back to. Packages that do not name a source file are unaffected.
