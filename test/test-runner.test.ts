@@ -1049,6 +1049,36 @@ test("chained sub-methods and .each rows work on the real runtimes", async () =>
   await removeTempDir(testDir);
 }, 180000);
 
+test("if, skipIf and todoIf work on node as they do on bun", async () => {
+  const {testDir, projDir} = await realConsumer("real-conditional", {
+    "conditional.test.ts":
+      'import {test, it, describe, expect} from "@b9g/libuild/test";\n' +
+      'import * as FS from "fs";\n' +
+      'const mark = (name: string) => FS.writeFileSync(new URL(`./${name}.ran`, import.meta.url), "");\n' +
+      'test.skipIf(true)("skipIf true", () => { throw new Error("must not run"); });\n' +
+      'test.skipIf(false)("skipIf false", () => { mark("skipIf-false"); expect(1).toBe(1); });\n' +
+      'test.if(false)("if false", () => { throw new Error("must not run"); });\n' +
+      'test.if(true)("if true", () => { mark("if-true"); expect(1).toBe(1); });\n' +
+      'test.todoIf(true)("todoIf true");\n' +
+      'it.skipIf(true)("it skipIf true", () => { throw new Error("must not run"); });\n' +
+      'describe.skipIf(true)("describe skipIf true", () => {\n' +
+      '  test("inner", () => { throw new Error("must not run"); });\n' +
+      '});\n',
+  });
+
+  const marker = (name: string) => Path.join(projDir, "test", `${name}.ran`);
+  for (const platform of ["bun", "node"] as const) {
+    for (const name of ["skipIf-false", "if-true"]) {
+      await FS.rm(marker(name), {force: true});
+    }
+    expect(await runTests({cwd: projDir, platforms: [platform], timeout: 60000})).toBe(true);
+    expect(FSSync.existsSync(marker("skipIf-false"))).toBe(true);
+    expect(FSSync.existsSync(marker("if-true"))).toBe(true);
+  }
+
+  await removeTempDir(testDir);
+}, 180000);
+
 test("each row gets its own snapshot key, and interleaving cannot swap them", async () => {
   // Rows used to share one bucket numbered in EXECUTION order: fine
   // sequentially, silently order-dependent once rows interleave. The rows

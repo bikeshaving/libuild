@@ -36,6 +36,17 @@ async function loadNode() {
     if (typeof block.concurrent !== "function") {
       block.concurrent = (...args: any[]) => (block as any)(...args);
     }
+    const skip = (...args: any[]) => block.skip(...args);
+    const todo = (...args: any[]) => block.todo(...args);
+    if (typeof block.if !== "function") {
+      block.if = (condition: unknown) => (condition ? block : skip);
+    }
+    if (typeof block.skipIf !== "function") {
+      block.skipIf = (condition: unknown) => (condition ? skip : block);
+    }
+    if (typeof block.todoIf !== "function") {
+      block.todoIf = (condition: unknown) => (condition ? todo : block);
+    }
   }
   return {
     describe: nodeTest.describe,
