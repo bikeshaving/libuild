@@ -993,8 +993,9 @@ export function parseBunOutput(output: string): { passed: number; failed: number
   // includes .skip/.todo registrations, so the "x of y" numerator must too,
   // or a skip-heavy file reads as having lost tests it never intended to run.
   const count = (label: string): number | null => {
-    const m = output.match(new RegExp(`^\\s*(\\d+)\\s+${label}`, "m"));
-    return m ? parseInt(m[1], 10) : null;
+    const matches = [...output.matchAll(new RegExp(`^\\s*(\\d+)\\s+${label}`, "gm"))];
+    const last = matches.at(-1);
+    return last ? parseInt(last[1], 10) : null;
   };
   const passMatch = count("pass");
   const failMatch = count("fail");

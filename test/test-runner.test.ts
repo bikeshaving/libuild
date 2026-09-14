@@ -1387,6 +1387,20 @@ test("output parsers strip ANSI so forced color can't corrupt the counts", () =>
   expect(t.completed).toBe(true);
 });
 
+test("bun output is counted from its final summary, not an earlier one", () => {
+  const nestedFailure = "(fail) runs\n\n 0 pass\n 1 fail\nRan 1 test across 1 file. [60.00ms]\n";
+  const passing = parseBunOutput(
+    nestedFailure + "(pass) outer\n\n 53 pass\n 0 fail\n 209 expect() calls\nRan 53 tests across 1 file. [12.95s]\n");
+  expect(passing.passed).toBe(53);
+  expect(passing.failed).toBe(0);
+
+  const nestedPass = " 5 pass\n 0 fail\nRan 5 tests across 1 file. [60.00ms]\n";
+  const failing = parseBunOutput(
+    nestedPass + "(fail) outer\n\n 1 pass\n 2 fail\nRan 3 tests across 1 file. [1.00s]\n");
+  expect(failing.passed).toBe(1);
+  expect(failing.failed).toBe(2);
+});
+
 test("browser bundles target es2022 so the dispatcher's top-level await builds (#14)", async () => {
   const dir = await createTempDir("browser-tla");
   const file = Path.join(dir, "tla.test.ts");
