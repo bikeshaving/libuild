@@ -154,6 +154,22 @@ async function findBinEntrypoints(binDir: string): Promise<string[]> {
   }
 }
 
+function normalizeExports(exports: any): any {
+  if (typeof exports === "string") {
+    return {".": exports};
+  }
+  if (
+    exports &&
+    typeof exports === "object" &&
+    !Array.isArray(exports) &&
+    Object.keys(exports).length > 0 &&
+    !Object.keys(exports).some((key) => key.startsWith("."))
+  ) {
+    return {".": exports};
+  }
+  return exports;
+}
+
 function detectMainEntry(pkg: PackageJSON, entries: string[]): string | undefined {
   // Helper function to extract entry name from path
   function extractEntryFromPath(path: string): string | undefined {
@@ -1062,6 +1078,8 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
   // Load package.json
   const pkgPath = Path.join(cwd, "package.json");
   const pkg = JSON.parse(await FS.readFile(pkgPath, "utf-8")) as PackageJSON;
+  const authorExports = pkg.exports;
+  pkg.exports = normalizeExports(pkg.exports);
 
   // libuild is ESM-only (see packageTypeRefusalMessage): source entrypoints
   // are ES modules and CJS exists solely as the main-field fallback the BUILD
@@ -1731,7 +1749,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
         rootExports[key] = cleanedValue;
       }
     }
-    rootPkg.exports = rootExports;
+    rootPkg.exports = runsFromSource && typeof authorExports === "string" ? authorExports : rootExports;
 
     // Generate bin entries from discovered bin files
     if (allBinEntries.length > 0) {

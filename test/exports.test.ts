@@ -727,3 +727,67 @@ test("--save keeps a '.' export that names the source file", async () => {
 
   await removeTempDir(testDir);
 }, 60000);  // builds a fixture - beyond bun's 5s default under load
+
+test("a string exports field builds as the '.' export", async () => {
+  const testDir = await createTempDir("string-exports");
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), "export const index = 1;");
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "string-exports",
+    version: "0.1.0",
+    type: "module",
+    private: true,
+    exports: "./src/index.ts"
+  }, null, 2));
+
+  await build(testDir, false);
+
+  const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
+  expect(distPkg.exports["."].import).toBe("./index.js");
+  expect(Object.keys(distPkg.exports).every((key) => key.startsWith("."))).toBe(true);
+
+  await removeTempDir(testDir);
+}, 60000);
+
+test("conditions with no '.' key build as the '.' export", async () => {
+  const testDir = await createTempDir("condition-exports");
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), "export const index = 1;");
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "condition-exports",
+    version: "0.1.0",
+    type: "module",
+    private: true,
+    exports: {import: "./src/index.ts"}
+  }, null, 2));
+
+  await build(testDir, false);
+
+  const distPkg = await readJSON(Path.join(testDir, "dist", "package.json"));
+  expect(distPkg.exports["."].import).toBe("./index.js");
+  expect(distPkg.exports.import).toBeUndefined();
+  expect(Object.keys(distPkg.exports).every((key) => key.startsWith("."))).toBe(true);
+
+  await removeTempDir(testDir);
+}, 60000);
+
+test("--save keeps a string exports field that names a source file", async () => {
+  const testDir = await createTempDir("string-exports-save");
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), "export const index = 1;");
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "string-exports-save",
+    version: "0.1.0",
+    type: "module",
+    private: true,
+    exports: "./src/index.ts"
+  }, null, 2));
+
+  await build(testDir, true);
+
+  const rootPkg = await readJSON(Path.join(testDir, "package.json"));
+  expect(rootPkg.exports).toBe("./src/index.ts");
+  expect(rootPkg.types).toBeUndefined();
+
+  await removeTempDir(testDir);
+}, 60000);
