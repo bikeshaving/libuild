@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **Browser tests no longer fail when a string holds `<!--` and `<script`.** The runner pasted the test bundle straight into its page between script tags. esbuild escapes `</script` in strings but not `<!--` or `<script`, and that pair changes how the HTML parser finds the end of a script: the page's own closing tag stopped ending the script, so the bundle never ran and the run failed with "the bundle never evaluated (crashed at load?)", with nothing pointing at the cause. The bundle is now served as its own file and loaded with `<script src>`, so the HTML parser never reads the code. Reported from crank, whose HTML renderer tests hit it.
+
 ## [0.2.24] - 2026-09-05
 
 ### Fixed

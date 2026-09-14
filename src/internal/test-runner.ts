@@ -1157,9 +1157,7 @@ async function runBrowserTests(
   <title>libuild tests</title>
 </head>
 <body>
-  <script type="module">
-${bundleContent}
-  </script>
+  <script type="module" src="/bundle.js"></script>
 </body>
 </html>`;
 
@@ -1168,8 +1166,16 @@ ${bundleContent}
 
   await new Promise<void>((resolve) => {
     server = createServer((req, res) => {
-      res.setHeader("Content-Type", "text/html");
-      res.end(html);
+      if (req.url === "/bundle.js") {
+        res.setHeader("Content-Type", "text/javascript; charset=utf-8");
+        res.end(bundleContent);
+      } else if (req.url === "/") {
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.end(html);
+      } else {
+        res.statusCode = 404;
+        res.end();
+      }
     });
     server.listen(0, () => {
       const addr = server.address();

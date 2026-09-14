@@ -2,6 +2,7 @@ import {test, expect} from "../src/test.ts";
 import * as FS from "fs/promises";
 import * as FSSync from "fs";
 import * as Path from "path";
+import {createRequire} from "module";
 import {bundleTests, collectTests, packageTypeRefusal, parseBunOutput, parseRegistered, parseTapOutput, resolveTestTargets, shardFailure, stripRegistered, runTests} from "../src/internal/test-runner.ts";
 import {
   installSnapshotMatcher,
@@ -1393,3 +1394,30 @@ test("bundling the same file twice produces byte-identical output", async () => 
     await removeTempDir(outB);
   }
 });
+
+const playwrightDir = (() => {
+  try {
+    return Path.dirname(createRequire(import.meta.url).resolve("playwright/package.json"));
+  } catch {
+    return null;
+  }
+})();
+
+if (playwrightDir) test("a browser test file can hold <!-- and <script in one string", async () => {
+  const projDir = await createTempDir("runner-html-string");
+  await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+  await FS.mkdir(Path.join(projDir, "node_modules"), {recursive: true});
+  await FS.writeFile(Path.join(projDir, "package.json"),
+    JSON.stringify({name: "html-string", version: "0.0.1", type: "module"}));
+  await FS.symlink(playwrightDir, Path.join(projDir, "node_modules", "playwright"));
+
+  const api = new URL("../src/test.ts", import.meta.url).pathname;
+  await FS.writeFile(Path.join(projDir, "test", "a.test.ts"),
+    `import {test, expect} from ${JSON.stringify(api)};\n` +
+    'const note = "<!--<script>alert(1)</script>";\n' +
+    'test("html-ish string", () => { expect(note.length).toBe(29); });\n');
+
+  expect(await runTests({cwd: projDir, platforms: ["chromium"], timeout: 30000})).toBe(true);
+
+  await removeTempDir(projDir);
+}, 120000);
