@@ -1,6 +1,6 @@
 {
   "name": "@b9g/libuild",
-  "version": "0.2.24",
+  "version": "0.2.25",
   "description": "Zero-config library builds",
   "bin": {
     "libuild": "./dist/cli.js"
