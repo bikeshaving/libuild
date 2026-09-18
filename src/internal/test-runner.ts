@@ -983,13 +983,19 @@ async function runNodeTests(bundlePath: string, timeout: number): Promise<ShardR
 /**
  * Run tests in Deno.
  *
- * Deno bridges `node:test` into its own runner, so the bundle is the node one
- * and the backend in `@b9g/libuild/test` is the node backend - `deno run` would
- * register the tests and never run them, which is why this is `deno test`.
+ * Deno bridges `node:test` into its own runner, so the bundle and the
+ * `@b9g/libuild/test` backend are the node ones - `deno run` would register the
+ * tests and never run them, which is why this is `deno test`.
+ *
+ * Counts come from a JUnit report rather than the summary line, which counts a
+ * `describe` as one test and its children as steps. The report keeps the
+ * default reporter on stdout, where a test's own output (and the registration
+ * marker) still is; `--reporter=junit` and `--reporter=tap` both swallow it.
  */
 async function runDenoTests(bundlePath: string, timeout: number): Promise<ShardRun> {
+  const reportPath = `${bundlePath}.junit.xml`;
   const { stdout, stderr, code, signal, timedOut, error } =
-    await spawnShard("deno", ["test", "--allow-all", "--no-check", bundlePath], timeout);
+    await spawnShard("deno", ["test", "--allow-all", "--no-check", `--junit-path=${reportPath}`, bundlePath], timeout);
 
   if (error) {
     return {
@@ -998,7 +1004,8 @@ async function runDenoTests(bundlePath: string, timeout: number): Promise<ShardR
     };
   }
 
-  const { passed, failed, errors, skipped, todo, completed } = parseDenoOutput(stdout);
+  const report = await FS.readFile(reportPath, "utf-8").catch(() => "");
+  const { passed, failed, errors, skipped, todo, completed } = parseDenoReport(report);
   const reason = shardFailure({
     completed, code, signal, timedOut, failed, timeout,
     finished: passed + failed + skipped + todo,
@@ -1018,40 +1025,58 @@ async function runDenoTests(bundlePath: string, timeout: number): Promise<ShardR
   };
 }
 
+const XML_ENTITIES: Record<string, string> = {
+  "&lt;": "<", "&gt;": ">", "&quot;": '"', "&apos;": "'", "&amp;": "&",
+};
+
+function decodeXml(text: string): string {
+  return text.replace(/&(?:lt|gt|quot|apos|amp);/g, (entity) => XML_ENTITIES[entity]);
+}
+
 /**
- * Parse Deno test output to extract test results.
- * Format: "ok | 2 passed (1 step) | 0 failed | 2 ignored (16ms)"
+ * Parse Deno's JUnit report into the same shape the other runtimes report.
  *
- * Deno reports node:test's skip AND todo as "ignored", so todo is always 0
- * here: the two cannot be told apart from the summary.
+ * A `describe` produces a testcase of its own that stands for the block, and
+ * its children appear as separate testcases named "block > test". Counting the
+ * block would report a suite as a test and, when a child fails, report the
+ * failure twice - so any name that some other testcase extends with " > " is a
+ * block, not a test.
+ *
+ * Deno maps node:test's skip AND todo to <skipped/>, so todo is always 0: the
+ * two cannot be told apart.
  */
-export function parseDenoOutput(output: string): { passed: number; failed: number; errors: Array<{ name: string; error: string }>; skipped: number; todo: number; completed: boolean } {
-  output = stripAnsi(output);
-  const errors: Array<{ name: string; error: string }> = [];
-  for (const line of output.split("\n")) {
-    const m = line.match(/^(.+?) \.\.\. FAILED/);
-    if (m) errors.push({ name: m[1].trim(), error: "Test failed" });
+export function parseDenoReport(xml: string): { passed: number; failed: number; errors: Array<{ name: string; error: string }>; skipped: number; todo: number; completed: boolean } {
+  const cases: Array<{ name: string; failure: string | null; skipped: boolean }> = [];
+  for (const m of xml.matchAll(/<testcase\b([^>]*?)(\/>|>([\s\S]*?)<\/testcase>)/g)) {
+    const name = decodeXml(m[1].match(/\bname="([^"]*)"/)?.[1] ?? "");
+    const body = m[3] ?? "";
+    const failure = body.includes("<failure")
+      ? decodeXml(body.match(/<failure\b[^>]*\bmessage="([^"]*)"/)?.[1] ?? "Test failed")
+      : null;
+    cases.push({ name, failure, skipped: body.includes("<skipped") });
   }
 
-  // The last summary is Deno's own: a test's output can print anything, and a
-  // suite that runs Deno itself prints a whole summary of its own first.
-  const summaries = [...output.matchAll(/^(?:ok|FAILED)\s*\|.*$/gm)];
-  const summary = summaries.at(-1)?.[0] ?? null;
-  const count = (label: string): number | null => {
-    const m = summary?.match(new RegExp(`(\\d+)\\s+${label}`));
-    return m ? parseInt(m[1], 10) : null;
-  };
-  const passed = count("passed");
-  const failed = count("failed");
+  const blocks = new Set<string>();
+  for (const { name } of cases) {
+    const parts = name.split(" > ");
+    for (let i = 1; i < parts.length; i++) blocks.add(parts.slice(0, i).join(" > "));
+  }
 
-  return {
-    passed: passed ?? 0,
-    failed: failed ?? 0,
-    skipped: count("ignored") ?? 0,
-    todo: 0,
-    errors,
-    completed: passed !== null || failed !== null,
-  };
+  let passed = 0, failed = 0, skipped = 0;
+  const errors: Array<{ name: string; error: string }> = [];
+  for (const entry of cases) {
+    if (blocks.has(entry.name)) continue;
+    if (entry.skipped) {
+      skipped++;
+    } else if (entry.failure !== null) {
+      failed++;
+      errors.push({ name: entry.name, error: entry.failure });
+    } else {
+      passed++;
+    }
+  }
+
+  return { passed, failed, skipped, todo: 0, errors, completed: /<testsuites\b/.test(xml) };
 }
 
 /**

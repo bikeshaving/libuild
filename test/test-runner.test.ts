@@ -4,7 +4,7 @@ import * as FSSync from "fs";
 import * as Path from "path";
 import {createRequire} from "module";
 import {spawnSync} from "child_process";
-import {bundleTests, collectTests, packageTypeRefusal, parseBunOutput, parseDenoOutput, parseRegistered, parseTapOutput, resolveTestTargets, shardFailure, stripRegistered, runTests} from "../src/internal/test-runner.ts";
+import {bundleTests, collectTests, packageTypeRefusal, parseBunOutput, parseDenoReport, parseRegistered, parseTapOutput, resolveTestTargets, shardFailure, stripRegistered, runTests} from "../src/internal/test-runner.ts";
 import {
   installSnapshotMatcher,
   wrapTestApi,
@@ -1423,39 +1423,44 @@ if (hasDeno) test("a suite runs on deno the way it runs on node", async () => {
   await removeTempDir(testDir);
 }, 300000);
 
-test("deno output is read from its summary line", () => {
-  const passing = parseDenoOutput(
-    "running 4 tests from ./bundle-deno-0.js\n" +
-    "adds ... ok (1ms)\n" +
-    "skipped ... ignored (0ms)\n" +
-    "suite ...\n  inner ... ok (1ms)\nsuite ... ok (1ms)\n\n" +
-    "ok | 2 passed (1 step) | 0 failed | 1 ignored (16ms)\n");
-  expect(passing.passed).toBe(2);
-  expect(passing.failed).toBe(0);
-  expect(passing.skipped).toBe(1);
-  expect(passing.completed).toBe(true);
+test("deno results are counted per test, not per describe block", () => {
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="deno test" tests="7" failures="3" errors="0" time="0.012">
+    <testsuite name="./bundle-deno-0.js" tests="5" disabled="2" errors="0" failures="2">
+        <testcase name="plain pass" classname="./bundle-deno-0.js" time="0.002"></testcase>
+        <testcase name="plain fail" classname="./bundle-deno-0.js" time="0.003">
+            <failure message="Expected 1 to be 2">AssertionError</failure>
+        </testcase>
+        <testcase name="skipped" classname="./bundle-deno-0.js" time="0.000"><skipped/></testcase>
+        <testcase name="todo" classname="./bundle-deno-0.js" time="0.000"><skipped/></testcase>
+        <testcase name="outer" classname="./bundle-deno-0.js" time="0.001">
+            <failure message="1 test step failed">1 test step failed.</failure>
+        </testcase>
+    </testsuite>
+    <testsuite name="ext:deno_node/testing.ts" tests="2" disabled="0" errors="0" failures="1">
+        <testcase name="outer &gt; inner pass" classname="ext:deno_node/testing.ts" time="0.000"></testcase>
+        <testcase name="outer &gt; inner fail" classname="ext:deno_node/testing.ts" time="0.001">
+            <failure message="Expected 3 to be 4">AssertionError</failure>
+        </testcase>
+    </testsuite>
+</testsuites>`;
 
-  const failing = parseDenoOutput(
-    "passes ... ok (1ms)\nfails ... FAILED (5ms)\n\n" +
-    "FAILED | 1 passed | 1 failed (8ms)\n");
-  expect(failing.passed).toBe(1);
-  expect(failing.failed).toBe(1);
-  expect(failing.errors.map((e) => e.name)).toEqual(["fails"]);
+  const r = parseDenoReport(xml);
+  // "outer" stands for the block: counting it would report a suite as a test
+  // and report its child's failure a second time.
+  expect(r.passed).toBe(2);
+  expect(r.failed).toBe(2);
+  expect(r.skipped).toBe(2);
+  expect(r.errors.map((e) => e.name)).toEqual(["plain fail", "outer > inner fail"]);
+  expect(r.errors[0].error).toBe("Expected 1 to be 2");
+  expect(r.completed).toBe(true);
 
-  // Deno maps node:test's skip and todo both to "ignored", so todo cannot be
-  // told apart from the summary.
-  expect(parseDenoOutput("ok | 0 passed | 0 failed | 2 ignored (1ms)\n").todo).toBe(0);
+  // Deno maps node:test's skip and todo both to <skipped/>.
+  expect(r.todo).toBe(0);
 
-  // A suite that runs deno itself prints a summary of its own first.
-  const nested = parseDenoOutput(
-    "FAILED | 0 passed | 1 failed (2ms)\n" +
-    "outer ... ok (1ms)\n" +
-    "ok | 7 passed | 0 failed (9ms)\n");
-  expect(nested.passed).toBe(7);
-  expect(nested.failed).toBe(0);
-
-  // A killed run produces no summary at all, and must not read as a clean pass.
-  expect(parseDenoOutput("running 3 tests from ./x.js\n").completed).toBe(false);
+  // A killed run leaves no report, and must not read as a clean pass.
+  expect(parseDenoReport("").completed).toBe(false);
+  expect(parseDenoReport("").passed).toBe(0);
 });
 
 test("browser bundles target es2022 so the dispatcher's top-level await builds (#14)", async () => {
