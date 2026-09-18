@@ -151,7 +151,7 @@ program
   .command("test")
   .description("Run tests across platforms")
   .argument("[targets...]", "Directory containing tests, or specific test file(s)/glob(s) to run")
-  .option("-p, --platform <platforms...>", "Platforms to test on (bun, node, chromium, firefox, webkit)")
+  .option("-p, --platform <platforms...>", "Platforms to test on (bun, node, deno, chromium, firefox, webkit)")
   .option("--debug", "Keep browser open for debugging")
   .option("--filter <patterns...>", "Glob pattern(s) selecting which test files to run")
   .option("--timeout <ms>", "Per-file test timeout in milliseconds", "60000")
@@ -182,7 +182,7 @@ program
     }
 
     // Validate platforms
-    const validPlatforms: Platform[] = ["bun", "node", "chromium", "firefox", "webkit"];
+    const validPlatforms: Platform[] = ["bun", "node", "deno", "chromium", "firefox", "webkit"];
     const platforms: Platform[] = options.platform?.length
       ? options.platform.filter((p): p is Platform => validPlatforms.includes(p as Platform))
       : ["bun"];

@@ -93,7 +93,7 @@ export function stripRegistered(output: string): string {
     .join("\n");
 }
 
-export type Platform = "bun" | "node" | "chromium" | "firefox" | "webkit";
+export type Platform = "bun" | "node" | "deno" | "chromium" | "firefox" | "webkit";
 
 export interface TestRunnerOptions {
   /** Working directory */
@@ -981,6 +981,80 @@ async function runNodeTests(bundlePath: string, timeout: number): Promise<ShardR
 }
 
 /**
+ * Run tests in Deno.
+ *
+ * Deno bridges `node:test` into its own runner, so the bundle is the node one
+ * and the backend in `@b9g/libuild/test` is the node backend - `deno run` would
+ * register the tests and never run them, which is why this is `deno test`.
+ */
+async function runDenoTests(bundlePath: string, timeout: number): Promise<ShardRun> {
+  const { stdout, stderr, code, signal, timedOut, error } =
+    await spawnShard("deno", ["test", "--allow-all", "--no-check", bundlePath], timeout);
+
+  if (error) {
+    return {
+      result: { platform: "deno", passed: 0, failed: 1, errors: [{ name: "spawn error", error: error.message }], skipped: 0, todo: 0 },
+      output: error.message,
+    };
+  }
+
+  const { passed, failed, errors, skipped, todo, completed } = parseDenoOutput(stdout);
+  const reason = shardFailure({
+    completed, code, signal, timedOut, failed, timeout,
+    finished: passed + failed + skipped + todo,
+    registered: parseRegistered(stdout),
+  });
+
+  return {
+    result: {
+      platform: "deno",
+      passed,
+      failed: reason ? Math.max(failed, 1) : failed,
+      errors: reason ? [...errors, { name: "deno test process did not complete", error: reason }] : errors,
+      skipped,
+      todo,
+    },
+    output: stripRegistered(stdout + stderr),
+  };
+}
+
+/**
+ * Parse Deno test output to extract test results.
+ * Format: "ok | 2 passed (1 step) | 0 failed | 2 ignored (16ms)"
+ *
+ * Deno reports node:test's skip AND todo as "ignored", so todo is always 0
+ * here: the two cannot be told apart from the summary.
+ */
+export function parseDenoOutput(output: string): { passed: number; failed: number; errors: Array<{ name: string; error: string }>; skipped: number; todo: number; completed: boolean } {
+  output = stripAnsi(output);
+  const errors: Array<{ name: string; error: string }> = [];
+  for (const line of output.split("\n")) {
+    const m = line.match(/^(.+?) \.\.\. FAILED/);
+    if (m) errors.push({ name: m[1].trim(), error: "Test failed" });
+  }
+
+  // The last summary is Deno's own: a test's output can print anything, and a
+  // suite that runs Deno itself prints a whole summary of its own first.
+  const summaries = [...output.matchAll(/^(?:ok|FAILED)\s*\|.*$/gm)];
+  const summary = summaries.at(-1)?.[0] ?? null;
+  const count = (label: string): number | null => {
+    const m = summary?.match(new RegExp(`(\\d+)\\s+${label}`));
+    return m ? parseInt(m[1], 10) : null;
+  };
+  const passed = count("passed");
+  const failed = count("failed");
+
+  return {
+    passed: passed ?? 0,
+    failed: failed ?? 0,
+    skipped: count("ignored") ?? 0,
+    todo: 0,
+    errors,
+    completed: passed !== null || failed !== null,
+  };
+}
+
+/**
  * Parse Bun test output to extract test results
  * Format: "N pass", "N fail"
  */
@@ -1075,7 +1149,7 @@ async function runShardedPlatform(
   updateSnapshots: boolean,
   maxConcurrency?: number
 ): Promise<TestResult> {
-  const runShard = platform === "bun" ? runBunTests : runNodeTests;
+  const runShard = platform === "bun" ? runBunTests : platform === "deno" ? runDenoTests : runNodeTests;
   const concurrency = Math.max(1, Math.min(maxConcurrency ?? ((OS.cpus().length || 2) - 1), files.length));
 
   const agg: TestResult = { platform, passed: 0, failed: 0, errors: [], skipped: 0, todo: 0 };
@@ -1489,7 +1563,7 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
   try {
     for (const platform of opts.platforms) {
       let result: TestResult;
-      if (platform === "bun" || platform === "node") {
+      if (!isBrowserPlatform(platform)) {
         // Per-file process isolation is the default: each file runs in its own
         // process (frees native memory between files, runs them in parallel).
         console.log(`\nRunning ${testFiles.length} file(s) on ${platform} (per-file isolation)...`);

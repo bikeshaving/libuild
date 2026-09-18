@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [0.2.25] - 2026-09-16
 
+### Added
+- **Deno is a test platform.** `libuild test -p deno` runs a suite under Deno, alongside bun, node and the browsers. Deno bridges `node:test` into its own runner, so the bundle and the `@b9g/libuild/test` backend are the node ones; `deno run` would register the tests and never run them, so the runner uses `deno test --allow-all`. Deno reports `skip` and `todo` both as "ignored", so on Deno they are all counted as skipped.
+
 ### Fixed
 - **Browser tests no longer fail when a string holds `<!--` and `<script`.** The runner pasted the test bundle straight into its page between script tags. esbuild escapes `</script` in strings but not `<!--` or `<script`, and that pair changes how the HTML parser finds the end of a script: the page's own closing tag stopped ending the script, so the bundle never ran and the run failed with "the bundle never evaluated (crashed at load?)", with nothing pointing at the cause. The bundle is now served as its own file and loaded with `<script src>`, so the HTML parser never reads the code. Reported from crank, whose HTML renderer tests hit it.
 - **`test.skipIf`, `test.todoIf` and `test.if` work on node.** Bun has all three on `test`, `it` and `describe`; node's test module has none. A bun suite that used one crashed on node with `TypeError: test.skipIf is not a function`, which took down every test registered after that line and showed up only as a file-level failure. They are now added on node from `skip` and `todo`, the same way `concurrent` already was.
