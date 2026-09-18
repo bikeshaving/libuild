@@ -4,7 +4,7 @@ import * as FSSync from "fs";
 import * as Path from "path";
 import {createRequire} from "module";
 import {spawnSync} from "child_process";
-import {bundleTests, collectTests, packageTypeRefusal, parseBunOutput, parseDenoReport, parseRegistered, parseTapOutput, resolveTestTargets, shardFailure, stripRegistered, runTests} from "../src/internal/test-runner.ts";
+import {bundleTests, collectTests, packageTypeRefusal, parseBunOutput, parseDenoReport, parseRegistered, parseRegisteredTodo, parseTapOutput, resolveTestTargets, shardFailure, stripRegistered, runTests} from "../src/internal/test-runner.ts";
 import {
   installSnapshotMatcher,
   wrapTestApi,
@@ -762,6 +762,56 @@ test("registration counting covers only/skip/todo/each (denominator accuracy)", 
     const markers = lines.filter((l) => l.startsWith("__LIBUILD_REGISTERED__"));
     return parseInt(markers[markers.length - 1].split(" ")[1], 10) - 1; // minus the tick
   }
+});
+
+test("the marker carries the todo count, and conditional registrars are counted", async () => {
+  const {wrapTestApi} = await import("../src/internal/snapshot.ts");
+  const fake = () => {
+    const test: any = (_n: string, _f?: () => void) => {};
+    test.skip = (_n: string, _f?: () => void) => {};
+    test.todo = (_n: string, _f?: () => void) => {};
+    test.skipIf = (c: boolean) => (c ? test.skip : test);
+    test.todoIf = (c: boolean) => (c ? test.todo : test);
+    test.each = (_table: unknown[]) => (_n: string, _f: (...a: any[]) => void) => {};
+    return test;
+  };
+  const api = wrapTestApi({describe: fake(), test: fake(), it: fake()});
+
+  const emitted: string[] = [];
+  const realLog = console.log;
+  console.log = (...args: any[]) => { emitted.push(args.join(" ")); };
+  try {
+    api.test("seed", () => {});
+    const before = await lastMarker(emitted);
+    api.test("plain", () => {});                       // +1
+    api.test.todo("todo");                             // +1, todo
+    api.test.todoIf(true)("todo if", () => {});        // +1, todo
+    api.test.todoIf(false)("not todo", () => {});      // +1
+    api.test.skipIf(true)("skipped", () => {});        // +1
+    api.test.todo.each([[1], [2]])("todo row %i", () => {}); // +2, todo
+    const after = await lastMarker(emitted);
+    expect(after.total - before.total).toBe(7);
+    expect(after.todo - before.todo).toBe(4);
+  } finally {
+    console.log = realLog;
+  }
+
+  // Reads the last emitted marker without registering anything itself.
+  async function lastMarker(lines: string[]): Promise<{total: number; todo: number}> {
+    await new Promise((r) => setTimeout(r, 0));
+    const markers = lines.filter((l) => l.startsWith("__LIBUILD_REGISTERED__"));
+    const parts = markers[markers.length - 1].split(" ");
+    return {total: parseInt(parts[1], 10), todo: parseInt(parts[2], 10)};
+  }
+});
+
+test("parseRegisteredTodo reads the marker's second number", () => {
+  expect(parseRegisteredTodo("__LIBUILD_REGISTERED__ 47 3\n")).toBe(3);
+  expect(parseRegisteredTodo("# __LIBUILD_REGISTERED__ 9 2\nok 1 - x\n")).toBe(2);
+  expect(parseRegisteredTodo("__LIBUILD_REGISTERED__ 3 1\n__LIBUILD_REGISTERED__ 9 4\n")).toBe(4);
+  expect(parseRegisteredTodo("__LIBUILD_REGISTERED__ 47\n")).toBeNull();
+  expect(parseRegistered("__LIBUILD_REGISTERED__ 47 3\n")).toBe(47);
+  expect(stripRegistered("ok 1 - x\n__LIBUILD_REGISTERED__ 47 3\n")).toBe("ok 1 - x\n");
 });
 
 test("import.meta.url/dirname/filename point at the source file, not the bundle", async () => {

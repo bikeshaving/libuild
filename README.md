@@ -270,7 +270,7 @@ libuild test -p chromium            # real browser via Playwright
 libuild test path/to/one.test.ts    # single-file loop
 ```
 
-Deno runs the same files through its own `deno test`, which bridges `node:test` into it, so no Deno-specific test API is needed. Deno reports skipped and todo tests alike as ignored, so on Deno both are counted as skipped.
+Deno runs the same files through its own `deno test`, which bridges `node:test` into it, so no Deno-specific test API is needed, and the summary reads the same on all three runtimes.
 
 Import the portable API from `@b9g/libuild/test` (`describe`/`test`/`it`/`expect`, hooks, `test.concurrent`, `.each`, and a cross-runtime `toMatchSnapshot`). Files run in per-file isolated processes with dependencies resolved from your `node_modules`; `import.meta.url`/`.dirname`/`.filename` and `__dirname`/`__filename` point at your source files, not the bundles.
 

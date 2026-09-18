@@ -95,6 +95,7 @@ function withArity<T extends Function>(wrapper: T, original: Function): T {
 const REGISTERED_MARKER = "__LIBUILD_REGISTERED__";
 
 let registeredCount = 0;
+let todoCount = 0;
 let emitScheduled = false;
 
 /**
@@ -110,8 +111,9 @@ let emitScheduled = false;
  * Browsers have no parent process parsing stdout, so this stays node/bun-only
  * rather than spamming the captured console output.
  */
-function noteRegistration(n: number = 1): void {
+function noteRegistration(n: number = 1, todo: boolean = false): void {
   registeredCount += n;
+  if (todo) todoCount += n;
   // The `process` guard is defense in depth: today the browser path never
   // reaches this at all (test.ts only calls wrapTestApi on node/bun), but
   // nothing strips the marker from captured browser console output, so if
@@ -120,7 +122,7 @@ function noteRegistration(n: number = 1): void {
   emitScheduled = true;
   queueMicrotask(() => {
     emitScheduled = false;
-    console.log(`${REGISTERED_MARKER} ${registeredCount}`);
+    console.log(`${REGISTERED_MARKER} ${registeredCount} ${todoCount}`);
   });
 }
 
@@ -189,15 +191,28 @@ function trackSuite(name: unknown, fn: (...args: any[]) => any): (...args: any[]
  * y" numerator includes them and an uncounted .skip would push the
  * denominator below the numerator.
  */
+const CONDITIONAL_SUB_METHODS = new Set(["if", "skipIf", "todoIf"]);
+
 function wrapBlock(
   real: any,
   track: (name: unknown, fn: any) => any,
   counts = false,
-  boundThis: any = undefined
+  boundThis: any = undefined,
+  isTodo = false,
+  prop: string | undefined = undefined
 ): any {
   const proxy: any = new Proxy(real, {
     apply(target, thisArg, args) {
-      if (counts) noteRegistration();
+      // `test.skipIf(cond)` registers nothing itself: it returns the block to
+      // register with. Wrap that so the registration it makes is counted, and
+      // a `todoIf(true)` registration is counted as todo.
+      if (prop !== undefined && CONDITIONAL_SUB_METHODS.has(prop)) {
+        const registrar = Reflect.apply(target, boundThis ?? thisArg, args);
+        return typeof registrar === "function"
+          ? wrapBlock(registrar, track, counts, undefined, prop === "todoIf" && Boolean(args[0]))
+          : registrar;
+      }
+      if (counts) noteRegistration(1, isTodo);
       // `boundThis` carries the PARENT block when this proxy came from a
       // sub-method read (see get): bun's sub-methods are branded and throw
       // unless called against the object they were read from.
@@ -221,7 +236,7 @@ function wrapBlock(
       // Recursion also means sub-methods nobody enumerated (skipIf, todoIf,
       // future additions) get body tracking and registration counting for
       // free, instead of silently falling through untracked.
-      return wrapBlock(value, track, counts, target);
+      return wrapBlock(value, track, counts, target, isTodo || prop === "todo", String(prop));
     },
   });
   return proxy;

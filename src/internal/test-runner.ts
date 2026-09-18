@@ -73,7 +73,7 @@ const REGISTERED_MARKER = "__LIBUILD_REGISTERED__";
 // console.log mentioning the marker, a bun code frame quoting the bundle -
 // hijack the count, and an `includes`-based strip deleted such lines from the
 // failure dump, eating exactly the output that explained the failure.
-const REGISTERED_LINE = new RegExp(`^\\s*(?:#\\s*)?${REGISTERED_MARKER}\\s+(\\d+)\\s*$`);
+const REGISTERED_LINE = new RegExp(`^\\s*(?:#\\s*)?${REGISTERED_MARKER}\\s+(\\d+)(?:\\s+(\\d+))?\\s*$`);
 
 /** Last registration total the child reported, or null if it reported none. */
 export function parseRegistered(output: string): number | null {
@@ -81,6 +81,20 @@ export function parseRegistered(output: string): number | null {
   for (const line of stripAnsi(output).split("\n")) {
     const m = line.match(REGISTERED_LINE);
     if (m) last = parseInt(m[1], 10);
+  }
+  return last;
+}
+
+/**
+ * Last todo count the child reported. The marker's second number: how many of
+ * the registered tests were registered as todo. Deno reports todo and skip
+ * alike, so this is what tells them apart there.
+ */
+export function parseRegisteredTodo(output: string): number | null {
+  let last: number | null = null;
+  for (const line of stripAnsi(output).split("\n")) {
+    const m = line.match(REGISTERED_LINE);
+    if (m) last = m[2] !== undefined ? parseInt(m[2], 10) : null;
   }
   return last;
 }
@@ -1005,7 +1019,12 @@ async function runDenoTests(bundlePath: string, timeout: number): Promise<ShardR
   }
 
   const report = await FS.readFile(reportPath, "utf-8").catch(() => "");
-  const { passed, failed, errors, skipped, todo, completed } = parseDenoReport(report);
+  const parsed = parseDenoReport(report);
+  const { passed, failed, errors, completed } = parsed;
+  // Deno reports a todo test as skipped. The file itself counted how many it
+  // registered as todo, so that many of the skipped are todo.
+  const todo = Math.min(parseRegisteredTodo(stdout) ?? 0, parsed.skipped);
+  const skipped = parsed.skipped - todo;
   const reason = shardFailure({
     completed, code, signal, timedOut, failed, timeout,
     finished: passed + failed + skipped + todo,
@@ -1042,8 +1061,9 @@ function decodeXml(text: string): string {
  * failure twice - so any name that some other testcase extends with " > " is a
  * block, not a test.
  *
- * Deno maps node:test's skip AND todo to <skipped/>, so todo is always 0: the
- * two cannot be told apart.
+ * Deno maps node:test's skip AND todo to <skipped/>, so todo is 0 here; the
+ * caller tells them apart from the count the file reported (see
+ * parseRegisteredTodo).
  */
 export function parseDenoReport(xml: string): { passed: number; failed: number; errors: Array<{ name: string; error: string }>; skipped: number; todo: number; completed: boolean } {
   const cases: Array<{ name: string; failure: string | null; skipped: boolean }> = [];
