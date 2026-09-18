@@ -38,6 +38,12 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
+      # The suite's deno test spawns deno; without it on PATH that test skips
+      # itself and deno support ships unexercised.
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
       - uses: actions/setup-node@v7
         with:
           node-version: 24
