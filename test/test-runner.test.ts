@@ -814,6 +814,32 @@ test("parseRegisteredTodo reads the marker's second number", () => {
   expect(stripRegistered("ok 1 - x\n__LIBUILD_REGISTERED__ 47 3\n")).toBe("ok 1 - x\n");
 });
 
+test("--concurrency bounds how many shards run at once", async () => {
+  const testDir = await createTempDir("concurrency");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+  await FS.writeFile(Path.join(projDir, "package.json"),
+    JSON.stringify({name: "concurrency", version: "1.0.0", type: "module"}));
+  // Each file notes that it is running, holds for long enough that a second
+  // file started alongside it would see the note, and fails if one did.
+  const gate = Path.join(projDir, "running");
+  for (const name of ["a", "b", "c", "d"]) {
+    await FS.writeFile(Path.join(projDir, "test", `${name}.test.ts`),
+      'import {test} from "node:test";\nimport assert from "node:assert";\nimport * as FS from "fs";\n' +
+      `const gate = ${JSON.stringify(gate)};\n` +
+      'test("alone", async () => {\n' +
+      '  const others = FS.existsSync(gate) ? FS.readFileSync(gate, "utf-8") : "";\n' +
+      `  FS.appendFileSync(gate, "${name}\\n");\n` +
+      '  await new Promise((r) => setTimeout(r, 400));\n' +
+      '  assert.strictEqual(others, "", "another shard was already running: " + others.trim());\n' +
+      '  FS.writeFileSync(gate, FS.readFileSync(gate, "utf-8").replace(' + `"${name}\\n"` + ', ""));\n' +
+      '});\n');
+  }
+
+  expect(await runTests({cwd: projDir, platforms: ["node"], timeout: 30000, concurrency: 1})).toBe(true);
+  await removeTempDir(testDir);
+}, 120000);
+
 test("import.meta.url/dirname/filename point at the source file, not the bundle", async () => {
   const testDir = await createTempDir("import-meta");
   const projDir = Path.join(testDir, "proj");

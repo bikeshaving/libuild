@@ -1519,6 +1519,7 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
     debug: options.debug || false,
     timeout: options.timeout || 60000,
     updateSnapshots: options.updateSnapshots || false,
+    concurrency: options.concurrency ?? Math.max(1, (OS.cpus().length || 2) - 1),
   };
 
   // ESM-only, enforced for the whole run: a "type": "commonjs" package is

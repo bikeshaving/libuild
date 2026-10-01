@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **`--concurrency` is honored.** The option was parsed and then dropped on the way into the runner, so every run used the default of one less than the CPU count, on every platform. A machine with 8 cores ran 7 shards at once no matter what was passed. Reported from a termdom run where 7 deno shards, each a few hundred megabytes, swapped an 8 GB machine.
+
 ## [0.2.25] - 2026-09-16
 
 ### Added
