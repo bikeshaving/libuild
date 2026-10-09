@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.2.26] - 2026-10-09
 
 ### Added
 - **Worker entries.** A `src/<name>.worker.ts` is built to `dist/<name>.worker.js` and left out of `exports`. Code loaded by file path - `new Worker(new URL("./decode.worker.js", import.meta.url), {type: "module"})` - never goes through the exports map, so making it a public export was the only way to get it built and also wrong. The worker is always an entry, even when `exports` names only `"."` and everything else bundles into `index`; it is built as ESM only, since a module worker never loads the CJS file; and shared code is split between it and the modules that import it like any other entry. Asked for by termdom, whose image decoder runs on a worker.
