@@ -50,6 +50,11 @@ const CHILD_ENV: NodeJS.ProcessEnv = (() => {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
   if (USE_COLOR) env.FORCE_COLOR = "1";
+  // Bun keeps a compiled copy of every large file it runs, keyed by content
+  // and never evicted. A test bundle is a few megabytes and changes with any
+  // edit to the project, so every run after an edit left a new set behind:
+  // 35 GB in 8 days on one machine. Bundles are throwaway; nothing reruns them.
+  env.BUN_RUNTIME_TRANSPILER_CACHE_PATH = "0";
   return env;
 })();
 

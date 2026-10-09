@@ -814,6 +814,32 @@ test("parseRegisteredTodo reads the marker's second number", () => {
   expect(stripRegistered("ok 1 - x\n__LIBUILD_REGISTERED__ 47 3\n")).toBe("ok 1 - x\n");
 });
 
+test("shards run with bun's transpiler cache off, whatever the shell set", async () => {
+  const testDir = await createTempDir("no-transpiler-cache");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+  await FS.writeFile(Path.join(projDir, "package.json"),
+    JSON.stringify({name: "no-cache", version: "1.0.0", type: "module"}));
+  await FS.writeFile(Path.join(projDir, "test", "env.test.ts"),
+    'import {test} from "node:test";\nimport assert from "node:assert";\n' +
+    'test("cache is off", () => { assert.strictEqual(process.env.BUN_RUNTIME_TRANSPILER_CACHE_PATH, "0"); });\n');
+
+  // The runner is started as a separate process with the variable already
+  // set to something else, the way a shell profile would, so this covers the
+  // environment the runner builds at load time rather than a later tweak.
+  const cli = new URL("../src/cli.ts", import.meta.url).pathname;
+  for (const platform of ["bun", "node"]) {
+    const run = spawnSync("bun", [cli, "test", "-p", platform, "--timeout", "30000"], {
+      cwd: projDir,
+      env: {...process.env, BUN_RUNTIME_TRANSPILER_CACHE_PATH: Path.join(testDir, "elsewhere")},
+      encoding: "utf-8",
+    });
+    expect(run.stdout + run.stderr).toContain(`${platform}: 1 passed, 0 failed`);
+    expect(run.status).toBe(0);
+  }
+  await removeTempDir(testDir);
+}, 120000);
+
 test("--concurrency bounds how many shards run at once", async () => {
   const testDir = await createTempDir("concurrency");
   const projDir = Path.join(testDir, "proj");
