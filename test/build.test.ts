@@ -1,4 +1,5 @@
 import {test, expect} from "../src/test.ts";
+import {spawnSync} from "child_process";
 import * as FS from "fs/promises";
 import * as Path from "path";
 import {build} from "../src/internal/libuild.ts";
@@ -1157,3 +1158,60 @@ test("relative JSON imports bundle into dist - never a specifier above the packa
 
   await removeTempDir(testDir);
 }, 60000);  // builds a fixture - beyond bun's 5s default under load
+
+test("a *.worker.ts is built to dist, left out of exports, and loads by URL", async () => {
+  const testDir = await createTempDir("worker-entry");
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "worker-entry",
+    version: "0.1.0",
+    type: "module",
+    main: "./dist/index.cjs",
+    private: true,
+    exports: {".": "./src/index.ts", "./package.json": "./package.json"}
+  }, null, 2));
+  await FS.writeFile(Path.join(testDir, "src", "shared.ts"),
+    "export function double(n: number): number { return n * 2; }\n");
+  await FS.writeFile(Path.join(testDir, "src", "decode.worker.ts"),
+    'import {parentPort} from "node:worker_threads";\n' +
+    'import {double} from "./shared.ts";\n' +
+    'parentPort!.on("message", (n: number) => { parentPort!.postMessage(double(n)); });\n');
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"),
+    'import {Worker} from "node:worker_threads";\n' +
+    'export function decode(n: number): Promise<number> {\n' +
+    '  const url = new URL(`./decode.worker.${import.meta.url.endsWith(".ts") ? "ts" : "js"}`, import.meta.url);\n' +
+    '  return new Promise((resolve, reject) => {\n' +
+    '    const w = new Worker(url);\n' +
+    '    w.once("message", (v) => { resolve(v); w.terminate(); });\n' +
+    '    w.once("error", reject);\n' +
+    '    w.postMessage(n);\n' +
+    '  });\n' +
+    '}\n');
+
+  await build(testDir, false);
+
+  const distDir = Path.join(testDir, "dist");
+  expect(await fileExists(Path.join(distDir, "decode.worker.js"))).toBe(true);
+  expect(await fileExists(Path.join(distDir, "decode.worker.cjs"))).toBe(false);
+  expect(await fileExists(Path.join(distDir, "index.cjs"))).toBe(true);
+  const distPkg = await readJSON(Path.join(distDir, "package.json"));
+  expect(Object.keys(distPkg.exports)).not.toContain("./decode.worker");
+  expect(Object.keys(distPkg.exports)).not.toContain("./decode.worker.js");
+
+  // The built index starts the built worker by URL, on every runtime that is
+  // installed here.
+  const consumer = Path.join(testDir, "consumer");
+  await FS.mkdir(Path.join(consumer, "node_modules"), {recursive: true});
+  await FS.symlink(distDir, Path.join(consumer, "node_modules", "worker-entry"));
+  await FS.writeFile(Path.join(consumer, "package.json"), '{"type":"module"}');
+  await FS.writeFile(Path.join(consumer, "use.mjs"),
+    'import {decode} from "worker-entry";\nconsole.log("RESULT", await decode(21));\n');
+  const runtimes: Array<[string, string[]]> = [["node", ["use.mjs"]], ["bun", ["use.mjs"]]];
+  if (spawnSync("deno", ["--version"], {stdio: "ignore"}).status === 0) runtimes.push(["deno", ["run", "-A", "use.mjs"]]);
+  for (const [cmd, args] of runtimes) {
+    const run = spawnSync(cmd, args, {cwd: consumer, encoding: "utf-8"});
+    expect(`${cmd}: ${run.stdout}${run.stderr}`).toContain("RESULT 42");
+  }
+
+  await removeTempDir(testDir);
+}, 120000);
