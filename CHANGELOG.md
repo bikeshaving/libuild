@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Worker entries.** A `src/<name>.worker.ts` is built to `dist/<name>.worker.js` and left out of `exports`. Code loaded by file path - `new Worker(new URL("./decode.worker.js", import.meta.url), {type: "module"})` - never goes through the exports map, so making it a public export was the only way to get it built and also wrong. The worker is always an entry, even when `exports` names only `"."` and everything else bundles into `index`; it is built as ESM only, since a module worker never loads the CJS file; and shared code is split between it and the modules that import it like any other entry. Asked for by termdom, whose image decoder runs on a worker.
+
 ### Fixed
 - **Test shards no longer fill Bun's transpiler cache.** Bun keeps a compiled copy of every large file it runs, keyed by content and never evicted. A test bundle is a few megabytes and changes with any edit to the project, so every run after an edit left a whole new set behind - 35 GB and 18,000 entries in 8 days on one machine, and a full disk twice. 0.2.22 made bundles deterministic, which stopped the growth between edits; it could not stop the growth across them. Every shard now runs with `BUN_RUNTIME_TRANSPILER_CACHE_PATH=0`, whatever the shell has set, so nothing is cached: the bundles are throwaway and nothing reruns them.
 - **`--concurrency` is honored.** The option was parsed and then dropped on the way into the runner, so every run used the default of one less than the CPU count, on every platform. A machine with 8 cores ran 7 shards at once no matter what was passed. Reported from a termdom run where 7 deno shards, each a few hundred megabytes, swapped an 8 GB machine.

@@ -103,6 +103,14 @@ export function packageTypeRefusalMessage(): string {
   );
 }
 
+// A src/<name>.worker.ts is built to dist/<name>.worker.js and left out of
+// exports: it is loaded by file path, through new URL(..., import.meta.url),
+// never through the exports map, so there is nothing to export. ESM only - a
+// worker is started with {type: "module"}, so the CJS build would never load.
+function isWorkerEntry(name: string): boolean {
+  return name.endsWith(".worker");
+}
+
 function isValidEntrypoint(filename: string): boolean {
   if (!filename.endsWith(".ts") && !filename.endsWith(".tsx") && !filename.endsWith(".js")) return false;
   if (filename.endsWith(".d.ts")) return false; // Ignore TypeScript declaration files
@@ -512,6 +520,7 @@ async function generateExports(entries: string[], mainEntry: string | undefined,
   // All entries (including duplicating main for clarity)
   for (const entry of entries) {
     if (entry === "umd") continue; // UMD is special
+    if (isWorkerEntry(entry)) continue;
 
     const key = `./${entry}`;
 
@@ -1171,6 +1180,9 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     // Use all discovered files to maintain backward compatibility
     srcEntries = allSrcFiles;
   }
+  for (const worker of allSrcFiles.filter(isWorkerEntry)) {
+    if (!srcEntries.includes(worker)) srcEntries.push(worker);
+  }
   
   // Combine entries, prefixing bin entries to distinguish them
   const allBinEntries = binEntries.map(entry => ({ name: entry, source: 'top-level' }));
@@ -1195,7 +1207,7 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     }
   };
 
-  const mainEntry = detectMainEntry(pkg, srcEntries);
+  const mainEntry = detectMainEntry(pkg, srcEntries.filter((entry) => !isWorkerEntry(entry)));
 
   console.info("  Found entries:", entries.join(", "));
   console.info("  Main entry:", mainEntry ?? "(none - no root export)");
@@ -1398,7 +1410,9 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       if (srcEntryPoints.length > 0) {
         try {
           await esbuildBuild({
-            entryPoints: srcEntryPoints.map(p => ({in: p, out: flatOut(p)})),
+            entryPoints: srcEntryPoints
+              .filter(p => !isWorkerEntry(Path.basename(p, Path.extname(p))))
+              .map(p => ({in: p, out: flatOut(p)})),
             outdir: distDir,
             format: "cjs",
             outExtension: {".js": ".cjs"},

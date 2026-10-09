@@ -37,6 +37,7 @@ libuild publish
 
 ### Entry Points
 - **Library modules**: All top-level `.js`/`.ts` files in `src/` (excluding `_` prefixed files)
+- **Workers**: A `src/<name>.worker.ts` is built to `dist/<name>.worker.js` but left out of `exports`. It is for code that is loaded by file path - `new Worker(new URL("./decode.worker.js", import.meta.url), {type: "module"})` - which never goes through the exports map, so there is nothing to make public. ESM only.
 - **CLI binaries**: Any file referenced in `package.json` `bin` field gets compiled to standalone executable
 - **UMD builds**: If `src/umd.ts` exists, creates browser-compatible UMD build
 
