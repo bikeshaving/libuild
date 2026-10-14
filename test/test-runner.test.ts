@@ -4,7 +4,7 @@ import * as FSSync from "fs";
 import * as Path from "path";
 import {createRequire} from "module";
 import {spawnSync} from "child_process";
-import {bundleTests, collectTests, packageTypeRefusal, parseBunOutput, parseDenoReport, parseRegistered, parseRegisteredTodo, parseTapOutput, resolveTestTargets, shardFailure, stripRegistered, runTests} from "../src/internal/test-runner.ts";
+import {bundleTests, collectTests, packageTypeRefusal, parseBunOutput, parseDenoReport, parseRegistered, parseRegisteredTodo, parseTapOutput, resolveTestTargets, shardFailure, stripRegistered, runTests, type Reporter} from "../src/internal/test-runner.ts";
 import {
   installSnapshotMatcher,
   wrapTestApi,
@@ -837,6 +837,51 @@ test("shards run with bun's transpiler cache off, whatever the shell set", async
     expect(run.stdout + run.stderr).toContain(`${platform}: 1 passed, 0 failed`);
     expect(run.status).toBe(0);
   }
+  await removeTempDir(testDir);
+}, 120000);
+
+test("a reporter sees every file and platform, and the console stays quiet", async () => {
+  const testDir = await createTempDir("reporter");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+  await FS.writeFile(Path.join(projDir, "package.json"),
+    JSON.stringify({name: "reporter", version: "1.0.0", type: "module"}));
+  await FS.writeFile(Path.join(projDir, "test", "good.test.ts"),
+    'import {test} from "node:test";\nimport assert from "node:assert";\ntest("ok", () => { assert.ok(true); });\n');
+  await FS.writeFile(Path.join(projDir, "test", "bad.test.ts"),
+    'import {test} from "node:test";\nimport assert from "node:assert";\ntest("no", () => { assert.fail("broken on purpose"); });\n');
+
+  const events: string[] = [];
+  const outputs: Record<string, string> = {};
+  const reporter: Reporter = {
+    platformStart: (p, files) => events.push(`start ${p} ${files.length}`),
+    fileStart: (p, f) => events.push(`file ${f}`),
+    fileDone: (p, f, r, out) => { events.push(`done ${f} ${r.passed}/${r.failed}`); outputs[f] = out; },
+    platformDone: (r) => events.push(`platform ${r.platform} ${r.passed}/${r.failed}`),
+    runDone: (rs) => events.push(`run ${rs.length}`),
+  };
+
+  const logged: string[] = [];
+  const realLog = console.log;
+  console.log = (...args: any[]) => { logged.push(args.join(" ")); };
+  let ok: boolean;
+  try {
+    ok = await runTests({cwd: projDir, platforms: ["node"], timeout: 30000, concurrency: 1, reporter});
+  } finally {
+    console.log = realLog;
+  }
+
+  expect(ok).toBe(false);
+  expect(events[0]).toBe("start node 2");
+  expect(events.filter((e) => e.startsWith("file ")).sort()).toEqual(["file test/bad.test.ts", "file test/good.test.ts"]);
+  expect(events).toContain("done test/good.test.ts 1/0");
+  expect(events).toContain("done test/bad.test.ts 0/1");
+  expect(events).toContain("platform node 1/1");
+  expect(events[events.length - 1]).toBe("run 1");
+  expect(outputs["test/bad.test.ts"]).toContain("broken on purpose");
+  // Nothing the console reporter would have printed reached the console.
+  expect(logged.filter((l) => /passed|Running|Test Results/.test(l))).toEqual([]);
+
   await removeTempDir(testDir);
 }, 120000);
 

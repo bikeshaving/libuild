@@ -140,6 +140,8 @@ export interface TestRunnerOptions {
   concurrency?: number;
   /** Write/overwrite snapshots instead of comparing (toMatchSnapshot) */
   updateSnapshots: boolean;
+  /** Where progress goes. Defaults to the console lines `libuild test` prints. */
+  reporter?: Reporter;
 }
 
 export interface TestResult {
@@ -150,6 +152,45 @@ export interface TestResult {
   skipped?: number;
   todo?: number;
 }
+
+/**
+ * What a run tells its caller as it goes. The console reporter below prints
+ * the lines `libuild test` has always printed; the watch UI keeps state
+ * instead. Every method is optional, so a reporter listens to what it needs.
+ *
+ * `file` is relative to cwd. `fileDone` carries the shard's own output, which
+ * the console reporter dumps on failure and a UI shows on demand.
+ */
+export interface Reporter {
+  platformStart?(platform: Platform, files: string[]): void;
+  fileStart?(platform: Platform, file: string): void;
+  fileDone?(platform: Platform, file: string, result: TestResult, output: string): void;
+  platformDone?(result: TestResult): void;
+  runDone?(results: TestResult[]): void;
+}
+
+export const consoleReporter: Reporter = {
+  platformStart(platform, files) {
+    if (isBrowserPlatform(platform)) {
+      console.log(`\nBuilding tests for ${platform}...`);
+    } else {
+      console.log(`\nRunning ${files.length} file(s) on ${platform} (per-file isolation)...`);
+    }
+  },
+  fileDone(_platform, file, r, output) {
+    const failed = r.failed > 0;
+    // Build the whole per-file report as one string so concurrent shards
+    // don't interleave (a single console.log call is atomic).
+    let line = `${failed ? red("✗") : green("✓")} ${file}: ${green(`${r.passed} passed`)}, ${failed ? red(`${r.failed} failed`) : "0 failed"}`;
+    if (r.todo) line += `, ${yellow(`${r.todo} todo`)}`;
+    if (r.skipped) line += `, ${dim(`${r.skipped} skipped`)}`;
+    if (failed && output.trim()) line += "\n" + output.trimEnd();
+    console.log(line);
+  },
+  runDone(results) {
+    printResults(results);
+  },
+};
 
 // One per-file shard's result plus its captured output (dumped on failure).
 interface ShardRun {
@@ -1197,7 +1238,8 @@ async function runShardedPlatform(
   timeout: number,
   setupFile: string | null,
   updateSnapshots: boolean,
-  maxConcurrency?: number
+  maxConcurrency: number | undefined,
+  reporter: Reporter
 ): Promise<TestResult> {
   const runShard = platform === "bun" ? runBunTests : platform === "deno" ? runDenoTests : runNodeTests;
   const concurrency = Math.max(1, Math.min(maxConcurrency ?? ((OS.cpus().length || 2) - 1), files.length));
@@ -1211,6 +1253,7 @@ async function runShardedPlatform(
       if (i >= files.length) return;
       const file = files[i];
       const rel = Path.relative(cwd, file);
+      reporter.fileStart?.(platform, rel);
 
       let shard: ShardRun;
       try {
@@ -1224,14 +1267,7 @@ async function runShardedPlatform(
       }
 
       const r = shard.result;
-      const failed = r.failed > 0;
-      // Build the whole per-file report as one string so concurrent shards
-      // don't interleave (a single console.log call is atomic).
-      let line = `${failed ? red("✗") : green("✓")} ${rel}: ${green(`${r.passed} passed`)}, ${failed ? red(`${r.failed} failed`) : "0 failed"}`;
-      if (r.todo) line += `, ${yellow(`${r.todo} todo`)}`;
-      if (r.skipped) line += `, ${dim(`${r.skipped} skipped`)}`;
-      if (failed && shard.output.trim()) line += "\n" + shard.output.trimEnd();
-      console.log(line);
+      reporter.fileDone?.(platform, rel, r, shard.output);
 
       agg.passed += r.passed;
       agg.failed += r.failed;
@@ -1525,6 +1561,7 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
     timeout: options.timeout || 60000,
     updateSnapshots: options.updateSnapshots || false,
     concurrency: options.concurrency ?? Math.max(1, (OS.cpus().length || 2) - 1),
+    reporter: options.reporter ?? consoleReporter,
   };
 
   // ESM-only, enforced for the whole run: a "type": "commonjs" package is
@@ -1612,26 +1649,28 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
   for (const signal of SIGNALS) process.on(signal, onSignal);
 
   try {
+    const reporter = opts.reporter;
     for (const platform of opts.platforms) {
       let result: TestResult;
+      reporter.platformStart?.(platform, testFiles.map((f) => Path.relative(opts.cwd, f)));
       if (!isBrowserPlatform(platform)) {
         // Per-file process isolation is the default: each file runs in its own
         // process (frees native memory between files, runs them in parallel).
-        console.log(`\nRunning ${testFiles.length} file(s) on ${platform} (per-file isolation)...`);
-        result = await runShardedPlatform(platform, testFiles, tempDir, opts.cwd, opts.timeout, setupFile, opts.updateSnapshots, opts.concurrency);
+        result = await runShardedPlatform(platform, testFiles, tempDir, opts.cwd, opts.timeout, setupFile, opts.updateSnapshots, opts.concurrency, reporter);
       } else {
         // Browser runs the combined bundle in a Playwright page (its own
         // isolation model - a separate browser process).
-        console.log(`\nBuilding tests for ${platform}...`);
         const bundlePath = await bundleTests(testFiles, platform, tempDir, opts.cwd, "", setupFile, opts.updateSnapshots);
         console.log(`Running tests on ${platform}...`);
         result = await runBrowserTests(bundlePath, platform, opts.timeout, opts.debug, opts.cwd);
       }
 
+      reporter.platformDone?.(result);
       results.push(result);
     }
 
-    return printResults(results);
+    reporter.runDone?.(results);
+    return results.every((r) => r.failed === 0);
   } finally {
     detachSignalHandlers();
     // Clean up (unless in debug mode, where the bundles stay inspectable)
