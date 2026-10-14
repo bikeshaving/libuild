@@ -142,6 +142,13 @@ export interface TestRunnerOptions {
   updateSnapshots: boolean;
   /** Where progress goes. Defaults to the console lines `libuild test` prints. */
   reporter?: Reporter;
+  /**
+   * Collect coverage on the node shards and report it after the run. Lines
+   * are mapped back to source files through the bundles' source maps.
+   * `reporters` are c8's (text, lcov, html, ...); `dir` is where file
+   * reports go, relative to cwd.
+   */
+  coverage?: { reporters?: string[]; dir?: string };
 }
 
 export interface TestResult {
@@ -715,7 +722,8 @@ export async function bundleTests(
   id: string = "",
   setupFile: string | null = null,
   updateSnapshots: boolean = false,
-  onInputs?: (inputs: string[]) => void
+  onInputs?: (inputs: string[]) => void,
+  sourcemap: boolean = false
 ): Promise<string> {
   const entryContent = generateTestEntry(testFiles, platform, setupFile, updateSnapshots);
   // A per-shard id keeps concurrent per-file bundles from clobbering each other.
@@ -783,6 +791,9 @@ const require = __libuild_node_module.createRequire(import.meta.url);
     format: "esm",
     outfile: outPath,
     metafile: onInputs !== undefined,
+    // Coverage is recorded against the bundle; the map is what carries it
+    // back to the source lines.
+    sourcemap,
     platform: isBrowser ? "browser" : "node",
     // es2022, not es2020: the `@b9g/libuild/test` dispatcher selects its backend
     // with top-level await, which es2020 can't emit (esbuild errors). TLA in ES
@@ -826,6 +837,16 @@ const require = __libuild_node_module.createRequire(import.meta.url);
   };
 
   const built = await esbuildBuild(buildOptions);
+  if (sourcemap) {
+    // esbuild writes sources relative to outDir, which sits in a temp dir
+    // far from the project; a coverage writer given "../../../../src/x.ts"
+    // mangles the relative path it prints. Absolute sources leave every
+    // tool downstream to compute its own.
+    const mapPath = `${outPath}.map`;
+    const map = JSON.parse(await FS.readFile(mapPath, "utf-8"));
+    map.sources = map.sources.map((source: string) => Path.resolve(outDir, source));
+    await FS.writeFile(mapPath, JSON.stringify(map));
+  }
   if (onInputs && built.metafile) {
     const generated = new Set([entryPath, shimPath]);
     onInputs(
@@ -988,13 +1009,13 @@ interface SpawnResult {
  * exactly what failed in issue #18: node traps our SIGTERM and exits (1, null),
  * which is indistinguishable from an ordinary failing run by exit status alone.
  */
-async function spawnShard(command: string, args: string[], timeout: number): Promise<SpawnResult> {
+async function spawnShard(command: string, args: string[], timeout: number, env: NodeJS.ProcessEnv = {}): Promise<SpawnResult> {
   const { spawn } = await import("child_process");
 
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: CHILD_ENV,
+      env: { ...CHILD_ENV, ...env },
     });
 
     let stdout = "";
@@ -1078,9 +1099,9 @@ export function shardFailure(run: {
 /**
  * Run tests in Node.js using node:test
  */
-async function runNodeTests(bundlePath: string, timeout: number): Promise<ShardRun> {
+async function runNodeTests(bundlePath: string, timeout: number, env: NodeJS.ProcessEnv = {}): Promise<ShardRun> {
   const { stdout, stderr, code, signal, timedOut, error } =
-    await spawnShard("node", ["--test", "--test-reporter=tap", bundlePath], timeout);
+    await spawnShard("node", ["--test", "--test-reporter=tap", bundlePath], timeout, env);
 
   if (error) {
     return {
@@ -1308,9 +1329,13 @@ async function runShardedPlatform(
   setupFile: string | null,
   updateSnapshots: boolean,
   maxConcurrency: number | undefined,
-  reporter: Reporter
+  reporter: Reporter,
+  coverageDir: string | null = null
 ): Promise<TestResult> {
   const runShard = platform === "bun" ? runBunTests : platform === "deno" ? runDenoTests : runNodeTests;
+  // V8 writes one coverage file per process into this directory; node is the
+  // only runtime that honors the variable, so only node shards collect.
+  const shardEnv: NodeJS.ProcessEnv = coverageDir && platform === "node" ? { NODE_V8_COVERAGE: coverageDir } : {};
   const concurrency = Math.max(1, Math.min(maxConcurrency ?? ((OS.cpus().length || 2) - 1), files.length));
 
   const agg: TestResult = { platform, passed: 0, failed: 0, errors: [], skipped: 0, todo: 0 };
@@ -1327,8 +1352,9 @@ async function runShardedPlatform(
       let shard: ShardRun;
       try {
         const bundle = await bundleTests([file], platform, tempDir, cwd, String(i), setupFile, updateSnapshots,
-          reporter.fileInputs && ((inputs) => reporter.fileInputs!(platform, rel, inputs)));
-        shard = await runShard(bundle, timeout);
+          reporter.fileInputs && ((inputs) => reporter.fileInputs!(platform, rel, inputs)),
+          coverageDir !== null);
+        shard = await runShard(bundle, timeout, shardEnv);
       } catch (error: any) {
         shard = {
           result: { platform, passed: 0, failed: 1, errors: [{ name: rel, error: error?.message ?? String(error) }], skipped: 0, todo: 0 },
@@ -1591,6 +1617,43 @@ function printResults(results: TestResult[]): boolean {
 }
 
 /**
+ * Turn the shards' V8 coverage files into a report, mapped back to source
+ * through the bundles' source maps. c8 does the merging and the remapping;
+ * its own default excludes drop test files, and the run's generated entry
+ * and shim are dropped by name.
+ */
+async function reportCoverage(cwd: string, coverageDir: string, coverage: { reporters?: string[]; dir?: string }): Promise<void> {
+  const { spawn } = await import("child_process");
+  const require = createRequire(import.meta.url);
+  const c8 = Path.join(Path.dirname(require.resolve("c8/package.json")), "bin", "c8.js");
+  const args = [
+    c8, "report",
+    `--temp-directory=${coverageDir}`,
+    `--reports-dir=${Path.resolve(cwd, coverage.dir ?? "coverage")}`,
+    // The bundles live in the run's temp dir, outside the project; without
+    // this c8 drops them before their maps can point back inside it.
+    "--allow-external",
+    "--exclude-after-remap",
+    // Passing any --exclude replaces c8's defaults, so the test files it
+    // would have dropped are listed here too.
+    "--exclude=**/entry-*.ts",
+    "--exclude=**/litest-shim.ts",
+    "--exclude=**/bundle-*.js",
+    "--exclude=**/*.{test,spec}.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
+    "--exclude=**/{test,tests,__tests__}/**",
+    "--exclude=**/*.d.ts",
+    "--exclude=**/coverage/**",
+    "--exclude=**/node_modules/**",
+    ...(coverage.reporters?.length ? coverage.reporters : ["text"]).map((r) => `--reporter=${r}`),
+  ];
+  await new Promise<void>((resolve) => {
+    const child = spawn("node", args, { cwd, stdio: "inherit", env: CHILD_ENV });
+    child.on("close", () => resolve());
+    child.on("error", (error) => { console.error(red(`coverage report failed: ${error.message}`)); resolve(); });
+  });
+}
+
+/**
  * Main test runner
  */
 export async function runTests(options: Partial<TestRunnerOptions> = {}): Promise<boolean> {
@@ -1607,6 +1670,7 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
     updateSnapshots: options.updateSnapshots || false,
     concurrency: options.concurrency ?? Math.max(1, (OS.cpus().length || 2) - 1),
     reporter: options.reporter ?? consoleReporter,
+    coverage: options.coverage ?? {},
   };
 
   // ESM-only, enforced for the whole run: a "type": "commonjs" package is
@@ -1695,13 +1759,22 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
 
   try {
     const reporter = opts.reporter;
+    let coverageDir: string | null = null;
+    if (options.coverage) {
+      if (!opts.platforms.includes("node")) {
+        console.warn(yellow("Coverage is collected on node only; add -p node to collect it."));
+      } else {
+        coverageDir = Path.join(tempRoot, "v8-coverage");
+        await FS.mkdir(coverageDir, { recursive: true });
+      }
+    }
     for (const platform of opts.platforms) {
       let result: TestResult;
       reporter.platformStart?.(platform, testFiles.map((f) => Path.relative(opts.cwd, f)));
       if (!isBrowserPlatform(platform)) {
         // Per-file process isolation is the default: each file runs in its own
         // process (frees native memory between files, runs them in parallel).
-        result = await runShardedPlatform(platform, testFiles, tempDir, opts.cwd, opts.timeout, setupFile, opts.updateSnapshots, opts.concurrency, reporter);
+        result = await runShardedPlatform(platform, testFiles, tempDir, opts.cwd, opts.timeout, setupFile, opts.updateSnapshots, opts.concurrency, reporter, coverageDir);
       } else {
         // Browser runs the combined bundle in a Playwright page (its own
         // isolation model - a separate browser process).
@@ -1715,6 +1788,9 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
     }
 
     reporter.runDone?.(results);
+    if (coverageDir) {
+      await reportCoverage(opts.cwd, coverageDir, options.coverage!);
+    }
     return results.every((r) => r.failed === 0);
   } finally {
     detachSignalHandlers();
