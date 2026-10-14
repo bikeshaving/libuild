@@ -273,6 +273,10 @@ libuild test path/to/one.test.ts    # single-file loop
 
 Deno runs the same files through its own `deno test`, which bridges `node:test` into it, so no Deno-specific test API is needed, and the summary reads the same on all three runtimes.
 
+### Watch mode
+
+`libuild test --watch` runs the suite as a terminal app, the way jest's watch mode does. Files rerun when a source they import changes; `f` reruns the failed files, `a` reruns everything, `Enter` reruns the selected file, `u` reruns with snapshots updated, the arrows pick a file to read its output, and `q` quits. It needs `@b9g/termdom` in the project (`npm install -D @b9g/termdom`), loaded the way playwright is for browser tests.
+
 Import the portable API from `@b9g/libuild/test` (`describe`/`test`/`it`/`expect`, hooks, `test.concurrent`, `.each`, and a cross-runtime `toMatchSnapshot`). Files run in per-file isolated processes with dependencies resolved from your `node_modules`; `import.meta.url`/`.dirname`/`.filename` and `__dirname`/`__filename` point at your source files, not the bundles.
 
 Flags: `--timeout <ms>` is the per-file budget, and on bun it is also applied as the per-test timeout (bun defaults to 5s per test; without this, slow tests die before the file budget matters). `--concurrency <n>` caps how many files run at once — lower it for suites whose tests spawn their own processes. `--filter <glob>` selects files; `-u` updates snapshots; `--debug` keeps the browser open and preserves the bundle directory.

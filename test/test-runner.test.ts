@@ -885,6 +885,30 @@ test("a reporter sees every file and platform, and the console stays quiet", asy
   await removeTempDir(testDir);
 }, 120000);
 
+test("a reporter is told which source files each test file's bundle pulled in", async () => {
+  const testDir = await createTempDir("inputs");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "src"), {recursive: true});
+  await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+  await FS.writeFile(Path.join(projDir, "package.json"),
+    JSON.stringify({name: "inputs", version: "1.0.0", type: "module"}));
+  await FS.writeFile(Path.join(projDir, "src", "math.ts"), "export const two = 2;\n");
+  await FS.writeFile(Path.join(projDir, "test", "math.test.ts"),
+    'import {test} from "node:test";\nimport assert from "node:assert";\nimport {two} from "../src/math.ts";\n' +
+    'test("two", () => { assert.strictEqual(two, 2); });\n');
+
+  const inputs: Record<string, string[]> = {};
+  await runTests({cwd: projDir, platforms: ["node"], timeout: 30000, concurrency: 1, reporter: {
+    fileInputs: (_p, file, list) => { inputs[file] = list; },
+  }});
+
+  const got = inputs["test/math.test.ts"].map((f) => Path.relative(projDir, f)).sort();
+  expect(got).toEqual(["src/math.ts", "test/math.test.ts"]);
+  expect(inputs["test/math.test.ts"].every(Path.isAbsolute)).toBe(true);
+
+  await removeTempDir(testDir);
+}, 120000);
+
 test("--concurrency bounds how many shards run at once", async () => {
   const testDir = await createTempDir("concurrency");
   const projDir = Path.join(testDir, "proj");

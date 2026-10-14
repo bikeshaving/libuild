@@ -157,6 +157,7 @@ program
   .option("--timeout <ms>", "Per-file test timeout in milliseconds", "60000")
   .option("--concurrency <n>", "Max test files running at once per platform (default: CPU count - 1)")
   .option("-u, --update-snapshots", "Write/update snapshot files instead of comparing")
+  .option("-w, --watch", "Interactive mode: rerun on change, rerun failed with f (needs @b9g/termdom)")
   .action(async (targets: string[], options: {
     platform?: string[];
     debug?: boolean;
@@ -164,6 +165,7 @@ program
     timeout?: string;
     concurrency?: string;
     updateSnapshots?: boolean;
+    watch?: boolean;
   }) => {
     // A target may be a directory (the root), specific test files, or an
     // unexpanded glob - so the single-file loop runs under the same loader,
@@ -194,7 +196,7 @@ program
       process.exit(1);
     }
 
-    const success = await runTests({
+    const runOptions = {
       cwd,
       files,
       patterns,
@@ -203,7 +205,20 @@ program
       timeout: parseInt(options.timeout || "60000", 10),
       concurrency: options.concurrency ? parseInt(options.concurrency, 10) : undefined,
       updateSnapshots: options.updateSnapshots || false,
-    });
+    };
+
+    if (options.watch) {
+      const { watchTests } = await import("./internal/watch.ts");
+      try {
+        await watchTests(runOptions);
+      } catch (error: any) {
+        console.error(error?.message ?? error);
+        process.exit(1);
+      }
+      process.exit(0);
+    }
+
+    const success = await runTests(runOptions);
 
     process.exit(success ? 0 : 1);
   });

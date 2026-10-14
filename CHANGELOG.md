@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **`libuild test --watch`: an interactive runner.** The suite as a terminal app, built on `@b9g/termdom`: a list of files with their status and counts, the selected file's failure output beside it, and the keys jest's watch mode had - `f` reruns the failed files, `a` everything, `Enter` the selected file, `u` with snapshots updated, `q` quits. Files rerun when a source their bundle pulled in changes, which the build already knew: esbuild's metafile lists every input of every test bundle, so an edit to `src/math.ts` reruns the test files that import it and no others. termdom is loaded from the project's `node_modules`, like playwright, so libuild's own install stays as it was.
+- **A run reports to a reporter.** `runTests({reporter})` hears each platform start, each file start and finish with its counts and output, which source files its bundle included, and the run's end. The console output is the default reporter and is unchanged.
+
 ## [0.2.26] - 2026-10-09
 
 ### Added

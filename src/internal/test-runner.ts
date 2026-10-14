@@ -164,6 +164,12 @@ export interface TestResult {
 export interface Reporter {
   platformStart?(platform: Platform, files: string[]): void;
   fileStart?(platform: Platform, file: string): void;
+  /**
+   * Every source file the test file's bundle pulled in, absolute, the test
+   * file itself included. Packages stay external and are not listed. A
+   * watcher reruns a test when one of these changes.
+   */
+  fileInputs?(platform: Platform, file: string, inputs: string[]): void;
   fileDone?(platform: Platform, file: string, result: TestResult, output: string): void;
   platformDone?(result: TestResult): void;
   runDone?(results: TestResult[]): void;
@@ -655,7 +661,8 @@ export async function bundleTests(
   cwd: string,
   id: string = "",
   setupFile: string | null = null,
-  updateSnapshots: boolean = false
+  updateSnapshots: boolean = false,
+  onInputs?: (inputs: string[]) => void
 ): Promise<string> {
   const entryContent = generateTestEntry(testFiles, platform, setupFile, updateSnapshots);
   // A per-shard id keeps concurrent per-file bundles from clobbering each other.
@@ -722,6 +729,7 @@ const require = __libuild_node_module.createRequire(import.meta.url);
     bundle: true,
     format: "esm",
     outfile: outPath,
+    metafile: onInputs !== undefined,
     platform: isBrowser ? "browser" : "node",
     // es2022, not es2020: the `@b9g/libuild/test` dispatcher selects its backend
     // with top-level await, which es2020 can't emit (esbuild errors). TLA in ES
@@ -764,7 +772,15 @@ const require = __libuild_node_module.createRequire(import.meta.url);
     logLevel: "warning",
   };
 
-  await esbuildBuild(buildOptions);
+  const built = await esbuildBuild(buildOptions);
+  if (onInputs && built.metafile) {
+    const generated = new Set([entryPath, shimPath]);
+    onInputs(
+      Object.keys(built.metafile.inputs)
+        .map((input) => Path.resolve(outDir, input))
+        .filter((input) => !generated.has(input) && !input.includes(`${Path.sep}node_modules${Path.sep}`))
+    );
+  }
 
   return outPath;
 }
@@ -1257,7 +1273,8 @@ async function runShardedPlatform(
 
       let shard: ShardRun;
       try {
-        const bundle = await bundleTests([file], platform, tempDir, cwd, String(i), setupFile, updateSnapshots);
+        const bundle = await bundleTests([file], platform, tempDir, cwd, String(i), setupFile, updateSnapshots,
+          reporter.fileInputs && ((inputs) => reporter.fileInputs!(platform, rel, inputs)));
         shard = await runShard(bundle, timeout);
       } catch (error: any) {
         shard = {
