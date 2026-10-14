@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **`libuild test --coverage`.** Coverage collected on the node shards and reported after the run, mapped back to source files through the bundles' source maps, so a report names `src/math.ts` and its uncovered lines rather than a bundle in a temp dir. `--coverage-reporter` picks c8's reporters (`text` by default; `lcov`, `html`, ...) and `--coverage-dir` says where file reports go. Test files are excluded. Node-only: bun does not write V8 coverage for a bundle, and deno writes its own format; shards on those runtimes run as usual.
+
 ## [0.2.26] - 2026-10-09
 
 ### Added

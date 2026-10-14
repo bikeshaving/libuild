@@ -157,6 +157,9 @@ program
   .option("--timeout <ms>", "Per-file test timeout in milliseconds", "60000")
   .option("--concurrency <n>", "Max test files running at once per platform (default: CPU count - 1)")
   .option("-u, --update-snapshots", "Write/update snapshot files instead of comparing")
+  .option("--coverage", "Collect coverage on the node shards and report it, mapped to source files")
+  .option("--coverage-reporter <names...>", "Coverage reporters: text, lcov, html, ... (default: text)")
+  .option("--coverage-dir <dir>", "Where coverage file reports go (default: coverage)")
   .action(async (targets: string[], options: {
     platform?: string[];
     debug?: boolean;
@@ -164,6 +167,9 @@ program
     timeout?: string;
     concurrency?: string;
     updateSnapshots?: boolean;
+    coverage?: boolean;
+    coverageReporter?: string[];
+    coverageDir?: string;
   }) => {
     // A target may be a directory (the root), specific test files, or an
     // unexpanded glob - so the single-file loop runs under the same loader,
@@ -203,6 +209,7 @@ program
       timeout: parseInt(options.timeout || "60000", 10),
       concurrency: options.concurrency ? parseInt(options.concurrency, 10) : undefined,
       updateSnapshots: options.updateSnapshots || false,
+      ...(options.coverage ? { coverage: { reporters: options.coverageReporter, dir: options.coverageDir } } : {}),
     });
 
     process.exit(success ? 0 : 1);

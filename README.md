@@ -277,6 +277,10 @@ Import the portable API from `@b9g/libuild/test` (`describe`/`test`/`it`/`expect
 
 Flags: `--timeout <ms>` is the per-file budget, and on bun it is also applied as the per-test timeout (bun defaults to 5s per test; without this, slow tests die before the file budget matters). `--concurrency <n>` caps how many files run at once — lower it for suites whose tests spawn their own processes. `--filter <glob>` selects files; `-u` updates snapshots; `--debug` keeps the browser open and preserves the bundle directory.
 
+### Coverage
+
+`libuild test --coverage -p node` collects coverage on the node shards and prints a table after the run, with lines mapped back to your source files through the bundles' source maps. `--coverage-reporter lcov html` picks c8's reporters (default `text`); file reports go to `coverage/`, or `--coverage-dir <dir>`. Test files and declaration files are left out. Coverage is node-only: bun does not write V8 coverage for a bundle and deno writes its own format, so shards on those runtimes run as usual and collect nothing.
+
 ### In-source tests
 
 Tests can live in the module they cover, the way Rust's `mod tests` does. They
