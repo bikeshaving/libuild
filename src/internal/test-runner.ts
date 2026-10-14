@@ -175,22 +175,75 @@ export interface Reporter {
   runDone?(results: TestResult[]): void;
 }
 
+// ---------------------------------------------------------------------------
+// What a run says, as text with a tone per span. The console reporter turns
+// a tone into an ANSI color; the watch mode turns it into a CSS class. Both
+// print exactly these strings, so the two modes cannot drift apart.
+// ---------------------------------------------------------------------------
+export type Tone = "plain" | "pass" | "fail" | "todo" | "skip";
+export interface Span { text: string; tone: Tone }
+export type Line = Span[];
+
+const span = (text: string, tone: Tone = "plain"): Span => ({ text, tone });
+
+export function headingLine(platform: Platform, fileCount: number): string {
+  return isBrowserPlatform(platform)
+    ? `Building tests for ${platform}...`
+    : `Running ${fileCount} file(s) on ${platform} (per-file isolation)...`;
+}
+
+function countSpans(r: { passed: number; failed: number; todo?: number; skipped?: number }): Span[] {
+  const failed = r.failed > 0;
+  const spans = [span(`${r.passed} passed`, "pass"), span(", "), span(`${r.failed} failed`, failed ? "fail" : "plain")];
+  if (r.todo) spans.push(span(", "), span(`${r.todo} todo`, "todo"));
+  if (r.skipped) spans.push(span(", "), span(`${r.skipped} skipped`, "skip"));
+  return spans;
+}
+
+export function fileLine(file: string, r: TestResult): Line {
+  const failed = r.failed > 0;
+  return [span(failed ? "✗" : "✓", failed ? "fail" : "pass"), span(` ${file}: `), ...countSpans(r)];
+}
+
+export const SUMMARY_RULE = "=".repeat(60);
+
+export function summaryLines(results: TestResult[]): Line[] {
+  const lines: Line[] = [[span(SUMMARY_RULE)], [span("Test Results Summary")], [span(SUMMARY_RULE)]];
+  for (const result of results) {
+    const failed = result.failed > 0;
+    lines.push([span(failed ? "✗" : "✓", failed ? "fail" : "pass"), span(` ${result.platform}: `), ...countSpans(result)]);
+    if (failed) {
+      for (const error of result.errors) {
+        lines.push([span("    "), span("✗", "fail"), span(` ${error.name}`)]);
+        lines.push([span("      "), span(error.error, "skip")]);
+      }
+    }
+  }
+  lines.push([span(SUMMARY_RULE)]);
+  return lines;
+}
+
+export function lineText(line: Line): string {
+  return line.map((s) => s.text).join("");
+}
+
+const ANSI_BY_TONE: Record<Tone, (s: string) => string> = {
+  plain: (s) => s, pass: green, fail: red, todo: yellow, skip: dim,
+};
+
+export function lineAnsi(line: Line): string {
+  return line.map((s) => ANSI_BY_TONE[s.tone](s.text)).join("");
+}
+
 export const consoleReporter: Reporter = {
   platformStart(platform, files) {
-    if (isBrowserPlatform(platform)) {
-      console.log(`\nBuilding tests for ${platform}...`);
-    } else {
-      console.log(`\nRunning ${files.length} file(s) on ${platform} (per-file isolation)...`);
-    }
+    console.log("\n" + headingLine(platform, files.length));
   },
   fileDone(_platform, file, r, output) {
-    const failed = r.failed > 0;
     // Build the whole per-file report as one string so concurrent shards
     // don't interleave (a single console.log call is atomic).
-    let line = `${failed ? red("✗") : green("✓")} ${file}: ${green(`${r.passed} passed`)}, ${failed ? red(`${r.failed} failed`) : "0 failed"}`;
-    if (r.todo) line += `, ${yellow(`${r.todo} todo`)}`;
-    if (r.skipped) line += `, ${dim(`${r.skipped} skipped`)}`;
-    if (failed && output.trim()) line += "\n" + output.trimEnd();
+    let line = lineAnsi(fileLine(file, r));
+    if (r.failed > 0 && output.trim()) line += "\n" + output.trimEnd();
     console.log(line);
   },
   runDone(results) {
@@ -1533,33 +1586,8 @@ async function runBrowserTests(
  * Print test results summary
  */
 function printResults(results: TestResult[]): boolean {
-  console.log("\n" + "=".repeat(60));
-  console.log("Test Results Summary");
-  console.log("=".repeat(60));
-
-  let allPassed = true;
-
-  for (const result of results) {
-    const ok = result.failed === 0;
-    const status = ok ? green("✓") : red("✗");
-
-    let summaryLine = `${status} ${result.platform}: ${green(`${result.passed} passed`)}, ${ok ? "0 failed" : red(`${result.failed} failed`)}`;
-    if (result.todo) summaryLine += `, ${yellow(`${result.todo} todo`)}`;
-    if (result.skipped) summaryLine += `, ${dim(`${result.skipped} skipped`)}`;
-    console.log(summaryLine);
-
-    if (result.failed > 0) {
-      allPassed = false;
-      for (const error of result.errors) {
-        console.log(`    ${red("✗")} ${error.name}`);
-        console.log(`      ${dim(error.error)}`);
-      }
-    }
-  }
-
-  console.log("=".repeat(60));
-
-  return allPassed;
+  console.log("\n" + summaryLines(results).map(lineAnsi).join("\n"));
+  return results.every((r) => r.failed === 0);
 }
 
 /**

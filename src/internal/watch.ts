@@ -1,12 +1,12 @@
 /**
- * `libuild test --watch`: the suite as a terminal app, the way jest's watch
- * mode works. Files rerun when a source they pulled in changes, failed files
- * rerun on `f`, everything on `a`, and the selected file's output is shown
- * beside the list.
+ * `libuild test --watch`: the usual output, kept live. Files rerun when a
+ * source they pulled in changes, failed files rerun on `f`, everything on
+ * `a`, and the lines redraw in place.
  *
- * The UI is a termdom document: real DOM, redrawn on mutation. termdom is
- * loaded from the project's node_modules, the way playwright is for browser
- * tests, so libuild itself does not carry it.
+ * The output is a termdom document drawn in the normal flow under the
+ * prompt - no alternate screen - and redrawn on mutation. termdom is loaded
+ * from the project's node_modules, the way playwright is for browser tests,
+ * so libuild itself does not carry it.
  */
 import * as FS from "fs";
 import * as Path from "path";
@@ -16,6 +16,10 @@ import {
   collectTests,
   runTests,
   defaultPatternsFor,
+  headingLine,
+  fileLine,
+  summaryLines,
+  type Line,
   type Platform,
   type Reporter,
   type TestResult,
@@ -51,24 +55,19 @@ export interface WatchApp {
   document: any;
 }
 
-const KEYS_HELP = "a all · f failed · Enter rerun · u snapshots · ↑↓ select · q quit";
+const KEYS_HELP = "a rerun all · f rerun failed · u update snapshots · Enter rerun · q quit";
 
 const STYLE = `
   body { margin: 0; }
-  #header { padding: 0 1ch; background: #303030; color: #e0e0e0; }
-  #header .ok { color: #5fd75f; }
-  #header .bad { color: #ff5f5f; }
-  #header .busy { color: #ffd75f; }
-  #main { display: flex; }
-  #files { list-style: none; margin: 0; padding: 0 1ch; width: 44ch; overflow: auto; }
-  #files li { white-space: nowrap; }
-  #files li.selected { background: #444; }
-  #files .pass { color: #5fd75f; }
-  #files .fail { color: #ff5f5f; }
-  #files .running { color: #ffd75f; }
-  #files .idle { color: #808080; }
-  #detail { flex: 1; margin: 0; padding: 0 1ch; overflow: auto; white-space: pre-wrap; }
-  #footer { padding: 0 1ch; color: #808080; }
+  .pass { color: #5fd75f; }
+  .fail { color: #ff5f5f; }
+  .todo { color: #ffd75f; }
+  .skip { color: #808080; }
+  .running { color: #ffd75f; }
+  .idle { color: #808080; }
+  .output { margin: 0; white-space: pre-wrap; }
+  #summary { margin-top: 1em; }
+  #keys { margin-top: 1em; color: #808080; }
 `;
 
 async function loadTermDOM(cwd: string): Promise<any> {
@@ -99,7 +98,6 @@ export async function watchTests(options: WatchOptions): Promise<void> {
 
   const files = new Map<string, FileState>();
   const log: string[] = [];
-  let selected = 0;
   let running = false;
   let pending: "all" | "failed" | Set<string> | null = null;
   let updateSnapshotsOnce = false;
@@ -129,48 +127,91 @@ export async function watchTests(options: WatchOptions): Promise<void> {
   };
 
   // ---- rendering -----------------------------------------------------------
+  //
+  // The document is the same output `libuild test` prints, drawn in the
+  // normal flow under the prompt and redrawn in place as files rerun. No
+  // alternate screen: when the app quits, what it printed stays in the
+  // scrollback like any other run.
 
   document.body.innerHTML = `
     <style>${STYLE}</style>
-    <div id="header"><b>libuild watch</b> · <span id="status"></span> · <span id="summary"></span></div>
-    <div id="main">
-      <ul id="files"></ul>
-      <pre id="detail"></pre>
-    </div>
-    <div id="footer">${KEYS_HELP}</div>
+    <div id="heading"></div>
+    <div id="files"></div>
+    <div id="summary"></div>
+    <div id="keys">${KEYS_HELP}</div>
   `;
-  const statusEl = document.getElementById("status");
-  const summaryEl = document.getElementById("summary");
+  const headingEl = document.getElementById("heading");
   const filesEl = document.getElementById("files");
-  const detailEl = document.getElementById("detail");
+  const summaryEl = document.getElementById("summary");
 
   const marks: Record<Status, string> = { idle: "·", running: "…", pass: "✓", fail: "✗" };
 
+  const lineEl = (line: Line, className = ""): any => {
+    const el = document.createElement("div");
+    if (className) el.className = className;
+    for (const s of line) {
+      const sp = document.createElement("span");
+      if (s.tone !== "plain") sp.className = s.tone;
+      sp.textContent = s.text;
+      el.appendChild(sp);
+    }
+    return el;
+  };
+
+  const combined = (f: FileState): TestResult => {
+    const total: TestResult = { platform: "", passed: 0, failed: 0, errors: [], skipped: 0, todo: 0 };
+    for (const r of f.results.values()) {
+      total.passed += r.passed; total.failed += r.failed;
+      total.skipped! += r.skipped ?? 0; total.todo! += r.todo ?? 0;
+    }
+    return total;
+  };
+
   const render = () => {
     const list = [...files.values()];
-    let passed = 0, failed = 0;
-    for (const f of list) for (const r of f.results.values()) { passed += r.passed; failed += r.failed; }
-    statusEl.textContent = running ? "running" : "idle";
-    statusEl.className = running ? "busy" : failed ? "bad" : "ok";
-    summaryEl.textContent = `${list.length} files · ${passed} passed · ${failed} failed`;
+    const active = list.filter((f) => f.status === "running").length;
+    headingEl.textContent = running
+      ? headingLine(platforms[0], active)
+      : `Watching ${list.length} file(s) on ${platforms.join(", ")}`;
 
     filesEl.innerHTML = "";
-    list.forEach((f, i) => {
-      const li = document.createElement("li");
-      li.className = `${f.status}${i === selected ? " selected" : ""}`;
-      const counts = [...f.results.values()].reduce((a, r) => [a[0] + r.passed, a[1] + r.failed], [0, 0]);
-      li.textContent = `${marks[f.status]} ${f.file}` + (f.results.size ? `  ${counts[0]}/${counts[1]}` : "");
-      filesEl.appendChild(li);
-    });
+    for (const f of list) {
+      if (f.results.size === 0) {
+        const el = document.createElement("div");
+        el.className = f.status;
+        el.textContent = `${marks[f.status]} ${f.file}`;
+        filesEl.appendChild(el);
+        continue;
+      }
+      filesEl.appendChild(lineEl(fileLine(f.file, combined(f))));
+      if (f.status === "fail" && f.output.trim()) {
+        const out = document.createElement("pre");
+        out.className = "output";
+        out.textContent = f.output.trimEnd();
+        filesEl.appendChild(out);
+      }
+    }
 
-    const current = list[selected];
-    if (current && (current.output.trim() || current.status !== "idle")) {
-      const head = [...current.results.entries()]
-        .map(([p, r]) => `${p}: ${r.passed} passed, ${r.failed} failed${r.skipped ? `, ${r.skipped} skipped` : ""}${r.todo ? `, ${r.todo} todo` : ""}`)
-        .join("\n");
-      detailEl.textContent = `${current.file}\n${head}\n\n${current.output.trimEnd()}`;
-    } else {
-      detailEl.textContent = log.slice(-200).join("\n");
+    summaryEl.innerHTML = "";
+    if (!running && list.some((f) => f.results.size > 0)) {
+      const results: TestResult[] = platforms.map((platform) => {
+        const total: TestResult = { platform, passed: 0, failed: 0, errors: [], skipped: 0, todo: 0 };
+        for (const f of list) {
+          const r = f.results.get(platform);
+          if (!r) continue;
+          total.passed += r.passed; total.failed += r.failed;
+          total.skipped! += r.skipped ?? 0; total.todo! += r.todo ?? 0;
+          for (const e of r.errors) total.errors.push({ name: `${f.file} > ${e.name}`, error: e.error });
+        }
+        return total;
+      });
+      for (const line of summaryLines(results)) summaryEl.appendChild(lineEl(line));
+    }
+    if (log.length) {
+      const note = document.createElement("div");
+      note.className = "skip";
+      note.textContent = log[log.length - 1];
+      summaryEl.appendChild(note);
     }
   };
 
@@ -231,13 +272,6 @@ export async function watchTests(options: WatchOptions): Promise<void> {
       log.push(`run failed: ${error?.message ?? error}`);
     }
     running = false;
-    // Land on a failure, the way jest shows one first, unless the user is
-    // already looking at one.
-    const list = [...files.values()];
-    if (list[selected]?.status !== "fail") {
-      const firstFail = list.findIndex((f) => f.status === "fail");
-      if (firstFail !== -1) selected = firstFail;
-    }
     render();
     for (const resolve of runWaiters.splice(0)) resolve();
     if (pending) {
@@ -298,22 +332,20 @@ export async function watchTests(options: WatchOptions): Promise<void> {
 
   document.addEventListener("keydown", (event: any) => {
     const key: string = event.key;
-    const list = [...files.values()];
     if (key === "q") quit();
-    else if (key === "a") void run("all");
+    else if (key === "a" || key === "Enter") void run("all");
     else if (key === "f") void run("failed");
     else if (key === "u") { updateSnapshotsOnce = true; void run("all"); }
-    else if (key === "Enter") { const f = list[selected]; if (f) void run(new Set([f.file])); }
-    else if (key === "ArrowUp") { selected = Math.max(0, selected - 1); render(); }
-    else if (key === "ArrowDown") { selected = Math.min(Math.max(0, list.length - 1), selected + 1); render(); }
   });
 
   // The runner reports through the reporter, but a few lines still go to the
   // console (file discovery, a missing playwright). While the app owns the
   // screen those go to the log pane instead.
   const realConsole = { log: console.log, error: console.error, warn: console.warn };
-  const capture = (...args: any[]) => { log.push(args.map(String).join(" ")); };
-  console.log = capture; console.error = capture; console.warn = capture;
+  const note = (...args: any[]) => { log.push(args.map(String).join(" ")); render(); };
+  console.log = () => {};
+  console.error = note;
+  console.warn = note;
 
   const app: WatchApp = {
     files: () => files,
@@ -329,7 +361,6 @@ export async function watchTests(options: WatchOptions): Promise<void> {
   process.on("SIGTERM", onSignal);
   try {
     await term.attach();
-    document.documentElement.requestFullscreen?.();
     await collect();
     render();
     options.onReady?.(app);

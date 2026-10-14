@@ -5,6 +5,7 @@ import * as Path from "path";
 import {createRequire} from "module";
 import {createTempDir, removeTempDir} from "./test-utils.ts";
 import {watchTests, type WatchApp} from "../src/internal/watch.ts";
+import {fileLine, lineText, summaryLines} from "../src/internal/test-runner.ts";
 
 const termdomDir = (() => {
   try {
@@ -20,8 +21,8 @@ function fakeTerminal(): {transport: unknown; press(keys: string): Promise<void>
   let output = "";
   let push!: (text: string) => void;
   const transport = {
-    cols: 100,
-    rows: 30,
+    cols: 120,
+    rows: 200,
     readable: new ReadableStream<string>({start(controller) { push = (text) => controller.enqueue(text); }}),
     writable: new WritableStream<string>({write(chunk) { output += String(chunk); }}),
     resizes: new ReadableStream({start() {}}),
@@ -97,9 +98,20 @@ if (termdomDir) test("watch mode runs, reruns failed on f, reruns the affected f
   expect(runs("good")).toBe(2);
   expect(runs("bad")).toBe(2);
 
-  // The screen carried the list and the footer.
-  expect(terminal.screen()).toContain("test/bad.test.ts");
-  expect(terminal.screen()).toContain("q quit");
+  // The document's text is, character for character, what the console
+  // reporter prints for the same results: one formatter produces both. The
+  // byte stream is termdom's diffed drawing of it, checked once, lightly.
+  const text: string = app.document.body.textContent;
+  const bad = app.files().get("test/bad.test.ts")!.results.get("node")!;
+  const good = app.files().get("test/good.test.ts")!.results.get("node")!;
+  expect(text).toContain(lineText(fileLine("test/bad.test.ts", bad)));
+  expect(text).toContain(lineText(fileLine("test/good.test.ts", good)));
+  expect(text).toContain("broken on purpose");
+  const summary = summaryLines([{platform: "node", passed: 1, failed: 1,
+    errors: [{name: "test/bad.test.ts > bad", error: bad.errors[0].error}], skipped: 0, todo: 0}]);
+  for (const line of summary) expect(text).toContain(lineText(line));
+  expect(text).toContain("q quit");
+  expect(terminal.screen().replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")).toContain(lineText(fileLine("test/good.test.ts", good)));
 
   await terminal.press("q");
   for (let i = 0; i < 100 && !finished; i++) await new Promise((r) => setTimeout(r, 50));

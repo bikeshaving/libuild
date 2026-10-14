@@ -275,7 +275,7 @@ Deno runs the same files through its own `deno test`, which bridges `node:test` 
 
 ### Watch mode
 
-`libuild test --watch` runs the suite as a terminal app, the way jest's watch mode does. Files rerun when a source they import changes; `f` reruns the failed files, `a` reruns everything, `Enter` reruns the selected file, `u` reruns with snapshots updated, the arrows pick a file to read its output, and `q` quits. It needs `@b9g/termdom` in the project (`npm install -D @b9g/termdom`), loaded the way playwright is for browser tests.
+`libuild test --watch` keeps the usual output live, the way jest's watch mode does. Files rerun when a source they import changes and their lines redraw in place; `f` reruns the failed files, `a` or `Enter` reruns everything, `u` reruns with snapshots updated, and `q` quits. There is no alternate screen: what it printed stays in the scrollback like any other run. It needs `@b9g/termdom` in the project (`npm install -D @b9g/termdom`), loaded the way playwright is for browser tests.
 
 Import the portable API from `@b9g/libuild/test` (`describe`/`test`/`it`/`expect`, hooks, `test.concurrent`, `.each`, and a cross-runtime `toMatchSnapshot`). Files run in per-file isolated processes with dependencies resolved from your `node_modules`; `import.meta.url`/`.dirname`/`.filename` and `__dirname`/`__filename` point at your source files, not the bundles.
 
