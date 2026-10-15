@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.2.28] - 2026-10-15
 
 ### Fixed
 - **A source file using `import.meta.litest` gets its declaration.** The strip plugin claims every file holding the marker, and the declaration step collected its files from the `onLoad` calls it was still allowed to see, so such a file shipped with no `.d.ts` and the build said nothing - termdom 0.2.1 went to npm without `index.d.ts`. The declaration step now takes its files from the build's metafile, which lists every input whichever plugin loaded it, and tells TypeScript the type of `import.meta.litest` from libuild's own declaration, so the guard is not a type error there.
