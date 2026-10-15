@@ -840,6 +840,41 @@ test("shards run with bun's transpiler cache off, whatever the shell set", async
   await removeTempDir(testDir);
 }, 120000);
 
+test("--coverage reports source lines through the bundle's map, without the test files", async () => {
+  const testDir = await createTempDir("coverage");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "src"), {recursive: true});
+  await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+  await FS.writeFile(Path.join(projDir, "package.json"),
+    JSON.stringify({name: "coverage", version: "1.0.0", type: "module"}));
+  // Two branches, one taken: lines 3-4 never run.
+  await FS.writeFile(Path.join(projDir, "src", "math.ts"),
+    'export function pick(n: number) {\n  if (n > 1) {\n    return "big";\n  }\n  return "small";\n}\n');
+  await FS.writeFile(Path.join(projDir, "test", "math.test.ts"),
+    'import {test} from "node:test";\nimport assert from "node:assert";\nimport {pick} from "../src/math.ts";\n' +
+    'test("small", () => { assert.strictEqual(pick(0), "small"); });\n');
+
+  const logged: string[] = [];
+  const realLog = console.log;
+  console.log = (...args: any[]) => { logged.push(args.join(" ")); };
+  try {
+    expect(await runTests({cwd: projDir, platforms: ["node"], timeout: 60000, concurrency: 1,
+      coverage: {reporters: ["lcov"]}})).toBe(true);
+  } finally {
+    console.log = realLog;
+  }
+
+  const lcov = await FS.readFile(Path.join(projDir, "coverage", "lcov.info"), "utf-8");
+  const files = lcov.split("\n").filter((l) => l.startsWith("SF:")).map((l) => l.slice(3));
+  expect(files).toEqual(["src/math.ts"]);
+  expect(lcov).toContain("DA:3,0");
+  expect(lcov).toContain("DA:5,1");
+  expect(lcov).toContain("BRF:2");
+  expect(lcov).toContain("BRH:1");
+
+  await removeTempDir(testDir);
+}, 180000);
+
 test("--concurrency bounds how many shards run at once", async () => {
   const testDir = await createTempDir("concurrency");
   const projDir = Path.join(testDir, "proj");

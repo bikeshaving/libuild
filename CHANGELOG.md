@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.27] - 2026-10-15
+
+### Added
+- **`libuild test --coverage`.** Coverage collected on the node shards and reported after the run, mapped back to source files through the bundles' source maps, so a report names `src/math.ts` and its uncovered lines rather than a bundle in a temp dir. `--coverage-reporter` picks c8's reporters (`text` by default; `lcov`, `html`, ...) and `--coverage-dir` says where file reports go. Test files are excluded. Node-only: bun does not write V8 coverage for a bundle, and deno writes its own format; shards on those runtimes run as usual.
+- **`import.meta.litest` gates test-only code in any source file.** It was the test API only in a test bundle whose own test file held an in-source test; in every other bundle it stayed undefined, so a source file that gated a check on it - a from-scratch layout check that runs in a frame loop under test and must not ship - never ran the check. It is now the test API in every test bundle, for every file in it, and the build strips the gated code as before. The API import is added per file, only to files that reference the marker, so a bundle that never uses it pulls in nothing. Asked for by termdom.
+
 ## [0.2.26] - 2026-10-09
 
 ### Added

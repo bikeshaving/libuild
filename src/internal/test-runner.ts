@@ -140,6 +140,13 @@ export interface TestRunnerOptions {
   concurrency?: number;
   /** Write/overwrite snapshots instead of comparing (toMatchSnapshot) */
   updateSnapshots: boolean;
+  /**
+   * Collect coverage on the node shards and report it after the run. Lines
+   * are mapped back to source files through the bundles' source maps.
+   * `reporters` are c8's (text, lcov, html, ...); `dir` is where file
+   * reports go, relative to cwd.
+   */
+  coverage?: { reporters?: string[]; dir?: string };
 }
 
 export interface TestResult {
@@ -509,31 +516,6 @@ const IMPORT_META_DEFINE = {
   "__filename": "__libuild_import_meta_filename",
 };
 
-function makeImportMetaPlugin(): ESBuild.Plugin {
-  return {
-    name: "libuild-import-meta",
-    setup(build) {
-      build.onLoad({ filter: /\.(ts|tsx|mts|js|jsx|mjs)$/ }, async (args) => {
-        // node_modules is external on node/bun, so this only ever sees the
-        // consumer's own files plus the generated entry.
-        const contents = await FS.readFile(args.path, "utf-8");
-        if (!contents.includes("import.meta") && !contents.includes("__dirname") && !contents.includes("__filename")) {
-          return undefined; // load natively
-        }
-        const url = new URL(`file://${args.path.replace(/\\/g, "/")}`).href;
-        const prefix =
-          `var __libuild_import_meta_url = ${JSON.stringify(url)}, ` +
-          `__libuild_import_meta_dirname = ${JSON.stringify(Path.dirname(args.path))}, ` +
-          `__libuild_import_meta_filename = ${JSON.stringify(args.path)}; `;
-        return {
-          contents: prefix + contents,
-          loader: loaderFor(args.path),
-          resolveDir: Path.dirname(args.path),
-        };
-      });
-    },
-  };
-}
 
 const IN_SOURCE_PATTERNS = ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"];
 
@@ -596,11 +578,50 @@ async function litestApiSpecifier(cwd: string): Promise<string> {
   return "@b9g/libuild/test"; // let esbuild report the resolution failure
 }
 
-function litestShim(specifier: string): string {
-  return (
-    `import * as api from ${JSON.stringify(specifier)};\n` +
-    `export const ${LITEST_API_BINDING} = api;\n`
-  );
+/**
+ * The import that hands a file the test API, for a file that references
+ * `import.meta.litest`. Added per file at load time rather than injected into
+ * the whole bundle: the test module has side effects and cannot be tree-shaken
+ * back out, so a bundle whose graph never uses the marker must not import it.
+ */
+function litestImport(specifier: string): string {
+  return `import * as ${LITEST_API_BINDING} from ${JSON.stringify(specifier)};\n`;
+}
+
+/**
+ * Loads source files for a test bundle: adds the litest import to files that
+ * reference the marker and, on node/bun, the per-file import.meta bindings.
+ * One onLoad for both, since only one plugin's onLoad may claim a path.
+ */
+function makeSourcePlugin(litestSpecifier: string, nodeImportMeta: boolean): ESBuild.Plugin {
+  return {
+    name: "libuild-test-source",
+    setup(build) {
+      build.onLoad({ filter: /\.(ts|tsx|mts|js|jsx|mjs)$/ }, async (args) => {
+        const contents = await FS.readFile(args.path, "utf-8");
+        const litest = contents.includes(LITEST_MARKER);
+        const meta = nodeImportMeta &&
+          (contents.includes("import.meta") || contents.includes("__dirname") || contents.includes("__filename"));
+        if (!litest && !meta) {
+          return undefined; // load natively
+        }
+        let prefix = "";
+        if (litest) prefix += litestImport(litestSpecifier);
+        if (meta) {
+          const url = new URL(`file://${args.path.replace(/\\/g, "/")}`).href;
+          prefix +=
+            `var __libuild_import_meta_url = ${JSON.stringify(url)}, ` +
+            `__libuild_import_meta_dirname = ${JSON.stringify(Path.dirname(args.path))}, ` +
+            `__libuild_import_meta_filename = ${JSON.stringify(args.path)}; `;
+        }
+        return {
+          contents: prefix + contents,
+          loader: loaderFor(args.path),
+          resolveDir: Path.dirname(args.path),
+        };
+      });
+    },
+  };
 }
 
 /**
@@ -614,7 +635,8 @@ export async function bundleTests(
   cwd: string,
   id: string = "",
   setupFile: string | null = null,
-  updateSnapshots: boolean = false
+  updateSnapshots: boolean = false,
+  sourcemap: boolean = false
 ): Promise<string> {
   const entryContent = generateTestEntry(testFiles, platform, setupFile, updateSnapshots);
   // A per-shard id keeps concurrent per-file bundles from clobbering each other.
@@ -634,33 +656,12 @@ export async function bundleTests(
 
   await FS.writeFile(entryPath, entryContent);
 
-  // The in-source test API (`import.meta.litest`), for shards that have one.
-  //
-  // It cannot ride in on a `banner`: banners are raw text spliced in AFTER
-  // bundling, so a bare specifier would survive unresolved into the browser
-  // bundle. `inject` runs the shim through the bundler like any other module
-  // and substitutes the binding into every file that mentions it, which is what
-  // lets one define reach modules that never imported anything.
-  //
-  // Gated, and that gate is load-bearing rather than an optimization: the shim
-  // imports libuild's test module, which has side effects and therefore cannot
-  // be tree-shaken back out of a bundle that turned out not to need it. Adding
-  // it everywhere pulled that module - and its dependencies - into every shard,
-  // and any project without libuild installed then had nothing for those
-  // externals to resolve against.
-  const hasInSourceTests = (
-    await Promise.all(
-      testFiles.map((file) =>
-        FS.readFile(file, "utf-8").then((c) => LITEST_GUARD.test(c), () => false)
-      )
-    )
-  ).some(Boolean);
-
-  const shimPath = Path.join(outDir, "litest-shim.ts");
-  if (hasInSourceTests) {
-    const shim = litestShim(await litestApiSpecifier(cwd));
-    await FS.writeFile(shimPath, shim, { flag: "wx" }).catch(() => {});
-  }
+  // `import.meta.litest` is the test API in every test bundle, for every file
+  // in it - the same expression a library build defines as undefined and
+  // strips. A source file can gate test-only checks on it and have them run
+  // under test and vanish from the build. The API import is added per file,
+  // only to files that reference the marker (see makeSourcePlugin).
+  const litestSpecifier = await litestApiSpecifier(cwd);
 
   // For Node/Bun, inject a require shim for CJS interop of external deps.
   // Namespaced import: a plain \`import { createRequire }\` collides with any
@@ -681,6 +682,9 @@ const require = __libuild_node_module.createRequire(import.meta.url);
     bundle: true,
     format: "esm",
     outfile: outPath,
+    // Coverage is recorded against the bundle; the map is what carries it
+    // back to the source lines.
+    sourcemap,
     platform: isBrowser ? "browser" : "node",
     // es2022, not es2020: the `@b9g/libuild/test` dispatcher selects its backend
     // with top-level await, which es2020 can't emit (esbuild errors). TLA in ES
@@ -703,27 +707,36 @@ const require = __libuild_node_module.createRequire(import.meta.url);
     // at genuine top level. The stubs throw if ever actually evaluated - which
     // the browser branch never does.
     ...(isBrowser
-      ? { plugins: [makeBrowserStubPlugin(resolveLibuildDir(cwd))] }
-      : { packages: "external" as const, plugins: [makeImportMetaPlugin()] }),
+      ? { plugins: [makeBrowserStubPlugin(resolveLibuildDir(cwd)), makeSourcePlugin(litestSpecifier, false)] }
+      : { packages: "external" as const, plugins: [makeSourcePlugin(litestSpecifier, true)] }),
     // Inject require shim for node/bun to handle CJS deps like expect/chalk
     ...(isBrowser ? {} : { banner: { js: requireShim } }),
-    ...(hasInSourceTests ? { inject: [shimPath] } : {}),
     // Define for dead code elimination; on node/bun also redirect the three
     // path-shaped import.meta members to per-file bindings (see
-    // makeImportMetaPlugin). Browser bundles keep the bundle-relative
+    // makeSourcePlugin). Browser bundles keep the bundle-relative
     // meaning - there is no source filesystem in a page.
     define: {
       "process.env.NODE_ENV": '"test"',
       // In-source tests: the guard that strips the block from a library build
       // is the same expression that hands it the test API here. Computed, so
       // this file does not contain the marker it scans other files for.
-      ...(hasInSourceTests ? { [LITEST_MARKER]: LITEST_API_BINDING } : {}),
+      [LITEST_MARKER]: LITEST_API_BINDING,
       ...(isBrowser ? {} : IMPORT_META_DEFINE),
     },
     logLevel: "warning",
   };
 
   await esbuildBuild(buildOptions);
+  if (sourcemap) {
+    // esbuild writes sources relative to outDir, which sits in a temp dir
+    // far from the project; a coverage writer given "../../../../src/x.ts"
+    // mangles the relative path it prints. Absolute sources leave every
+    // tool downstream to compute its own.
+    const mapPath = `${outPath}.map`;
+    const map = JSON.parse(await FS.readFile(mapPath, "utf-8"));
+    map.sources = map.sources.map((source: string) => Path.resolve(outDir, source));
+    await FS.writeFile(mapPath, JSON.stringify(map));
+  }
 
   return outPath;
 }
@@ -878,13 +891,13 @@ interface SpawnResult {
  * exactly what failed in issue #18: node traps our SIGTERM and exits (1, null),
  * which is indistinguishable from an ordinary failing run by exit status alone.
  */
-async function spawnShard(command: string, args: string[], timeout: number): Promise<SpawnResult> {
+async function spawnShard(command: string, args: string[], timeout: number, env: NodeJS.ProcessEnv = {}): Promise<SpawnResult> {
   const { spawn } = await import("child_process");
 
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: CHILD_ENV,
+      env: { ...CHILD_ENV, ...env },
     });
 
     let stdout = "";
@@ -968,9 +981,9 @@ export function shardFailure(run: {
 /**
  * Run tests in Node.js using node:test
  */
-async function runNodeTests(bundlePath: string, timeout: number): Promise<ShardRun> {
+async function runNodeTests(bundlePath: string, timeout: number, env: NodeJS.ProcessEnv = {}): Promise<ShardRun> {
   const { stdout, stderr, code, signal, timedOut, error } =
-    await spawnShard("node", ["--test", "--test-reporter=tap", bundlePath], timeout);
+    await spawnShard("node", ["--test", "--test-reporter=tap", bundlePath], timeout, env);
 
   if (error) {
     return {
@@ -1197,9 +1210,13 @@ async function runShardedPlatform(
   timeout: number,
   setupFile: string | null,
   updateSnapshots: boolean,
-  maxConcurrency?: number
+  maxConcurrency?: number,
+  coverageDir: string | null = null
 ): Promise<TestResult> {
   const runShard = platform === "bun" ? runBunTests : platform === "deno" ? runDenoTests : runNodeTests;
+  // V8 writes one coverage file per process into this directory; node is the
+  // only runtime that honors the variable, so only node shards collect.
+  const shardEnv: NodeJS.ProcessEnv = coverageDir && platform === "node" ? { NODE_V8_COVERAGE: coverageDir } : {};
   const concurrency = Math.max(1, Math.min(maxConcurrency ?? ((OS.cpus().length || 2) - 1), files.length));
 
   const agg: TestResult = { platform, passed: 0, failed: 0, errors: [], skipped: 0, todo: 0 };
@@ -1214,8 +1231,8 @@ async function runShardedPlatform(
 
       let shard: ShardRun;
       try {
-        const bundle = await bundleTests([file], platform, tempDir, cwd, String(i), setupFile, updateSnapshots);
-        shard = await runShard(bundle, timeout);
+        const bundle = await bundleTests([file], platform, tempDir, cwd, String(i), setupFile, updateSnapshots, coverageDir !== null);
+        shard = await runShard(bundle, timeout, shardEnv);
       } catch (error: any) {
         shard = {
           result: { platform, passed: 0, failed: 1, errors: [{ name: rel, error: error?.message ?? String(error) }], skipped: 0, todo: 0 },
@@ -1510,6 +1527,43 @@ function printResults(results: TestResult[]): boolean {
 }
 
 /**
+ * Turn the shards' V8 coverage files into a report, mapped back to source
+ * through the bundles' source maps. c8 does the merging and the remapping;
+ * its own default excludes drop test files, and the run's generated entry
+ * and shim are dropped by name.
+ */
+async function reportCoverage(cwd: string, coverageDir: string, coverage: { reporters?: string[]; dir?: string }): Promise<void> {
+  const { spawn } = await import("child_process");
+  const require = createRequire(import.meta.url);
+  const c8 = Path.join(Path.dirname(require.resolve("c8/package.json")), "bin", "c8.js");
+  const args = [
+    c8, "report",
+    `--temp-directory=${coverageDir}`,
+    `--reports-dir=${Path.resolve(cwd, coverage.dir ?? "coverage")}`,
+    // The bundles live in the run's temp dir, outside the project; without
+    // this c8 drops them before their maps can point back inside it.
+    "--allow-external",
+    "--exclude-after-remap",
+    // Passing any --exclude replaces c8's defaults, so the test files it
+    // would have dropped are listed here too.
+    "--exclude=**/entry-*.ts",
+    "--exclude=**/litest-shim.ts",
+    "--exclude=**/bundle-*.js",
+    "--exclude=**/*.{test,spec}.{js,jsx,ts,tsx,mjs,cjs,mts,cts}",
+    "--exclude=**/{test,tests,__tests__}/**",
+    "--exclude=**/*.d.ts",
+    "--exclude=**/coverage/**",
+    "--exclude=**/node_modules/**",
+    ...(coverage.reporters?.length ? coverage.reporters : ["text"]).map((r) => `--reporter=${r}`),
+  ];
+  await new Promise<void>((resolve) => {
+    const child = spawn("node", args, { cwd, stdio: "inherit", env: CHILD_ENV });
+    child.on("close", () => resolve());
+    child.on("error", (error) => { console.error(red(`coverage report failed: ${error.message}`)); resolve(); });
+  });
+}
+
+/**
  * Main test runner
  */
 export async function runTests(options: Partial<TestRunnerOptions> = {}): Promise<boolean> {
@@ -1525,6 +1579,7 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
     timeout: options.timeout || 60000,
     updateSnapshots: options.updateSnapshots || false,
     concurrency: options.concurrency ?? Math.max(1, (OS.cpus().length || 2) - 1),
+    coverage: options.coverage ?? {},
   };
 
   // ESM-only, enforced for the whole run: a "type": "commonjs" package is
@@ -1612,13 +1667,22 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
   for (const signal of SIGNALS) process.on(signal, onSignal);
 
   try {
+    let coverageDir: string | null = null;
+    if (options.coverage) {
+      if (!opts.platforms.includes("node")) {
+        console.warn(yellow("Coverage is collected on node only; add -p node to collect it."));
+      } else {
+        coverageDir = Path.join(tempRoot, "v8-coverage");
+        await FS.mkdir(coverageDir, { recursive: true });
+      }
+    }
     for (const platform of opts.platforms) {
       let result: TestResult;
       if (!isBrowserPlatform(platform)) {
         // Per-file process isolation is the default: each file runs in its own
         // process (frees native memory between files, runs them in parallel).
         console.log(`\nRunning ${testFiles.length} file(s) on ${platform} (per-file isolation)...`);
-        result = await runShardedPlatform(platform, testFiles, tempDir, opts.cwd, opts.timeout, setupFile, opts.updateSnapshots, opts.concurrency);
+        result = await runShardedPlatform(platform, testFiles, tempDir, opts.cwd, opts.timeout, setupFile, opts.updateSnapshots, opts.concurrency, coverageDir);
       } else {
         // Browser runs the combined bundle in a Playwright page (its own
         // isolation model - a separate browser process).
@@ -1631,7 +1695,11 @@ export async function runTests(options: Partial<TestRunnerOptions> = {}): Promis
       results.push(result);
     }
 
-    return printResults(results);
+    const allPassed = printResults(results);
+    if (coverageDir) {
+      await reportCoverage(opts.cwd, coverageDir, options.coverage!);
+    }
+    return allPassed;
   } finally {
     detachSignalHandlers();
     // Clean up (unless in debug mode, where the bundles stay inspectable)
