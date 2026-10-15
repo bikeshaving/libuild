@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **The declaration step reports what `tsc -p` reports.** Three ways it differed, each found on termdom, which is clean under its own `tsc` and still drew 22 errors from 0.2.29:
+  - It used libuild's TypeScript, not the project's. It now uses the compiler the project's own `tsc` runs, and libuild's only when the project has none.
+  - Its program held only the bundle's files. A `.d.ts` is never a bundle input, so a project's own `declare module "untyped"` was missing; and since TypeScript 6 no `@types` package loads on its own, so `@types/node` arrived under `tsc` only because a test in the tsconfig referenced it. The program now holds the tsconfig's whole file list. Errors are still reported only for files under `src/`, and declarations are still written only for the bundle's files.
+  - Parsed `node_modules` files were cached across builds by name alone; the key now includes the compiler version and language settings, which differ by project.
+- **A build that would ship without its declarations fails.** If TypeScript is available and a TypeScript entry has no `.d.ts`, or the package's `types` or an `exports` types condition names a file that was not built, the build stops and names it, instead of publishing a package nobody can type. termdom 0.2.1 went to npm without `index.d.ts` and the build said nothing.
+
 ## [0.2.29] - 2026-10-15
 
 ### Fixed

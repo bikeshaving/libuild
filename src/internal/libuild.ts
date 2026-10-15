@@ -9,7 +9,7 @@ import { formatMessages } from "esbuild";
 import {umdPlugin} from "../plugins/umd.js";
 import {externalEntrypointsPlugin} from "../plugins/external.js";
 import {litestStripPlugin} from "../plugins/litest.js";
-import {dtsPlugin} from "../plugins/dts.js";
+import {dtsPlugin, typeScriptAvailable} from "../plugins/dts.js";
 
 // Generate runtime detection banner for bin entries
 function generateRuntimeBanner(pkg: PackageJSON): string {
@@ -1869,6 +1869,46 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     await FS.writeFile(pkgPath, JSON.stringify(rootPkg, null, 2) + "\n");
   } else {
     console.info("  Skipping root package.json update (use --save to enable)");
+  }
+
+  // A package whose TypeScript entry has no declaration, or whose types field
+  // names a file that is not there, cannot be typed by its consumers - and
+  // nothing downstream notices until someone installs it. termdom 0.2.1 went
+  // to npm without index.d.ts and the build said nothing. Fail here instead.
+  const missingDeclarations: string[] = [];
+  if (await typeScriptAvailable(cwd)) {
+    for (const entry of srcEntryPoints) {
+      if (!/\.tsx?$/.test(entry)) continue;
+      const out = flatOut(entry);
+      if (out.startsWith(`bin${Path.sep}`) || isWorkerEntry(Path.basename(out))) continue;
+      if (!await fileExists(Path.join(distDir, `${out}.d.ts`))) {
+        missingDeclarations.push(`${Path.relative(cwd, entry)} has no ${out}.d.ts`);
+      }
+    }
+  }
+  const builtPkg = JSON.parse(await FS.readFile(Path.join(distDir, "package.json"), "utf-8"));
+  const typesPaths: string[] = [];
+  const collectTypes = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    for (const [key, sub] of Object.entries(value)) {
+      if (key === "types" && typeof sub === "string") typesPaths.push(sub);
+      else collectTypes(sub);
+    }
+  };
+  collectTypes(builtPkg.exports);
+  for (const field of [builtPkg.types, builtPkg.typings]) {
+    if (typeof field === "string") typesPaths.push(field);
+  }
+  for (const typesPath of new Set(typesPaths)) {
+    if (!await fileExists(Path.resolve(distDir, typesPath))) {
+      missingDeclarations.push(`package.json names ${typesPath}, which was not built`);
+    }
+  }
+  if (missingDeclarations.length > 0) {
+    throw new Error(
+      `Declarations are missing, so this package could not be typed by anyone who installs it:\n` +
+      missingDeclarations.map((line) => `  ${line}`).join("\n")
+    );
   }
 
   console.info("\nBuild complete!");

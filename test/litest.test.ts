@@ -304,6 +304,45 @@ test("the declaration step judges a project by its own tsconfig", async () => {
   await removeTempDir(dir);
 }, 60000);
 
+test("the declaration step sees what tsc -p sees: ambient declarations and @types reached through other files", async () => {
+  // termdom's shape. Its untyped dependencies are declared in a vendor.d.ts,
+  // which is never a bundle input; and under TypeScript 6 no @types package
+  // loads on its own, so @types/node arrives only because a test in the
+  // tsconfig references it. `types: []` reproduces that here on any version.
+  const dir = await scaffold("dts-tsc-parity", {
+    "internal/vendor.d.ts": 'declare module "untyped" { export function go(): number; }\n',
+    "index.ts":
+      'import {go} from "untyped";\n' +
+      "export const pid: number = process.pid;\n" +
+      "export function run(): number { return go(); }\n",
+  });
+  await FS.mkdir(Path.join(dir, "tests"), {recursive: true});
+  await FS.writeFile(Path.join(dir, "tests", "uses-node.ts"), '/// <reference types="node" />\nexport {};\n');
+  await FS.mkdir(Path.join(dir, "node_modules", "untyped"), {recursive: true});
+  await FS.writeFile(Path.join(dir, "node_modules", "untyped", "package.json"), JSON.stringify({name: "untyped", version: "1.0.0", main: "index.js"}));
+  await FS.writeFile(Path.join(dir, "node_modules", "untyped", "index.js"), "module.exports = {go: () => 1};\n");
+  await FS.symlink(Path.resolve(import.meta.dirname, "..", "node_modules", "@types"), Path.join(dir, "node_modules", "@types"));
+  await FS.writeFile(Path.join(dir, "tsconfig.json"), JSON.stringify({
+    compilerOptions: {module: "esnext", moduleResolution: "bundler", noEmit: true, strict: true, esModuleInterop: true, types: []},
+    include: ["src", "tests"],
+  }));
+
+  const warned: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: any[]) => { warned.push(args.map(String).join(" ")); };
+  try {
+    await build(dir, false);
+  } finally {
+    console.warn = realWarn;
+  }
+  expect(warned.filter((w) => /TypeScript reported/.test(w))).toEqual([]);
+  const dts = await FS.readFile(Path.join(dir, "dist", "index.d.ts"), "utf-8");
+  expect(dts).toContain("export declare function run(): number;");
+  // The tests are in the program to be seen, not emitted.
+  expect(await FS.stat(Path.join(dir, "dist", "tests")).then(() => true, () => false)).toBe(false);
+  await removeTempDir(dir);
+}, 60000);
+
 test("this file is not itself discovered as a suite", async () => {
   // A literal guard here is enough to make the runner inject the litest shim
   // into this file's own bundle. The shim imports the test API, which in this

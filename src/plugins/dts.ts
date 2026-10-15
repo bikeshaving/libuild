@@ -1,6 +1,7 @@
 import * as FS from "fs/promises";
 import * as fsSync from "fs";
 import * as Path from "path";
+import { pathToFileURL } from "url";
 import * as ESBuild from "esbuild";
 import type TS from "typescript";
 
@@ -27,14 +28,63 @@ function litestDeclarationPath(): string | null {
   return null;
 }
 
-/** The compiler options of the tsconfig nearest to the source directory, or none. */
-function projectCompilerOptions(TS: typeof import("typescript"), rootDir: string): TS.CompilerOptions {
+/**
+ * The tsconfig nearest to the source directory: its compiler options and its
+ * whole file list. The program has to hold the same files `tsc -p` does, not
+ * just the bundle's: a .d.ts is never a bundle input, so a project's own
+ * `declare module "untyped"` would be missing, and since TypeScript 6 no
+ * @types package loads on its own - a project gets @types/node only because
+ * some file in its tsconfig references it, often a test.
+ */
+function projectConfig(TS: typeof import("typescript"), rootDir: string): { options: TS.CompilerOptions; files: string[] } {
+  const none = { options: {}, files: [] };
   const configPath = TS.findConfigFile(rootDir, TS.sys.fileExists);
-  if (!configPath) return {};
+  if (!configPath) return none;
   const configFile = TS.readConfigFile(configPath, TS.sys.readFile);
-  if (configFile.error) return {};
-  const parsed = TS.parseJsonConfigFileContent(configFile.config, TS.sys, Path.dirname(configPath));
-  return parsed.options;
+  if (configFile.error) return none;
+  const parsed = TS.parseJsonConfigFileContent(configFile.config, TS.sys, Path.dirname(configPath), undefined, configPath);
+  return { options: parsed.options, files: parsed.fileNames };
+}
+
+/**
+ * The project's TypeScript, the one its own `tsc` runs; libuild's only when
+ * the project has none. Judging a project with a different compiler version
+ * reports errors its tsc does not - 925 of them for termdom on 6.0 under 5.9.
+ *
+ * Found by walking up for a real node_modules/typescript rather than with
+ * createRequire: under bun, a failed resolve falls through to bun's global
+ * install cache. And only a module with the compiler API counts - TypeScript
+ * 7's native port ships none.
+ */
+async function projectTypeScript(rootDir: string): Promise<typeof import("typescript")> {
+  const usable = (mod: any) => {
+    const ts = mod?.default ?? mod;
+    return ts && typeof ts.createProgram === "function" ? ts : null;
+  };
+  for (let dir = Path.resolve(rootDir); ; dir = Path.dirname(dir)) {
+    const pkgDir = Path.join(dir, "node_modules", "typescript");
+    const pkgJson = Path.join(pkgDir, "package.json");
+    if (fsSync.existsSync(pkgJson)) {
+      const main = JSON.parse(fsSync.readFileSync(pkgJson, "utf-8")).main ?? "index.js";
+      const ts = usable(await import(pathToFileURL(Path.join(pkgDir, main)).href).catch(() => null));
+      if (ts) return ts;
+      break;
+    }
+    if (dir === Path.dirname(dir)) break;
+  }
+  const ts = usable(await import("typescript"));
+  if (!ts) throw new Error("No TypeScript with a compiler API is available");
+  return ts;
+}
+
+/** Whether a TypeScript compiler can be found for the project, so declarations are expected. */
+export async function typeScriptAvailable(rootDir: string): Promise<boolean> {
+  try {
+    await projectTypeScript(rootDir);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function dtsPlugin(options: TypeScriptPluginOptions): ESBuild.Plugin {
@@ -71,7 +121,7 @@ const immutableSourceFiles = new Map<string, any>();
 // program here uses identical compiler options, so sharing is safe.
 // -----------------------------------------------------------------------------
         try {
-          TS = await import("typescript");
+          TS = await projectTypeScript(options.rootDir);
         } catch (error) {
           // TypeScript not available - skip .d.ts generation
           return;
@@ -113,8 +163,9 @@ const immutableSourceFiles = new Map<string, any>();
           // allowImportingTsExtensions, paths - and override only what emitting
           // declarations into the flat layout needs. Without it, a project
           // clean under tsc drew a wall of false errors here.
+          const project = projectConfig(TS, resolvedRootDir);
           const compilerOptions: TS.CompilerOptions = {
-            ...projectCompilerOptions(TS, resolvedRootDir),
+            ...project.options,
             declaration: true,
             emitDeclarationOnly: true,
             noEmit: false,
@@ -146,10 +197,13 @@ const immutableSourceFiles = new Map<string, any>();
             const immutable = fileName.includes(`${Path.sep}node_modules${Path.sep}`) ||
               /[\\/]typescript[\\/]lib[\\/]/.test(fileName);
             if (!immutable) return realGetSourceFile(fileName, languageVersion, ...rest);
-            let cached = immutableSourceFiles.get(fileName);
+            // A parse depends on the compiler and the language settings, which
+            // now differ by project, so both are part of the key.
+            const key = `${TS.version}\0${JSON.stringify(languageVersion)}\0${fileName}`;
+            let cached = immutableSourceFiles.get(key);
             if (!cached) {
               cached = realGetSourceFile(fileName, languageVersion, ...rest);
-              if (cached) immutableSourceFiles.set(fileName, cached);
+              if (cached) immutableSourceFiles.set(key, cached);
             }
             return cached;
           };
@@ -157,21 +211,20 @@ const immutableSourceFiles = new Map<string, any>();
           // told its type by libuild's own ambient declaration. It emits
           // nothing: a .d.ts root produces no output.
           const litestTypes = litestDeclarationPath();
-          const program = TS.createProgram(
-            litestTypes ? [...resolvedTsFiles, litestTypes] : resolvedTsFiles,
-            compilerOptions,
-            host
-          );
+          const rootFiles = [...new Set([...resolvedTsFiles, ...project.files, ...(litestTypes ? [litestTypes] : [])])];
+          const program = TS.createProgram(rootFiles, compilerOptions, host);
 
           // tsc writes declarations despite type errors, and so does this; but
           // an error here is otherwise invisible, since nothing type-checks
           // the project in a build. Say so, naming the file and the error.
-          // Only the project's own files: the ambient declaration pulls
-          // libuild's test module into the program, and its diagnostics are
-          // not the consumer's.
-          const typeErrors = TS.getPreEmitDiagnostics(program)
-            .filter((d) => d.category === TS.DiagnosticCategory.Error)
-            .filter((d) => d.file === undefined || fs.realpathSync(d.file.fileName).startsWith(resolvedRootDir + Path.sep));
+          // Only files under the source directory: tests and scripts are in the
+          // program so it sees what tsc sees, and their own errors are not the
+          // build's to report. Per file, so program-wide diagnostics - a test
+          // lying outside rootDir - are not reported either.
+          const typeErrors = program.getSourceFiles()
+            .filter((sf) => fs.realpathSync(sf.fileName).startsWith(resolvedRootDir + Path.sep))
+            .flatMap((sf) => [...program.getSyntacticDiagnostics(sf), ...program.getSemanticDiagnostics(sf)])
+            .filter((d) => d.category === TS.DiagnosticCategory.Error);
           if (typeErrors.length > 0) {
             const text = TS.formatDiagnosticsWithColorAndContext(typeErrors, {
               getCanonicalFileName: path => path,
@@ -198,10 +251,15 @@ const immutableSourceFiles = new Map<string, any>();
             TS.sys.writeFile(fileName, data, writeByteOrderMark);
           };
 
-          const emitResult = program.emit(undefined, writeFile);
+          // Declarations for the bundle's files only; the rest of the program
+          // is there to be seen, not emitted.
+          const emitDiagnostics = resolvedTsFiles.flatMap((file) => {
+            const sourceFile = program.getSourceFile(file);
+            return sourceFile ? program.emit(sourceFile, writeFile).diagnostics : [];
+          });
 
-          if (emitResult.diagnostics.length > 0) {
-            const diagnostics = TS.formatDiagnosticsWithColorAndContext(emitResult.diagnostics, {
+          if (emitDiagnostics.length > 0) {
+            const diagnostics = TS.formatDiagnosticsWithColorAndContext(emitDiagnostics, {
               getCanonicalFileName: path => path,
               getCurrentDirectory: () => process.cwd(),
               getNewLine: () => '\n'
