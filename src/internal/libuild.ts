@@ -5,6 +5,7 @@ import {spawn} from "child_process";
 // All builds go through this wrapper so a dead esbuild service recovers instead
 // of cascading into every later build (see internal/esbuild.ts).
 import { build as esbuildBuild } from "./esbuild.ts";
+import { formatMessages } from "esbuild";
 import {umdPlugin} from "../plugins/umd.js";
 import {externalEntrypointsPlugin} from "../plugins/external.js";
 import {litestStripPlugin} from "../plugins/litest.js";
@@ -1336,13 +1337,16 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
     const allEntryNames = [...srcEntryNames, ...binEntryNames];
 
     if (allESMEntryPoints.length > 0) {
-      await esbuildBuild({
+      const esm = await esbuildBuild({
         entryPoints: allESMEntryPoints.map(p => ({in: p, out: flatOut(p)})),
         outdir: distDir,
         chunkNames: "_chunks/[name]-[hash]", // Put chunks in a subdirectory
         format: "esm",
         outExtension: {".js": ".js"},
         bundle: true,
+        // The dts plugin reads the inputs from here: it lists every file the
+        // build pulled in, whichever plugin loaded it.
+        metafile: true,
         splitting: true, // Enable code splitting for dynamic imports
         minify: false,
         sourcemap: false,
@@ -1373,6 +1377,18 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
           })] : [])
         ],
       });
+      // Messages a plugin adds in onEnd come back in the result; esbuild
+      // neither logs them nor fails the build on the errors. The dts plugin
+      // reports there, so without this a failed declaration step was silent.
+      for (const text of await formatMessages(esm.warnings, { kind: "warning", color: true })) {
+        console.warn(text);
+      }
+      if (esm.errors.length > 0) {
+        for (const text of await formatMessages(esm.errors, { kind: "error", color: true })) {
+          console.error(text);
+        }
+        throw new Error(`Build failed with ${esm.errors.length} error(s)`);
+      }
 
       // Check if code splitting created chunks and warn about CJS incompatibility
       if (options.formats.cjs) {

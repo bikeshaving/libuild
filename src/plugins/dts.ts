@@ -1,4 +1,5 @@
 import * as FS from "fs/promises";
+import * as fsSync from "fs";
 import * as Path from "path";
 import * as ESBuild from "esbuild";
 import type TS from "typescript";
@@ -8,6 +9,22 @@ export interface TypeScriptPluginOptions {
   outDir: string;
   rootDir: string;
   entryPoints: string[];
+}
+
+// libuild's ambient declaration of import.meta.litest, beside this module in
+// the source layout (src/litest.d.ts) and at the package root in the published
+// one (dist/litest.d.ts), where this code runs from cli.js or a chunk.
+function litestDeclarationPath(): string | null {
+  for (const relative of ["../litest.d.ts", "./litest.d.ts", "../../litest.d.ts"]) {
+    const candidate = new URL(relative, import.meta.url);
+    if (candidate.protocol === "file:") {
+      const path = decodeURIComponent(candidate.pathname);
+      try {
+        if (fsSync.statSync(path).isFile()) return path;
+      } catch {}
+    }
+  }
+  return null;
 }
 
 export function dtsPlugin(options: TypeScriptPluginOptions): ESBuild.Plugin {
@@ -62,8 +79,15 @@ const immutableSourceFiles = new Map<string, any>();
         // Collect all TypeScript files for declaration generation
         // This includes internal modules so their .d.ts files are generated
         // Filter to only files within rootDir to prevent emitting .d.ts to wrong locations
-        const tsFiles = entryFiles
+        // onLoad sees only the files no earlier plugin claimed - a plugin that
+        // returns contents (the litest strip) hides its files from every onLoad
+        // after it, and a source file using import.meta.litest shipped with no
+        // declaration that way. The metafile lists every input regardless.
+        const absWorkingDir = build.initialOptions.absWorkingDir ?? process.cwd();
+        const inputs = Object.keys(result.metafile?.inputs ?? {}).map((input) => Path.resolve(absWorkingDir, input));
+        const tsFiles = [...new Set([...entryFiles, ...inputs])]
           .filter(file => (file.endsWith('.ts') || file.endsWith('.tsx')) && !file.endsWith('.d.ts'))
+          .filter(file => !file.includes(`${Path.sep}node_modules${Path.sep}`))
           .map(f => fs.realpathSync(f))
           .filter(f => f.startsWith(resolvedRootDir + Path.sep));
 
@@ -120,7 +144,40 @@ const immutableSourceFiles = new Map<string, any>();
             }
             return cached;
           };
-          const program = TS.createProgram(resolvedTsFiles, compilerOptions, host);
+          // import.meta.litest is legal in any source file, so the program is
+          // told its type by libuild's own ambient declaration. It emits
+          // nothing: a .d.ts root produces no output.
+          const litestTypes = litestDeclarationPath();
+          const program = TS.createProgram(
+            litestTypes ? [...resolvedTsFiles, litestTypes] : resolvedTsFiles,
+            compilerOptions,
+            host
+          );
+
+          // tsc writes declarations despite type errors, and so does this; but
+          // an error here is otherwise invisible, since nothing type-checks
+          // the project in a build. Say so, naming the file and the error.
+          // Only the project's own files: the ambient declaration pulls
+          // libuild's test module into the program, and its diagnostics are
+          // not the consumer's.
+          const typeErrors = TS.getPreEmitDiagnostics(program)
+            .filter((d) => d.category === TS.DiagnosticCategory.Error)
+            .filter((d) => d.file === undefined || fs.realpathSync(d.file.fileName).startsWith(resolvedRootDir + Path.sep));
+          if (typeErrors.length > 0) {
+            const text = TS.formatDiagnosticsWithColorAndContext(typeErrors, {
+              getCanonicalFileName: path => path,
+              getCurrentDirectory: () => process.cwd(),
+              getNewLine: () => '\n'
+            });
+            result.warnings.push({
+              id: "typescript-type-errors",
+              pluginName: "dts",
+              text: `TypeScript reported ${typeErrors.length} error(s) while generating declarations (declarations were still written):\n${text}`,
+              location: null,
+              notes: [],
+              detail: undefined
+            });
+          }
 
           // Custom writeFile to prevent emitting .d.ts files outside outDir
           // This can happen when files import from outside rootDir (e.g., bin importing from src)

@@ -232,6 +232,48 @@ test("a source file can gate test-only code on the marker without being a suite"
   }
 }, 180000);
 
+test("a source file gating code on the marker still gets its declaration", async () => {
+  // The litest strip plugin claims every file holding the marker, and the
+  // dts plugin collected its files from the onLoad calls it was still
+  // allowed to see - so such a file shipped with no .d.ts, and the build
+  // said nothing. termdom 0.2.1 went to npm without index.d.ts that way.
+  const dir = await scaffold("insrc-dts", {
+    "index.ts":
+      "export const enabled = {on: true};\n" +
+      "function check() { return 1; }\n" +
+      "export function frame(): number {\n" +
+      `  if (${LITEST_MARKER} && enabled.on) { check(); }\n` +
+      "  return 2;\n" +
+      "}\n",
+  });
+  try {
+    await build(dir, false);
+    const dts = await FS.readFile(Path.join(dir, "dist", "index.d.ts"), "utf-8");
+    expect(dts).toContain("export declare function frame(): number;");
+    expect(dts).not.toContain("litest");
+    expect(dts).not.toContain("ImportMeta");
+    const pkg = JSON.parse(await FS.readFile(Path.join(dir, "dist", "package.json"), "utf-8"));
+    expect(pkg.exports["."].types).toBe("./index.d.ts");
+  } finally {
+    await removeTempDir(dir);
+  }
+}, 60000);
+
+test("a type error does not cost a file its declaration", async () => {
+  // tsc writes declarations despite type errors, and so does the build;
+  // the error is reported as a warning rather than silently dropping a file.
+  const dir = await scaffold("insrc-dts-error", {
+    "index.ts": 'export const n: number = "not a number";\nexport function frame(): number { return 2; }\n',
+  });
+  try {
+    await build(dir, false);
+    const dts = await FS.readFile(Path.join(dir, "dist", "index.d.ts"), "utf-8");
+    expect(dts).toContain("export declare const n: number;");
+  } finally {
+    await removeTempDir(dir);
+  }
+}, 60000);
+
 test("this file is not itself discovered as a suite", async () => {
   // A literal guard here is enough to make the runner inject the litest shim
   // into this file's own bundle. The shim imports the test API, which in this
