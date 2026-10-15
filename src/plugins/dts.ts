@@ -27,6 +27,16 @@ function litestDeclarationPath(): string | null {
   return null;
 }
 
+/** The compiler options of the tsconfig nearest to the source directory, or none. */
+function projectCompilerOptions(TS: typeof import("typescript"), rootDir: string): TS.CompilerOptions {
+  const configPath = TS.findConfigFile(rootDir, TS.sys.fileExists);
+  if (!configPath) return {};
+  const configFile = TS.readConfigFile(configPath, TS.sys.readFile);
+  if (configFile.error) return {};
+  const parsed = TS.parseJsonConfigFileContent(configFile.config, TS.sys, Path.dirname(configPath));
+  return parsed.options;
+}
+
 export function dtsPlugin(options: TypeScriptPluginOptions): ESBuild.Plugin {
   return {
     name: "dts",
@@ -98,35 +108,34 @@ const immutableSourceFiles = new Map<string, any>();
         const resolvedTsFiles = tsFiles;
 
         try {
+          // Start from the project's own tsconfig, so the program judges the
+          // project the way `tsc -p .` does - its lib, types, module settings,
+          // allowImportingTsExtensions, paths - and override only what emitting
+          // declarations into the flat layout needs. Without it, a project
+          // clean under tsc drew a wall of false errors here.
           const compilerOptions: TS.CompilerOptions = {
+            ...projectCompilerOptions(TS, resolvedRootDir),
             declaration: true,
             emitDeclarationOnly: true,
+            noEmit: false,
+            noEmitOnError: false,
             outDir: resolvedOutDir,
             rootDir: resolvedRootDir,
+            declarationDir: undefined,
+            composite: false,
+            incremental: false,
+            tsBuildInfoFile: undefined,
             skipLibCheck: true,
-            esModuleInterop: true,
-            target: TS.ScriptTarget.ES2020,
-            module: TS.ModuleKind.ESNext,
-            moduleResolution: TS.ModuleResolutionKind.Bundler,
           };
+          compilerOptions.esModuleInterop ??= true;
+          compilerOptions.target ??= TS.ScriptTarget.ES2020;
+          compilerOptions.module ??= TS.ModuleKind.ESNext;
+          compilerOptions.moduleResolution ??= TS.ModuleResolutionKind.Bundler;
 
-          // .tsx entries need a jsx setting to parse. Honor the project's
-          // tsconfig (jsx/jsxImportSource/jsxFactory) like esbuild does;
-          // fall back to preserve, which needs no runtime resolution.
+          // .tsx entries need a jsx setting to parse; preserve needs no
+          // runtime resolution.
           if (tsFiles.some(f => f.endsWith('.tsx'))) {
-            compilerOptions.jsx = TS.JsxEmit.Preserve;
-            const configPath = TS.findConfigFile(resolvedRootDir, TS.sys.fileExists);
-            if (configPath) {
-              const configFile = TS.readConfigFile(configPath, TS.sys.readFile);
-              if (!configFile.error) {
-                const parsed = TS.parseJsonConfigFileContent(configFile.config, TS.sys, Path.dirname(configPath));
-                for (const key of ["jsx", "jsxImportSource", "jsxFactory", "jsxFragmentFactory"] as const) {
-                  if (parsed.options[key] !== undefined) {
-                    (compilerOptions as any)[key] = parsed.options[key];
-                  }
-                }
-              }
-            }
+            compilerOptions.jsx ??= TS.JsxEmit.Preserve;
           }
 
           // Create program with explicit config to avoid tsconfig.json

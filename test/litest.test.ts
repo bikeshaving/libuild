@@ -274,6 +274,36 @@ test("a type error does not cost a file its declaration", async () => {
   }
 }, 60000);
 
+test("the declaration step judges a project by its own tsconfig", async () => {
+  // A project clean under `tsc -p .` must not draw type errors here: the
+  // program starts from the project's compiler options, so its lib, types
+  // and allowImportingTsExtensions apply. termdom saw 177 false errors.
+  const dir = await scaffold("dts-tsconfig", {
+    "util.ts": "export const two = 2;\n",
+    "index.ts":
+      'import {two} from "./util.ts";\n' +
+      "export const dispose: symbol = Symbol.asyncDispose;\n" +
+      "export function twice(): number { return two * 2; }\n",
+  });
+  await FS.writeFile(Path.join(dir, "tsconfig.json"), JSON.stringify({compilerOptions: {
+    module: "esnext", moduleResolution: "bundler", allowImportingTsExtensions: true,
+    noEmit: true, lib: ["esnext"], types: [], strict: true,
+  }}));
+
+  const warned: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: any[]) => { warned.push(args.map(String).join(" ")); };
+  try {
+    await build(dir, false);
+  } finally {
+    console.warn = realWarn;
+  }
+  expect(warned.filter((w) => /TypeScript reported/.test(w))).toEqual([]);
+  const dts = await FS.readFile(Path.join(dir, "dist", "index.d.ts"), "utf-8");
+  expect(dts).toContain("export declare function twice(): number;");
+  await removeTempDir(dir);
+}, 60000);
+
 test("this file is not itself discovered as a suite", async () => {
   // A literal guard here is enough to make the runner inject the litest shim
   // into this file's own bundle. The shim imports the test API, which in this

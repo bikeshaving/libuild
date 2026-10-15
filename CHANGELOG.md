@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **The declaration step judges a project by its own tsconfig.** The type errors 0.2.28 began printing were found with libuild's fixed compiler options, not the project's, so a project clean under `tsc -p .` drew a wall of false ones - 177 for termdom, from `allowImportingTsExtensions`, its `lib` and its `types`. The declaration program now starts from the compiler options of the nearest `tsconfig.json` and overrides only what emitting declarations into the flat layout needs, so the warning shows a project's real errors and nothing else. A project without a tsconfig is judged as before.
+
 ## [0.2.28] - 2026-10-15
 
 ### Fixed
