@@ -329,6 +329,8 @@ Two things worth knowing:
   which libuild applies per file rather than turning it on for the whole build —
   so modules without in-source tests keep byte-identical output.
 
+The same guard gates test-only code that is not a test. A check that runs in a frame loop under test, and must not ship, sits behind `if (import.meta.litest)`: in every test bundle the expression is the test API, so the check runs; in the build it is `undefined` and the guarded code is stripped, and a function only it called goes with it.
+
 For TypeScript, add libuild's ambient declaration to your `tsconfig.json`:
 
 ```json

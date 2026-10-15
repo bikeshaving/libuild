@@ -516,31 +516,6 @@ const IMPORT_META_DEFINE = {
   "__filename": "__libuild_import_meta_filename",
 };
 
-function makeImportMetaPlugin(): ESBuild.Plugin {
-  return {
-    name: "libuild-import-meta",
-    setup(build) {
-      build.onLoad({ filter: /\.(ts|tsx|mts|js|jsx|mjs)$/ }, async (args) => {
-        // node_modules is external on node/bun, so this only ever sees the
-        // consumer's own files plus the generated entry.
-        const contents = await FS.readFile(args.path, "utf-8");
-        if (!contents.includes("import.meta") && !contents.includes("__dirname") && !contents.includes("__filename")) {
-          return undefined; // load natively
-        }
-        const url = new URL(`file://${args.path.replace(/\\/g, "/")}`).href;
-        const prefix =
-          `var __libuild_import_meta_url = ${JSON.stringify(url)}, ` +
-          `__libuild_import_meta_dirname = ${JSON.stringify(Path.dirname(args.path))}, ` +
-          `__libuild_import_meta_filename = ${JSON.stringify(args.path)}; `;
-        return {
-          contents: prefix + contents,
-          loader: loaderFor(args.path),
-          resolveDir: Path.dirname(args.path),
-        };
-      });
-    },
-  };
-}
 
 const IN_SOURCE_PATTERNS = ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"];
 
@@ -603,11 +578,50 @@ async function litestApiSpecifier(cwd: string): Promise<string> {
   return "@b9g/libuild/test"; // let esbuild report the resolution failure
 }
 
-function litestShim(specifier: string): string {
-  return (
-    `import * as api from ${JSON.stringify(specifier)};\n` +
-    `export const ${LITEST_API_BINDING} = api;\n`
-  );
+/**
+ * The import that hands a file the test API, for a file that references
+ * `import.meta.litest`. Added per file at load time rather than injected into
+ * the whole bundle: the test module has side effects and cannot be tree-shaken
+ * back out, so a bundle whose graph never uses the marker must not import it.
+ */
+function litestImport(specifier: string): string {
+  return `import * as ${LITEST_API_BINDING} from ${JSON.stringify(specifier)};\n`;
+}
+
+/**
+ * Loads source files for a test bundle: adds the litest import to files that
+ * reference the marker and, on node/bun, the per-file import.meta bindings.
+ * One onLoad for both, since only one plugin's onLoad may claim a path.
+ */
+function makeSourcePlugin(litestSpecifier: string, nodeImportMeta: boolean): ESBuild.Plugin {
+  return {
+    name: "libuild-test-source",
+    setup(build) {
+      build.onLoad({ filter: /\.(ts|tsx|mts|js|jsx|mjs)$/ }, async (args) => {
+        const contents = await FS.readFile(args.path, "utf-8");
+        const litest = contents.includes(LITEST_MARKER);
+        const meta = nodeImportMeta &&
+          (contents.includes("import.meta") || contents.includes("__dirname") || contents.includes("__filename"));
+        if (!litest && !meta) {
+          return undefined; // load natively
+        }
+        let prefix = "";
+        if (litest) prefix += litestImport(litestSpecifier);
+        if (meta) {
+          const url = new URL(`file://${args.path.replace(/\\/g, "/")}`).href;
+          prefix +=
+            `var __libuild_import_meta_url = ${JSON.stringify(url)}, ` +
+            `__libuild_import_meta_dirname = ${JSON.stringify(Path.dirname(args.path))}, ` +
+            `__libuild_import_meta_filename = ${JSON.stringify(args.path)}; `;
+        }
+        return {
+          contents: prefix + contents,
+          loader: loaderFor(args.path),
+          resolveDir: Path.dirname(args.path),
+        };
+      });
+    },
+  };
 }
 
 /**
@@ -642,33 +656,12 @@ export async function bundleTests(
 
   await FS.writeFile(entryPath, entryContent);
 
-  // The in-source test API (`import.meta.litest`), for shards that have one.
-  //
-  // It cannot ride in on a `banner`: banners are raw text spliced in AFTER
-  // bundling, so a bare specifier would survive unresolved into the browser
-  // bundle. `inject` runs the shim through the bundler like any other module
-  // and substitutes the binding into every file that mentions it, which is what
-  // lets one define reach modules that never imported anything.
-  //
-  // Gated, and that gate is load-bearing rather than an optimization: the shim
-  // imports libuild's test module, which has side effects and therefore cannot
-  // be tree-shaken back out of a bundle that turned out not to need it. Adding
-  // it everywhere pulled that module - and its dependencies - into every shard,
-  // and any project without libuild installed then had nothing for those
-  // externals to resolve against.
-  const hasInSourceTests = (
-    await Promise.all(
-      testFiles.map((file) =>
-        FS.readFile(file, "utf-8").then((c) => LITEST_GUARD.test(c), () => false)
-      )
-    )
-  ).some(Boolean);
-
-  const shimPath = Path.join(outDir, "litest-shim.ts");
-  if (hasInSourceTests) {
-    const shim = litestShim(await litestApiSpecifier(cwd));
-    await FS.writeFile(shimPath, shim, { flag: "wx" }).catch(() => {});
-  }
+  // `import.meta.litest` is the test API in every test bundle, for every file
+  // in it - the same expression a library build defines as undefined and
+  // strips. A source file can gate test-only checks on it and have them run
+  // under test and vanish from the build. The API import is added per file,
+  // only to files that reference the marker (see makeSourcePlugin).
+  const litestSpecifier = await litestApiSpecifier(cwd);
 
   // For Node/Bun, inject a require shim for CJS interop of external deps.
   // Namespaced import: a plain \`import { createRequire }\` collides with any
@@ -714,21 +707,20 @@ const require = __libuild_node_module.createRequire(import.meta.url);
     // at genuine top level. The stubs throw if ever actually evaluated - which
     // the browser branch never does.
     ...(isBrowser
-      ? { plugins: [makeBrowserStubPlugin(resolveLibuildDir(cwd))] }
-      : { packages: "external" as const, plugins: [makeImportMetaPlugin()] }),
+      ? { plugins: [makeBrowserStubPlugin(resolveLibuildDir(cwd)), makeSourcePlugin(litestSpecifier, false)] }
+      : { packages: "external" as const, plugins: [makeSourcePlugin(litestSpecifier, true)] }),
     // Inject require shim for node/bun to handle CJS deps like expect/chalk
     ...(isBrowser ? {} : { banner: { js: requireShim } }),
-    ...(hasInSourceTests ? { inject: [shimPath] } : {}),
     // Define for dead code elimination; on node/bun also redirect the three
     // path-shaped import.meta members to per-file bindings (see
-    // makeImportMetaPlugin). Browser bundles keep the bundle-relative
+    // makeSourcePlugin). Browser bundles keep the bundle-relative
     // meaning - there is no source filesystem in a page.
     define: {
       "process.env.NODE_ENV": '"test"',
       // In-source tests: the guard that strips the block from a library build
       // is the same expression that hands it the test API here. Computed, so
       // this file does not contain the marker it scans other files for.
-      ...(hasInSourceTests ? { [LITEST_MARKER]: LITEST_API_BINDING } : {}),
+      [LITEST_MARKER]: LITEST_API_BINDING,
       ...(isBrowser ? {} : IMPORT_META_DEFINE),
     },
     logLevel: "warning",
