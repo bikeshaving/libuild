@@ -178,6 +178,60 @@ test("the modules implementing in-source tests are not themselves suites", async
   expect(names).not.toContain(Path.join("internal", "test-runner.ts"));
 });
 
+test("a source file can gate test-only code on the marker without being a suite", async () => {
+  // termdom's case: checks that run in the frame loop under test and must
+  // not ship. The file holds no in-source test, so it is not discovered as
+  // a suite; an ordinary test file imports it, and in that test bundle the
+  // marker is the test API, so the gated code runs.
+  const dir = await createTempDir("insrc-gated");
+  const projDir = Path.join(dir, "proj");
+  await FS.mkdir(Path.join(projDir, "src"), {recursive: true});
+  await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+  await FS.mkdir(Path.join(projDir, "node_modules", "@b9g"), {recursive: true});
+  await FS.writeFile(Path.join(projDir, "package.json"), PKG("insrc-gated"));
+  const root = Path.resolve(import.meta.dirname, "..");
+  await FS.symlink(Path.join(root, "dist"), Path.join(projDir, "node_modules", "@b9g", "libuild"));
+  for (const dep of ["@b9g/async-context", "expect", "pretty-format"]) {
+    const target = Path.join(root, "node_modules", dep);
+    if (await FS.stat(target).then(() => true).catch(() => false)) {
+      await FS.mkdir(Path.dirname(Path.join(projDir, "node_modules", dep)), {recursive: true});
+      await FS.symlink(target, Path.join(projDir, "node_modules", dep));
+    }
+  }
+  await FS.writeFile(Path.join(projDir, "src", "frame.ts"),
+    "export const checks: string[] = [];\n" +
+    "function layoutCheck() { checks.push(\"layout\"); }\n" +
+    "export function frame() {\n" +
+    `  if (${LITEST_MARKER} && checks.length < 3) { layoutCheck(); }\n` +
+    "  return checks.length;\n" +
+    "}\n");
+  await FS.writeFile(Path.join(projDir, "test", "frame.test.ts"),
+    'import {test, expect} from "@b9g/libuild/test";\n' +
+    'import {frame} from "../src/frame.ts";\n' +
+    'test("the gated check runs under test", () => { expect(frame()).toBe(1); });\n');
+
+  try {
+    expect(await findInSourceTestFiles(projDir)).toEqual([]);
+    const {runTests} = await import("../src/internal/test-runner.ts");
+    expect(await runTests({cwd: projDir, platforms: ["node"], timeout: 60000, concurrency: 1})).toBe(true);
+    expect(await runTests({cwd: projDir, platforms: ["bun"], timeout: 60000, concurrency: 1})).toBe(true);
+
+    // The build strips the gated call, and the check function with it.
+    await build(projDir, false);
+    const built = await FS.readFile(Path.join(projDir, "dist", "frame.js"), "utf-8");
+    expect(built).not.toContain("layout");
+
+    // A browser bundle gets the API import for the one file that needs it.
+    const {bundleTests} = await import("../src/internal/test-runner.ts");
+    const out = await createTempDir("insrc-gated-browser");
+    const bundle = await FS.readFile(await bundleTests([Path.join(projDir, "test", "frame.test.ts")], "chromium", out, projDir), "utf-8");
+    expect(bundle).toContain("layoutCheck");
+    await removeTempDir(out);
+  } finally {
+    await removeTempDir(dir);
+  }
+}, 180000);
+
 test("this file is not itself discovered as a suite", async () => {
   // A literal guard here is enough to make the runner inject the litest shim
   // into this file's own bundle. The shim imports the test API, which in this
