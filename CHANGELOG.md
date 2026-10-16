@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.2.30] - 2026-10-16
 
 ### Fixed
 - **The declaration step reports what `tsc -p` reports.** Three ways it differed, each found on termdom, which is clean under its own `tsc` and still drew 22 errors from 0.2.29:
