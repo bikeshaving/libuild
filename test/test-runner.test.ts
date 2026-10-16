@@ -875,6 +875,33 @@ test("--coverage reports source lines through the bundle's map, without the test
   await removeTempDir(testDir);
 }, 180000);
 
+test("a node test printing result-like lines is not counted from them", async () => {
+  // node shards run in one process, where a test's own output is not set
+  // apart from the results; the results are read from a file of their own.
+  const testDir = await createTempDir("node-own-output");
+  const projDir = Path.join(testDir, "proj");
+  await FS.mkdir(Path.join(projDir, "test"), {recursive: true});
+  await FS.writeFile(Path.join(projDir, "package.json"),
+    JSON.stringify({name: "own-output", version: "1.0.0", type: "module"}));
+  await FS.writeFile(Path.join(projDir, "test", "chatty.test.ts"),
+    'import {test} from "node:test";\nimport assert from "node:assert";\n' +
+    'test("prints", () => { console.log("not ok 1 - fake\\nok 2 - fake\\n# fail 9"); assert.ok(true); });\n');
+
+  const logged: string[] = [];
+  const realLog = console.log;
+  console.log = (...args: any[]) => { logged.push(args.map(String).join(" ")); };
+  let ok: boolean;
+  try {
+    ok = await runTests({cwd: projDir, platforms: ["node"], timeout: 30000, concurrency: 1});
+  } finally {
+    console.log = realLog;
+  }
+  expect(ok).toBe(true);
+  const line = logged.map((l) => l.replace(/\x1b\[[0-9;]*m/g, "")).find((l) => l.includes("chatty.test.ts:"));
+  expect(line).toContain("1 passed, 0 failed");
+  await removeTempDir(testDir);
+}, 120000);
+
 test("--concurrency bounds how many shards run at once", async () => {
   const testDir = await createTempDir("concurrency");
   const projDir = Path.join(testDir, "proj");

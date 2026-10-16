@@ -982,8 +982,14 @@ export function shardFailure(run: {
  * Run tests in Node.js using node:test
  */
 async function runNodeTests(bundlePath: string, timeout: number, env: NodeJS.ProcessEnv = {}): Promise<ShardRun> {
+  // The file runs in this one process, not under `--test`: that is an
+  // orchestrator which spawns a second node per file, about half the cost of
+  // a shard. Without it, a test's own output is no longer set apart from the
+  // results on stdout - a test printing "not ok 1 - x" would be counted - so
+  // the results go to a file of their own.
+  const reportPath = `${bundlePath}.tap`;
   const { stdout, stderr, code, signal, timedOut, error } =
-    await spawnShard("node", ["--test", "--test-reporter=tap", bundlePath], timeout, env);
+    await spawnShard("node", ["--test-reporter=tap", `--test-reporter-destination=${reportPath}`, bundlePath], timeout, env);
 
   if (error) {
     return {
@@ -992,7 +998,8 @@ async function runNodeTests(bundlePath: string, timeout: number, env: NodeJS.Pro
     };
   }
 
-  const { passed, failed, errors, skipped, todo, completed } = parseTapOutput(stdout, Path.basename(bundlePath));
+  const report = await FS.readFile(reportPath, "utf-8").catch(() => "");
+  const { passed, failed, errors, skipped, todo, completed } = parseTapOutput(report, Path.basename(bundlePath));
   const reason = shardFailure({
     completed, code, signal, timedOut, failed, timeout,
     finished: passed + failed + skipped + todo,
@@ -1008,7 +1015,7 @@ async function runNodeTests(bundlePath: string, timeout: number, env: NodeJS.Pro
       skipped,
       todo,
     },
-    output: stripRegistered(stdout + stderr),
+    output: stripRegistered(report + stdout + stderr),
   };
 }
 
