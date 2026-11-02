@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.31] - 2026-11-02
+
+### Fixed
+- **A node test file that registers no tests passes as 0, not a failure.** Since 0.2.30 runs a node file in one process, a file with no tests leaves node's test runner unstarted and it writes no results, which read as "exited 0 without producing a test summary". A file whose only in-source code is `import.meta.litest` checks hit this on every node run. A clean exit with no results now counts as zero tests, as on bun and deno.
+
 ## [0.2.30] - 2026-10-16
 
 ### Fixed
