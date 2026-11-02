@@ -999,7 +999,10 @@ async function runNodeTests(bundlePath: string, timeout: number, env: NodeJS.Pro
   }
 
   const report = await FS.readFile(reportPath, "utf-8").catch(() => "");
-  const { passed, failed, errors, skipped, todo, completed } = parseTapOutput(report, Path.basename(bundlePath));
+  const { passed, failed, errors, skipped, todo, completed: summarized } = parseTapOutput(report, Path.basename(bundlePath));
+  // A file that registers no tests leaves node:test unstarted, and it writes
+  // no report at all. A clean exit with nothing reported is a run of zero.
+  const completed = summarized || (report.trim() === "" && code === 0 && signal == null && !timedOut);
   const reason = shardFailure({
     completed, code, signal, timedOut, failed, timeout,
     finished: passed + failed + skipped + todo,

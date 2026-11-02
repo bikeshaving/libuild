@@ -1568,6 +1568,31 @@ test("bun output is counted from its final summary, not an earlier one", () => {
 
 const hasDeno = spawnSync("deno", ["--version"], {stdio: "ignore"}).status === 0;
 
+test("a discovered file that registers no tests passes on every runtime", async () => {
+  const {testDir, projDir} = await realConsumer("real-zero", {
+    "helper.test.ts": 'import "node:test";\nexport const y = 2;\n',
+  });
+  await FS.mkdir(Path.join(projDir, "src"), {recursive: true});
+  await FS.writeFile(Path.join(projDir, "src", "index.ts"),
+    'export const x = 1;\n' +
+    'if (import.meta.litest) {\n' +
+    '  if (x !== 1) throw new Error("bad");\n' +
+    '}\n');
+  await FS.writeFile(Path.join(projDir, "src", "broken.ts"),
+    'export const z = 1;\n' +
+    'if (import.meta.litest) {\n' +
+    '  throw new Error("check failed");\n' +
+    '}\n');
+
+  const platforms = hasDeno ? ["node", "bun", "deno"] : ["node", "bun"];
+  const run = (file: string) => runTests({cwd: projDir, files: [Path.join(projDir, file)], platforms, timeout: 120000});
+  expect(await run("src/index.ts")).toBe(true);
+  expect(await run("test/helper.test.ts")).toBe(true);
+  expect(await run("src/broken.ts")).toBe(false);
+
+  await removeTempDir(testDir);
+}, 300000);
+
 if (hasDeno) test("a suite runs on deno the way it runs on node", async () => {
   const {testDir, projDir} = await realConsumer("real-deno", {
     "pass.test.ts":
