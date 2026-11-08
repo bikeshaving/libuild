@@ -225,7 +225,10 @@ const immutableSourceFiles = new Map<string, any>();
           const typeErrors = program.getSourceFiles()
             .filter((sf) => fs.realpathSync(sf.fileName).startsWith(resolvedRootDir + Path.sep))
             .flatMap((sf) => [...program.getSyntacticDiagnostics(sf), ...program.getSemanticDiagnostics(sf)])
-            .filter((d) => d.category === TS.DiagnosticCategory.Error);
+            .filter((d) => d.category === TS.DiagnosticCategory.Error)
+            // TS6059, a file outside rootDir, comes from the rootDir set here
+            // (bin/ importing src/), not from anything the project wrote.
+            .filter((d) => d.code !== 6059);
           if (typeErrors.length > 0) {
             const text = TS.formatDiagnosticsWithColorAndContext(typeErrors, {
               getCanonicalFileName: path => path,

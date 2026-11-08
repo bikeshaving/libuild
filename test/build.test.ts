@@ -1245,7 +1245,15 @@ test("built files are whitespace-minified and their source maps point at the sou
     '\n' +
     'throw new Error("cli");\n');
 
-  await build(testDir, false);
+  const warned: string[] = [];
+  const warn = console.warn;
+  console.warn = (...args: any[]) => { warned.push(args.map(String).join(" ")); };
+  try {
+    await build(testDir, false);
+  } finally {
+    console.warn = warn;
+  }
+  expect(warned.join("\n")).not.toContain("TypeScript reported");
 
   const distDir = Path.join(testDir, "dist");
   const index = await FS.readFile(Path.join(distDir, "index.js"), "utf-8");
