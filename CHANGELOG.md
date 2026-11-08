@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.32] - 2026-11-07
+
+### Changed
+- **Built files are whitespace-minified, with source maps.** Whitespace and comments are removed, names are kept, and every ESM, CJS, chunk, worker, bin and UMD file gets a `.map` beside it, so `node --enable-source-maps` points stack traces at the `.ts` line. Node holds a module's source text in memory, and a large file containing any non-ASCII character is held at two bytes per character; termdom's 2.6 MB `index.js` had seven such characters, all in comments. It is now 2.0 MB, and Node's memory after import is about 4.5 MB lower. The maps leave out the source text, which keeps termdom's package at 1.8 MB instead of 3.8 MB, and they name sources as if `dist/` were the project, so a consumer's stack trace reads `node_modules/<pkg>/src/x.ts`.
+
+### Fixed
+- **A `bin/` file importing from `src/` no longer draws a false TypeScript error.** Declarations for `bin/` were emitted with `bin/` as the root directory, so each import of `src/` showed up as TS6059 in the type-error warning, which the project's own `tsc` never reports.
+
 ## [0.2.31] - 2026-11-02
 
 ### Fixed
