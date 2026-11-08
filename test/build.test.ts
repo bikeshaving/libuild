@@ -865,7 +865,7 @@ export function add(a: number, b: number): number {
   expect(cliContent.startsWith("#\!/usr/bin/env sh")).toBe(true);
 
   // Should have import statement (not bundled)
-  expect(cliContent).toContain('from "./utils.js"');
+  expect(cliContent).toContain('from"./utils.js"');
 
   // Should have dual runtime detection and triple-slash reference after shebang
   const lines = cliContent.split('\n');
@@ -924,8 +924,8 @@ export function process() {
   expect(cliContent.startsWith("#\!/usr/bin/env sh")).toBe(true);
 
   // Should import from other entry points, not bundle them
-  expect(cliContent).toContain('from "./version.js"');
-  expect(cliContent).toContain('from "./process.js"');
+  expect(cliContent).toContain('from"./version.js"');
+  expect(cliContent).toContain('from"./process.js"');
 
   // Should not contain the actual implementation from imported modules
   expect(cliContent).not.toContain('export const version');
@@ -1215,3 +1215,61 @@ test("a *.worker.ts is built to dist, left out of exports, and loads by URL", as
 
   await removeTempDir(testDir);
 }, 120000);
+
+test("built files are whitespace-minified and their source maps point at the source lines", async () => {
+  const testDir = await createTempDir("sourcemap-lines");
+  await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
+  await FS.mkdir(Path.join(testDir, "bin"), {recursive: true});
+  await FS.writeFile(Path.join(testDir, "package.json"), JSON.stringify({
+    name: "sourcemap-lines",
+    version: "0.1.0",
+    type: "module",
+    main: "./dist/index.cjs",
+    private: true,
+  }, null, 2));
+  const body =
+    '// § a comment that is not ASCII\n' +
+    'export function first(): number {\n' +
+    '  return 1;\n' +
+    '}\n' +
+    '\n' +
+    'export function boom(): never {\n' +
+    '  throw new Error("boom");\n' +
+    '}\n';
+  await FS.writeFile(Path.join(testDir, "src", "index.ts"), body);
+  await FS.writeFile(Path.join(testDir, "src", "umd.ts"), body);
+  await FS.writeFile(Path.join(testDir, "bin", "cli.ts"),
+    '#!/usr/bin/env node\n' +
+    'import {first} from "../src/index.js";\n' +
+    'console.log(first());\n' +
+    '\n' +
+    'throw new Error("cli");\n');
+
+  await build(testDir, false);
+
+  const distDir = Path.join(testDir, "dist");
+  const index = await FS.readFile(Path.join(distDir, "index.js"), "utf-8");
+  expect(index).not.toContain("§");
+  expect(index).toContain("function boom(){");
+  for (const file of ["index.js", "index.cjs", "umd.js", "bin/cli.js"]) {
+    expect(await fileExists(Path.join(distDir, `${file}.map`))).toBe(true);
+  }
+  // Published, dist/ is the package root: a source named "../src/index.ts"
+  // would sit outside the package.
+  expect((await readJSON(Path.join(distDir, "index.js.map"))).sources).toEqual(["src/index.ts"]);
+  expect((await readJSON(Path.join(distDir, "bin", "cli.js.map"))).sources).toEqual(["cli.ts"]);
+
+  await FS.copyFile(Path.join(distDir, "umd.js"), Path.join(distDir, "umd-run.cjs"));
+  const runs: Array<[string, string[], string]> = [
+    ["esm", ["--input-type=module", "-e", `import {boom} from ${JSON.stringify(Path.join(distDir, "index.js"))}; boom();`], "dist/src/index.ts:7"],
+    ["cjs", ["-e", `require(${JSON.stringify(Path.join(distDir, "index.cjs"))}).boom();`], "dist/src/index.ts:7"],
+    ["umd", ["-e", `require(${JSON.stringify(Path.join(distDir, "umd-run.cjs"))}).boom();`], "dist/src/umd.ts:7"],
+    ["bin", [Path.join(distDir, "bin", "cli.js")], "dist/bin/cli.ts:5"],
+  ];
+  for (const [name, args, where] of runs) {
+    const run = spawnSync("node", ["--enable-source-maps", ...args], {cwd: testDir, encoding: "utf-8"});
+    expect(`${name}: ${run.stderr}`).toContain(where);
+  }
+
+  await removeTempDir(testDir);
+}, 60000);

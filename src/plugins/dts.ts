@@ -4,6 +4,7 @@ import * as Path from "path";
 import { pathToFileURL } from "url";
 import * as ESBuild from "esbuild";
 import type TS from "typescript";
+import {shiftSourceMap, addedLines} from "../internal/sourcemap.ts";
 
 export interface TypeScriptPluginOptions {
   tsConfigPath?: string;
@@ -335,6 +336,7 @@ async function addTripleSlashReferences(tsFiles: string[], outDir: string, rootD
 
     // Write the modified content
     await FS.writeFile(jsPath, modifiedContent);
+    await shiftSourceMap(jsPath, addedLines(content, modifiedContent));
   }
 }
 

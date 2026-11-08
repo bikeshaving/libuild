@@ -110,6 +110,7 @@ test("handles comprehensive package.json fields", async () => {
     "docs/*.md",
     "*.js",
     "*.cjs",
+    "*.map",
     "*.d.ts",
     "bin/",
     "_chunks/"
@@ -431,6 +432,7 @@ test("files field src transformations", async () => {
     "docs/*.md",     // docs/*.md stays the same
     "*.js",
     "*.cjs",
+    "*.map",
     "*.d.ts",
     "bin/",
     "_chunks/"
@@ -663,7 +665,7 @@ test("comprehensive build verification for multi-entry project", async () => {
   const utilsContent = await FS.readFile(Path.join(distDir, "utils.js"), "utf-8");
   
   // CLI should import from utils, not bundle it
-  expect(cliContent).toContain('from "./utils.js"');
+  expect(cliContent).toContain('from"./utils.js"');
   expect(cliContent).not.toContain('function add'); // Should not contain utils code
   
   // Utils should contain the actual implementation

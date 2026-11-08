@@ -77,7 +77,7 @@ test("bin directory detection and build", async () => {
 
   // Verify that bin entry externalizes src imports (rewritten to flat dist root)
   const binContent = await FS.readFile(Path.join(distBinDir, "cli.js"), "utf-8");
-  expect(binContent).toContain('from "../index.js"'); // Should be external, not bundled
+  expect(binContent).toContain('from"../index.js"'); // Should be external, not bundled
   expect(binContent).not.toContain('function greet'); // Should NOT contain the actual greet function
 
   // Check package.json was generated correctly
@@ -299,12 +299,12 @@ console.log(helper());`
   );
 
   // Entry point import should be externalized (rewritten to flat dist root)
-  expect(binContent).toContain('from "../index.js"');
-  expect(binContent).not.toContain('from "../src/index.js"'); // Old nested path should be gone
+  expect(binContent).toContain('from"../index.js"');
+  expect(binContent).not.toContain('from"../src/index.js"'); // Old nested path should be gone
   expect(binContent).not.toContain('function greet'); // Should NOT be bundled
 
   // Non-entry import should be bundled
-  expect(binContent).not.toContain('from "../src/utils/helper.js"'); // Should NOT be external
+  expect(binContent).not.toContain('from"../src/utils/helper.js"'); // Should NOT be external
   expect(binContent).toContain('function helper'); // Should BE bundled
 
   await removeTempDir(testDir);

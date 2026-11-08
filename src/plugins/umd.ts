@@ -1,4 +1,5 @@
 import * as FS from "fs/promises";
+import {shiftSourceMap} from "../internal/sourcemap.ts";
 
 interface UMDPluginOptions {
   globalName: string;
@@ -53,4 +54,5 @@ return module.exports;
 }));`;
 
   await FS.writeFile(filePath, umdHeader + code + umdFooter);
+  await shiftSourceMap(filePath, umdHeader.split("\n").length - 1);
 }

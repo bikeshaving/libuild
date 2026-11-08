@@ -103,9 +103,8 @@ test("a module with no in-source tests keeps its unminified shape", async () => 
     // test block actually is. A package that never writes one must not pay:
     // braces, `continue`, and separate statements all survive here, where an
     // over-broad `minifySyntax` would have collapsed them.
-    expect(out).toContain("continue;");
-    expect(out).toContain("CACHE.set(\"last\", total);");
-    expect(out).toContain("return total;");
+    expect(out).toContain("{continue}");
+    expect(out).toContain("CACHE.set(\"last\",total);return total");
   } finally {
     await removeTempDir(dir);
   }
