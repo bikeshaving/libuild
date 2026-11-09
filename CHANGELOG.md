@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.33] - 2026-11-09
+
+### Changed
+- **Built files are no longer minified; the source maps stay.** 0.2.32 minified whitespace to save memory, and the saving does not hold up: on termdom, over ten runs each, Node's memory after import was lowest for the unminified build (median 47.8 MB) and highest for the minified one (52.4 MB). The 0.2.32 figure came from two runs on another commit. The minified `index.js` was also a single 2 MB line, which broke a downstream find-and-replace patch and made patch-package diffs and unmapped stack traces unreadable. Output is again what esbuild writes, comments included, and every built file still has its `.map`.
+
 ## [0.2.32] - 2026-11-07
 
 ### Changed
