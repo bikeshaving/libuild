@@ -51,7 +51,7 @@ test("smart dependency resolution - entry points don't inline other entry points
   const utilsContent = await FS.readFile(Path.join(distDir, "utils.js"), "utf-8");
 
   // CLI should import from utils, not bundle it
-  expect(cliContent).toContain('from"./utils.js"');
+  expect(cliContent).toContain('from "./utils.js"');
   expect(cliContent).not.toContain('function add'); // Should NOT contain the actual add function
 
   // Utils should contain the actual implementation
@@ -99,7 +99,7 @@ test("significantly reduced bundle sizes with smart dependency resolution", asyn
   const cliContent = await FS.readFile(Path.join(distDir, "cli.js"), "utf-8");
 
   // CLI should import from other modules, not bundle them
-  expect(cliContent).toContain('from"./utils.js"');
+  expect(cliContent).toContain('from "./utils.js"');
   expect(cliContent).not.toContain('function add'); // Should NOT bundle add function
   expect(cliContent).not.toContain('function multiply'); // Should NOT bundle multiply function
 
@@ -308,7 +308,7 @@ test("all major features work together", async () => {
   const distDir = Path.join(testDir, "dist");  
   // 1. Smart dependency resolution
   const cliJS = await FS.readFile(Path.join(distDir, "cli.js"), "utf-8");
-  expect(cliJS).toContain('from"./utils.js"'); // Imports, doesn't bundle
+  expect(cliJS).toContain('from "./utils.js"'); // Imports, doesn't bundle
   expect(cliJS).not.toContain("export function add"); // No inlined code
   
   // 2. Plugin extraction (no plugin artifacts in output)
@@ -467,7 +467,7 @@ export function b() { return 'b'; }
   const aContent = await FS.readFile(Path.join(distDir, "a.js"), "utf-8");
   const bContent = await FS.readFile(Path.join(distDir, "b.js"), "utf-8");
   
-  expect(aContent).toContain('from"./b.js"');
+  expect(aContent).toContain('from "./b.js"');
   expect(bContent).toContain('function b'); // b.js should contain the b function
   
   await removeTempDir(testDir);
@@ -504,8 +504,8 @@ test("shared modules are deduplicated across entry points", async () => {
   expect(sharedJS).toContain("SharedClass");
   
   // Verify that entry files import from shared.js instead of duplicating code
-  expect(entry1JS).toContain('from"./shared.js"');
-  expect(entry2JS).toContain('from"./shared.js"');
+  expect(entry1JS).toContain('from "./shared.js"');
+  expect(entry2JS).toContain('from "./shared.js"');
   
   // Verify that shared code is NOT duplicated in entry files
   expect(entry1JS).not.toContain("This is a shared utility function");
@@ -550,7 +550,7 @@ test("shared modules work with both ESM and CJS builds", async () => {
   const sharedCJS = await FS.readFile(Path.join(distDir, "shared.cjs"), "utf-8");
   
   // Verify ESM imports
-  expect(entry1ESM).toContain('from"./shared.js"');
+  expect(entry1ESM).toContain('from "./shared.js"');
   expect(sharedESM).toContain("export");
   
   // Verify CJS requires
@@ -582,7 +582,7 @@ test("peer dependencies are externalized in both ESM and CJS", async () => {
   const cjs = await FS.readFile(Path.join(distDir, "index.cjs"), "utf-8");
 
   // ESM keeps the bare import
-  expect(esm).toContain('from"@fictional-scope/peer-lib"');
+  expect(esm).toContain('from "@fictional-scope/peer-lib"');
 
   // CJS must require it, not inline a second copy of the peer package
   expect(cjs).toContain('require("@fictional-scope/peer-lib")');

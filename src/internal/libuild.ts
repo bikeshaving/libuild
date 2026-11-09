@@ -1351,7 +1351,6 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
         // build pulled in, whichever plugin loaded it.
         metafile: true,
         splitting: true, // Enable code splitting for dynamic imports
-        minifyWhitespace: true,
         sourcemap: true,
         sourcesContent: false,
         external: externalDeps,
@@ -1437,7 +1436,6 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
             format: "cjs",
             outExtension: {".js": ".cjs"},
             bundle: true,
-            minifyWhitespace: true,
             sourcemap: true,
             sourcesContent: false,
             external: externalDeps,
@@ -1494,7 +1492,6 @@ export async function build(cwd: string, save: boolean = false): Promise<{distPk
       outfile: Path.join(distDir, "umd.js"),
       format: "cjs",
       bundle: true,
-      minifyWhitespace: true,
       sourcemap: true,
       sourcesContent: false,
       external: externalDeps,

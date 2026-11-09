@@ -49,7 +49,7 @@ libuild publish
 - **TypeScript**: `.d.ts` declaration files for all modules (when TypeScript is available); internal modules relocate together with their imports intact
 - **Module augmentation**: `declare module` blocks are preserved in .d.ts output
 - **Code splitting**: Dynamic imports create chunks in `dist/_chunks/`
-- **Whitespace-minified, with source maps**: whitespace and comments are removed, names are kept, and each file gets a `.map` next to it, so `node --enable-source-maps` points stack traces at the `.ts` line. Node holds a module's source text in memory, and a large file containing any non-ASCII character is held at two bytes per character; dropping comments removes most of those characters. The maps leave out the source text, which keeps the package small.
+- **Source maps**: each built file gets a `.map` next to it, so `node --enable-source-maps` points stack traces at the `.ts` line. The output itself is not minified, so it can be read and patched. The maps leave out the source text, which keeps the package small.
 - **Clean package.json**: Optimized for consumers (no dev scripts)
 
 ### Format Control
@@ -328,7 +328,7 @@ Two things worth knowing:
 - **Files containing in-source tests are syntax-minified in `dist`** (`if`/`continue`
   collapsed to `||`, and so on). Removing the block requires constant folding,
   which libuild applies per file rather than turning it on for the whole build —
-  so modules without in-source tests keep their statements as written.
+  so modules without in-source tests keep byte-identical output.
 
 The same guard gates test-only code that is not a test. A check that runs in a frame loop under test, and must not ship, sits behind `if (import.meta.litest)`: in every test bundle the expression is the test API, so the check runs; in the build it is `undefined` and the guarded code is stripped, and a function only it called goes with it.
 

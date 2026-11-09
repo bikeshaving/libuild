@@ -865,7 +865,7 @@ export function add(a: number, b: number): number {
   expect(cliContent.startsWith("#\!/usr/bin/env sh")).toBe(true);
 
   // Should have import statement (not bundled)
-  expect(cliContent).toContain('from"./utils.js"');
+  expect(cliContent).toContain('from "./utils.js"');
 
   // Should have dual runtime detection and triple-slash reference after shebang
   const lines = cliContent.split('\n');
@@ -924,8 +924,8 @@ export function process() {
   expect(cliContent.startsWith("#\!/usr/bin/env sh")).toBe(true);
 
   // Should import from other entry points, not bundle them
-  expect(cliContent).toContain('from"./version.js"');
-  expect(cliContent).toContain('from"./process.js"');
+  expect(cliContent).toContain('from "./version.js"');
+  expect(cliContent).toContain('from "./process.js"');
 
   // Should not contain the actual implementation from imported modules
   expect(cliContent).not.toContain('export const version');
@@ -1216,7 +1216,7 @@ test("a *.worker.ts is built to dist, left out of exports, and loads by URL", as
   await removeTempDir(testDir);
 }, 120000);
 
-test("built files are whitespace-minified and their source maps point at the source lines", async () => {
+test("built files keep their lines, and their source maps point at the source lines", async () => {
   const testDir = await createTempDir("sourcemap-lines");
   await FS.mkdir(Path.join(testDir, "src"), {recursive: true});
   await FS.mkdir(Path.join(testDir, "bin"), {recursive: true});
@@ -1228,7 +1228,7 @@ test("built files are whitespace-minified and their source maps point at the sou
     private: true,
   }, null, 2));
   const body =
-    '// § a comment that is not ASCII\n' +
+    '// a comment\n' +
     'export function first(): number {\n' +
     '  return 1;\n' +
     '}\n' +
@@ -1257,8 +1257,7 @@ test("built files are whitespace-minified and their source maps point at the sou
 
   const distDir = Path.join(testDir, "dist");
   const index = await FS.readFile(Path.join(distDir, "index.js"), "utf-8");
-  expect(index).not.toContain("§");
-  expect(index).toContain("function boom(){");
+  expect(index).toContain("function boom() {\n  throw new Error(\"boom\");\n}");
   for (const file of ["index.js", "index.cjs", "umd.js", "bin/cli.js"]) {
     expect(await fileExists(Path.join(distDir, `${file}.map`))).toBe(true);
   }
